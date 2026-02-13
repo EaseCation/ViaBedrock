@@ -40,6 +40,7 @@ import com.viaversion.viaversion.libs.gson.JsonArray;
 import com.viaversion.viaversion.libs.gson.JsonElement;
 import com.viaversion.viaversion.libs.gson.JsonObject;
 import com.viaversion.viaversion.libs.gson.JsonPrimitive;
+import com.viaversion.viaversion.libs.gson.Gson;
 import com.viaversion.viaversion.util.GsonUtil;
 import com.viaversion.viaversion.util.Key;
 import io.netty.buffer.ByteBuf;
@@ -61,6 +62,8 @@ import net.raphimc.viabedrock.protocol.data.generated.java.RegistryKeys;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.io.DataInputStream;
+import java.io.File;
+import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -227,6 +230,59 @@ public class BedrockMappingData extends MappingDataBase {
                 }
                 if (this.bedrockToJavaBlockStates.put(bedrockBlockState, javaBlockState) != null) {
                     throw new RuntimeException("Duplicate bedrock -> java block state mapping for " + bedrockBlockState.toBlockStateString());
+                }
+            }
+
+            // 加载 FabricRock 导出的自定义方块映射
+            final File customMappingFile = new File("config/bedrock-loader/block_state_mappings.json");
+            if (customMappingFile.exists()) {
+                try {
+                    final JsonObject customMappingsRoot = new Gson().fromJson(new FileReader(customMappingFile), JsonObject.class);
+                    final JsonObject customMappings = customMappingsRoot.getAsJsonObject("mappings");
+
+                    int addedCount = 0;
+                    int skippedCount = 0;
+                    for (Map.Entry<String, JsonElement> entry : customMappings.entrySet()) {
+                        final String bedrockStateStr = entry.getKey();
+                        final JsonObject mapping = entry.getValue().getAsJsonObject();
+                        final String javaStateStr = mapping.get("java_state").getAsString();
+                        final int javaStateId = mapping.get("java_state_id").getAsInt();
+
+                        // 1. 添加到 javaBlockStates BiMap
+                        final BlockState javaBlockState = BlockState.fromString(javaStateStr);
+
+                        // 检查 key 和 value 是否已存在
+                        boolean keyExists = this.javaBlockStates.containsKey(javaBlockState);
+                        boolean valueExists = this.javaBlockStates.containsValue(javaStateId);
+
+                        if (keyExists || valueExists) {
+                            if (valueExists) {
+                                // 找出占用这个 ID 的原版方块
+                                BlockState existingState = this.javaBlockStates.inverse().get(javaStateId);
+                                ViaBedrock.getPlatform().getLogger().warning(
+                                    "ID conflict: Custom block '" + javaStateStr + "' wants ID " + javaStateId +
+                                    ", but it's already used by '" + existingState + "'"
+                                );
+                            }
+                            skippedCount++;
+                        } else {
+                            this.javaBlockStates.put(javaBlockState, javaStateId);
+                        }
+
+                        // 2. 添加到 bedrockToJavaBlockStates Map
+                        final BlockState bedrockBlockState = BlockState.fromString(bedrockStateStr);
+                        if (!this.bedrockToJavaBlockStates.containsKey(bedrockBlockState)) {
+                            this.bedrockToJavaBlockStates.put(bedrockBlockState, javaBlockState);
+                            if (!keyExists && !valueExists) {
+                                addedCount++;
+                            }
+                        }
+                    }
+
+                    ViaBedrock.getPlatform().getLogger().info("Loaded " + addedCount + " custom block state mappings from FabricRock" +
+                        (skippedCount > 0 ? " (skipped " + skippedCount + " due to ID conflicts)" : ""));
+                } catch (Exception e) {
+                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to load custom block state mappings", e);
                 }
             }
 
