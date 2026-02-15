@@ -88,35 +88,44 @@ public class EntityPackets {
             final EntityLink[] entityLinks = wrapper.read(BedrockTypes.ENTITY_LINK_ARRAY); // entity links
 
             final Entity entity;
-            final EntityTypes1_21_11 javaEntityType = BedrockProtocol.MAPPINGS.getBedrockToJavaEntities().get(type);
-            if (javaEntityType != null) {
-                entity = entityTracker.addEntity(entityUniqueId, entityRuntimeId, type, javaEntityType);
-            } else if (gameSession.getAvailableEntityIdentifiers().contains(type)) {
-                final ResourcePacksStorage resourcePacksStorage = wrapper.user().get(ResourcePacksStorage.class);
-                final EntityDefinitions.EntityDefinition entityDefinition = resourcePacksStorage.getEntities().get(type);
-                if (entityDefinition != null) {
-                    if (resourcePacksStorage.isLoadedOnJavaClient()) {
-                        entity = new CustomEntity(wrapper.user(), entityUniqueId, entityRuntimeId, type, entityTracker.getNextJavaEntityId(), entityDefinition);
-                        entityTracker.addEntity(entity);
+            final Integer customJavaTypeId = BedrockProtocol.MAPPINGS.getCustomEntityTypeIds().get(type);
+
+            if (customJavaTypeId != null) {
+                // 使用自定义类型 ID
+                final EntityTypes1_21_11 fallbackType = BedrockProtocol.MAPPINGS.getCustomEntityTypeFallbacks().getOrDefault(type, EntityTypes1_21_11.PIG);
+                entity = entityTracker.addEntity(entityUniqueId, entityRuntimeId, type, fallbackType, customJavaTypeId);
+            } else {
+                // 使用原有逻辑
+                final EntityTypes1_21_11 javaEntityType = BedrockProtocol.MAPPINGS.getBedrockToJavaEntities().get(type);
+                if (javaEntityType != null) {
+                    entity = entityTracker.addEntity(entityUniqueId, entityRuntimeId, type, javaEntityType);
+                } else if (gameSession.getAvailableEntityIdentifiers().contains(type)) {
+                    final ResourcePacksStorage resourcePacksStorage = wrapper.user().get(ResourcePacksStorage.class);
+                    final EntityDefinitions.EntityDefinition entityDefinition = resourcePacksStorage.getEntities().get(type);
+                    if (entityDefinition != null) {
+                        if (resourcePacksStorage.isLoadedOnJavaClient()) {
+                            entity = new CustomEntity(wrapper.user(), entityUniqueId, entityRuntimeId, type, entityTracker.getNextJavaEntityId(), entityDefinition);
+                            entityTracker.addEntity(entity);
+                        } else {
+                            entity = entityTracker.addEntity(entityUniqueId, entityRuntimeId, type, EntityTypes1_21_11.PIG);
+                        }
                     } else {
-                        entity = entityTracker.addEntity(entityUniqueId, entityRuntimeId, type, EntityTypes1_21_11.PIG);
+                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing bedrock entity type: " + type);
+                        wrapper.cancel();
+                        return;
                     }
                 } else {
-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing bedrock entity type: " + type);
+                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown bedrock entity type: " + type);
                     wrapper.cancel();
                     return;
                 }
-            } else {
-                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown bedrock entity type: " + type);
-                wrapper.cancel();
-                return;
             }
             entity.setPosition(position);
             entity.setRotation(rotation);
 
             wrapper.write(Types.VAR_INT, entity.javaId()); // entity id
             wrapper.write(Types.UUID, entity.javaUuid()); // uuid
-            wrapper.write(Types.VAR_INT, entity.javaType().getId()); // type id
+            wrapper.write(Types.VAR_INT, entity.javaTypeId()); // type id
             wrapper.write(Types.DOUBLE, (double) position.x()); // x
             wrapper.write(Types.DOUBLE, (double) position.y()); // y
             wrapper.write(Types.DOUBLE, (double) position.z()); // z
@@ -150,7 +159,7 @@ public class EntityPackets {
 
             wrapper.write(Types.VAR_INT, entity.javaId()); // entity id
             wrapper.write(Types.UUID, entity.javaUuid()); // uuid
-            wrapper.write(Types.VAR_INT, entity.javaType().getId()); // type id
+            wrapper.write(Types.VAR_INT, entity.javaTypeId()); // type id
             wrapper.write(Types.DOUBLE, (double) position.x()); // x
             wrapper.write(Types.DOUBLE, (double) position.y()); // y
             wrapper.write(Types.DOUBLE, (double) position.z()); // z
@@ -388,7 +397,7 @@ public class EntityPackets {
 
             wrapper.write(Types.VAR_INT, entity.javaId()); // entity id
             wrapper.write(Types.UUID, entity.javaUuid()); // uuid
-            wrapper.write(Types.VAR_INT, entity.javaType().getId()); // type id
+            wrapper.write(Types.VAR_INT, entity.javaTypeId()); // type id
             wrapper.write(Types.DOUBLE, (double) position.x() + positionOffset.x()); // x
             wrapper.write(Types.DOUBLE, (double) position.y() + positionOffset.y()); // y
             wrapper.write(Types.DOUBLE, (double) position.z() + positionOffset.z()); // z

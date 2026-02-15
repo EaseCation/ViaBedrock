@@ -62,6 +62,19 @@ public class EntityTracker extends StoredObject {
         }
     }
 
+    public Entity addEntity(final long uniqueId, final long runtimeId, final String type, final EntityTypes1_21_11 javaType, final Integer customJavaTypeId) {
+        final UUID javaUuid = UUID.randomUUID();
+        if (javaType.isOrHasParent(EntityTypes1_21_11.ABSTRACT_HORSE)) {
+            return this.addEntity(new AbstractHorseEntity(this.user(), uniqueId, runtimeId, type, this.getNextJavaEntityId(), javaUuid, javaType, customJavaTypeId));
+        } else if (javaType.isOrHasParent(EntityTypes1_21_11.MOB)) {
+            return this.addEntity(new MobEntity(this.user(), uniqueId, runtimeId, type, this.getNextJavaEntityId(), javaUuid, javaType, customJavaTypeId));
+        } else if (javaType.isOrHasParent(EntityTypes1_21_11.LIVING_ENTITY)) {
+            return this.addEntity(new LivingEntity(this.user(), uniqueId, runtimeId, type, this.getNextJavaEntityId(), javaUuid, javaType, customJavaTypeId));
+        } else {
+            return this.addEntity(new Entity(this.user(), uniqueId, runtimeId, type, this.getNextJavaEntityId(), javaUuid, javaType, customJavaTypeId));
+        }
+    }
+
     public <T extends Entity> T addEntity(final T entity) {
         return this.addEntity(entity, true);
     }

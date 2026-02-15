@@ -123,6 +123,8 @@ public class BedrockMappingData extends MappingDataBase {
     private BiMap<String, Integer> javaBlockEntities;
     private BiMap<String, Integer> javaEntityAttributes;
     private Map<EntityTypes1_21_11, List<String>> javaEntityDataFields;
+    private final Map<String, Integer> customEntityTypeIds = new HashMap<>();
+    private final Map<String, EntityTypes1_21_11> customEntityTypeFallbacks = new HashMap<>();
 
     // Entity Effects
     private BiMap<String, Integer> javaEffects;
@@ -649,6 +651,30 @@ public class BedrockMappingData extends MappingDataBase {
                 }
             }
 
+            // 加载自定义实体类型 ID 映射（第一阶段：只加载 java_type_id）
+            final File customEntityTypeIdsFile = new File("config/bedrock-loader/custom_entity_type_ids.json");
+            JsonObject customEntityMappings = null;
+            if (customEntityTypeIdsFile.exists()) {
+                try {
+                    final JsonObject customEntityRoot = new Gson().fromJson(new FileReader(customEntityTypeIdsFile), JsonObject.class);
+                    customEntityMappings = customEntityRoot.getAsJsonObject("mappings");
+
+                    int loadedCount = 0;
+                    for (Map.Entry<String, JsonElement> entry : customEntityMappings.entrySet()) {
+                        final String bedrockType = Key.namespaced(entry.getKey());
+                        final JsonObject mapping = entry.getValue().getAsJsonObject();
+                        final int javaTypeId = mapping.get("java_type_id").getAsInt();
+
+                        this.customEntityTypeIds.put(bedrockType, javaTypeId);
+                        loadedCount++;
+                    }
+
+                    ViaBedrock.getPlatform().getLogger().info("Loaded " + loadedCount + " custom entity type ID mappings");
+                } catch (Exception e) {
+                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to load custom entity type ID mappings", e);
+                }
+            }
+
             final JsonObject bedrockToJavaEntityMappingsJson = this.readJson("custom/entity_mappings.json");
             this.bedrockToJavaEntities = new HashMap<>(bedrockToJavaEntityMappingsJson.size());
             final Set<String> unmappedEntities = new HashSet<>();
@@ -677,6 +703,30 @@ public class BedrockMappingData extends MappingDataBase {
             for (String bedrockIdentifier : this.bedrockEntities.keySet()) {
                 if (!this.bedrockToJavaEntities.containsKey(bedrockIdentifier) && !unmappedEntities.contains(bedrockIdentifier)) {
                     throw new RuntimeException("Missing bedrock -> java entity mapping for " + bedrockIdentifier);
+                }
+            }
+
+            // 加载自定义实体类型 ID 映射（第二阶段：处理 fallback_type）
+            if (customEntityMappings != null) {
+                try {
+                    for (Map.Entry<String, JsonElement> entry : customEntityMappings.entrySet()) {
+                        final String bedrockType = Key.namespaced(entry.getKey());
+                        final JsonObject mapping = entry.getValue().getAsJsonObject();
+
+                        // 加载降级类型（可选）
+                        if (mapping.has("fallback_type")) {
+                            final String fallbackTypeStr = mapping.get("fallback_type").getAsString();
+                            final String fallbackTypeNormalized = Key.namespaced(fallbackTypeStr);
+                            final EntityTypes1_21_11 fallbackType = this.bedrockToJavaEntities.get(fallbackTypeNormalized);
+                            if (fallbackType != null) {
+                                this.customEntityTypeFallbacks.put(bedrockType, fallbackType);
+                            } else {
+                                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown fallback entity type: " + fallbackTypeStr + " for custom entity: " + bedrockType);
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to process custom entity fallback types", e);
                 }
             }
 
@@ -1172,6 +1222,14 @@ public class BedrockMappingData extends MappingDataBase {
 
     public Map<EntityTypes1_21_11, List<String>> getJavaEntityDataFields() {
         return this.javaEntityDataFields;
+    }
+
+    public Map<String, Integer> getCustomEntityTypeIds() {
+        return this.customEntityTypeIds;
+    }
+
+    public Map<String, EntityTypes1_21_11> getCustomEntityTypeFallbacks() {
+        return this.customEntityTypeFallbacks;
     }
 
     public BiMap<String, Integer> getJavaEffects() {

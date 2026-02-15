@@ -32,8 +32,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class AbstractHorseEntity extends MobEntity {
 
+    public AbstractHorseEntity(final UserConnection user, final long uniqueId, final long runtimeId, final String type, final int javaId, final UUID javaUuid, final EntityTypes1_21_11 javaType, final Integer customJavaTypeId) {
+        super(user, uniqueId, runtimeId, type, javaId, javaUuid, javaType, customJavaTypeId);
+    }
+
     public AbstractHorseEntity(final UserConnection user, final long uniqueId, final long runtimeId, final String type, final int javaId, final UUID javaUuid, final EntityTypes1_21_11 javaType) {
-        super(user, uniqueId, runtimeId, type, javaId, javaUuid, javaType);
+        this(user, uniqueId, runtimeId, type, javaId, javaUuid, javaType, null);
     }
 
     @Override

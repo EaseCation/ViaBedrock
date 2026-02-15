@@ -22,8 +22,6 @@ import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.model.resourcepack.ResourcePack;
 import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
 import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
-import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomAttachableResourceRewriter;
-import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomEntityResourceRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomItemTextureResourceRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.resourcepack.GlyphSheetResourceRewriter;
 import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
@@ -41,8 +39,8 @@ public class ResourcePackRewriter {
     static {
         REWRITERS.add(new GlyphSheetResourceRewriter());
         REWRITERS.add(new CustomItemTextureResourceRewriter());
-        REWRITERS.add(new CustomAttachableResourceRewriter());
-        REWRITERS.add(new CustomEntityResourceRewriter());
+        //REWRITERS.add(new CustomAttachableResourceRewriter());
+        //REWRITERS.add(new CustomEntityResourceRewriter());
     }
 
     public static ResourcePack.Content bedrockToJava(final ResourcePacksStorage resourcePacksStorage) {

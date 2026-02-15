@@ -51,6 +51,7 @@ public class Entity {
     protected final int javaId;
     protected final UUID javaUuid;
     protected final EntityTypes1_21_11 javaType;
+    protected final Integer customJavaTypeId; // null 表示使用 javaType.getId()
 
     /**
      * x, y, z
@@ -66,7 +67,7 @@ public class Entity {
     protected int age;
     protected boolean hasBossBar;
 
-    public Entity(final UserConnection user, final long uniqueId, final long runtimeId, final String type, final int javaId, final UUID javaUuid, final EntityTypes1_21_11 javaType) {
+    public Entity(final UserConnection user, final long uniqueId, final long runtimeId, final String type, final int javaId, final UUID javaUuid, final EntityTypes1_21_11 javaType, final Integer customJavaTypeId) {
         this.user = user;
         this.uniqueId = uniqueId;
         this.runtimeId = runtimeId;
@@ -74,6 +75,11 @@ public class Entity {
         this.javaId = javaId;
         this.javaUuid = javaUuid;
         this.javaType = javaType;
+        this.customJavaTypeId = customJavaTypeId;
+    }
+
+    public Entity(final UserConnection user, final long uniqueId, final long runtimeId, final String type, final int javaId, final UUID javaUuid, final EntityTypes1_21_11 javaType) {
+        this(user, uniqueId, runtimeId, type, javaId, javaUuid, javaType, null);
     }
 
     public void tick() {
@@ -158,6 +164,10 @@ public class Entity {
 
     public EntityTypes1_21_11 javaType() {
         return this.javaType;
+    }
+
+    public int javaTypeId() {
+        return this.customJavaTypeId != null ? this.customJavaTypeId : this.javaType.getId();
     }
 
     public Position3f position() {

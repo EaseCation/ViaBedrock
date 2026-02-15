@@ -42,9 +42,13 @@ public class LivingEntity extends Entity {
     protected final Map<String, EntityAttribute> attributes = new HashMap<>();
     protected final Map<String, EntityEffect> effects = new HashMap<>();
 
-    public LivingEntity(final UserConnection user, final long uniqueId, final long runtimeId, final String type, final int javaId, final UUID javaUuid, final EntityTypes1_21_11 javaType) {
-        super(user, uniqueId, runtimeId, type, javaId, javaUuid, javaType);
+    public LivingEntity(final UserConnection user, final long uniqueId, final long runtimeId, final String type, final int javaId, final UUID javaUuid, final EntityTypes1_21_11 javaType, final Integer customJavaTypeId) {
+        super(user, uniqueId, runtimeId, type, javaId, javaUuid, javaType, customJavaTypeId);
         this.attributes.put("minecraft:health", new EntityAttribute("minecraft:health", 20F, 0, 20F));
+    }
+
+    public LivingEntity(final UserConnection user, final long uniqueId, final long runtimeId, final String type, final int javaId, final UUID javaUuid, final EntityTypes1_21_11 javaType) {
+        this(user, uniqueId, runtimeId, type, javaId, javaUuid, javaType, null);
     }
 
     @Override
