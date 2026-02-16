@@ -104,6 +104,10 @@ public class BlockEntityRewriter {
         BLOCK_ENTITY_REWRITERS.put(CustomBlockTags.TRAPPED_CHEST, new LootableContainerBlockEntityRewriter());
     }
 
+    public static void registerRewriter(final String tag, final Rewriter rewriter) {
+        BLOCK_ENTITY_REWRITERS.put(tag, rewriter);
+    }
+
     public static BlockEntity toJava(final UserConnection user, final int bedrockBlockStateId, final BedrockBlockEntity bedrockBlockEntity) {
         final BlockStateRewriter blockStateRewriter = user.get(BlockStateRewriter.class);
         if (bedrockBlockStateId == blockStateRewriter.bedrockId(BedrockBlockState.AIR)) {

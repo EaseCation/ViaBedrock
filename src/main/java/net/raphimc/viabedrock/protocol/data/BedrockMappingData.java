@@ -59,6 +59,8 @@ import net.raphimc.viabedrock.api.util.JsonUtil;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.SoundSource;
 import net.raphimc.viabedrock.protocol.data.generated.java.RegistryKeys;
+import net.raphimc.viabedrock.protocol.rewriter.BlockEntityRewriter;
+import net.raphimc.viabedrock.protocol.rewriter.blockentity.ModBlockBlockEntityRewriter;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.io.DataInputStream;
@@ -125,6 +127,7 @@ public class BedrockMappingData extends MappingDataBase {
     private Map<EntityTypes1_21_11, List<String>> javaEntityDataFields;
     private final Map<String, Integer> customEntityTypeIds = new HashMap<>();
     private final Map<String, EntityTypes1_21_11> customEntityTypeFallbacks = new HashMap<>();
+    private final Map<String, Integer> customBlockEntityTypeIds = new HashMap<>();
 
     // Entity Effects
     private BiMap<String, Integer> javaEffects;
@@ -736,6 +739,52 @@ public class BedrockMappingData extends MappingDataBase {
                 this.javaBlockEntities.put(javaBlockEntitiesJson.get(i).getAsString(), i);
             }
 
+            // Load custom block entity type ID mappings (exported by FabricRock)
+            final File customBlockEntityTypeIdsFile = new File("config/bedrock-loader/custom_block_entity_type_ids.json");
+            if (customBlockEntityTypeIdsFile.exists()) {
+                try {
+                    final JsonObject customBlockEntityRoot = new Gson().fromJson(new FileReader(customBlockEntityTypeIdsFile), JsonObject.class);
+                    final JsonObject customBlockEntityMappings = customBlockEntityRoot.getAsJsonObject("mappings");
+                    final ModBlockBlockEntityRewriter modBlockRewriter = new ModBlockBlockEntityRewriter();
+
+                    int loadedCount = 0;
+                    for (Map.Entry<String, JsonElement> entry : customBlockEntityMappings.entrySet()) {
+                        final String blockIdentifier = Key.namespaced(entry.getKey());
+                        final JsonObject mapping = entry.getValue().getAsJsonObject();
+                        final int javaTypeId = mapping.get("java_type_id").getAsInt();
+                        final String customTag = "mod_block:" + blockIdentifier;
+
+                        // Store the mapping
+                        this.customBlockEntityTypeIds.put(blockIdentifier, javaTypeId);
+
+                        // Register to javaBlockEntities: tag -> java type id (BiMap requires unique keys and values)
+                        if (!this.javaBlockEntities.containsKey(customTag) && !this.javaBlockEntities.containsValue(javaTypeId)) {
+                            this.javaBlockEntities.put(customTag, javaTypeId);
+                        } else {
+                            ViaBedrock.getPlatform().getLogger().warning(
+                                    "Block entity type conflict for " + blockIdentifier +
+                                            " (tag=" + customTag + ", typeId=" + javaTypeId + "), skipping");
+                            continue;
+                        }
+
+                        // Register to bedrockCustomBlockTags: block identifier -> tag
+                        // (bypasses block_tags.json validation since custom blocks are not in bedrockBlockStatesByIdentifier)
+                        if (!this.bedrockCustomBlockTags.containsKey(blockIdentifier)) {
+                            this.bedrockCustomBlockTags.put(blockIdentifier, customTag);
+                        }
+
+                        // Register block entity rewriter
+                        BlockEntityRewriter.registerRewriter(customTag, modBlockRewriter);
+
+                        loadedCount++;
+                    }
+
+                    ViaBedrock.getPlatform().getLogger().info("Loaded " + loadedCount + " custom block entity type ID mappings from FabricRock");
+                } catch (Exception e) {
+                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to load custom block entity type ID mappings", e);
+                }
+            }
+
             final JsonArray javaEntityAttributesJson = javaViaMappingJson.get("attributes").getAsJsonArray();
             this.javaEntityAttributes = HashBiMap.create(javaEntityAttributesJson.size());
             for (int i = 0; i < javaEntityAttributesJson.size(); i++) {
@@ -1226,6 +1275,10 @@ public class BedrockMappingData extends MappingDataBase {
 
     public Map<String, Integer> getCustomEntityTypeIds() {
         return this.customEntityTypeIds;
+    }
+
+    public Map<String, Integer> getCustomBlockEntityTypeIds() {
+        return this.customBlockEntityTypeIds;
     }
 
     public Map<String, EntityTypes1_21_11> getCustomEntityTypeFallbacks() {

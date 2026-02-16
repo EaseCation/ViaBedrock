@@ -27,8 +27,11 @@ import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorDataIDs;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorFlags;
 import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
+import net.raphimc.viabedrock.api.util.TextUtil;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
+
+import com.viaversion.nbt.tag.Tag;
 
 import java.util.List;
 import java.util.Set;
@@ -634,6 +637,56 @@ public class EntityMetadataRewriter {
                     javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.ATTACK_TARGET), VersionedTypes.V1_21_11.entityDataTypes().varIntType, targetEntity.javaId()));
                 } else if (targetId != 0)  {
                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received TARGET for non-GUARDIAN entity " + entity.type() + " with non-zero value " + targetId);
+                }
+            }
+            case NAME, NAME_RAW_TEXT -> {
+                String name = (String) entityData.getValue();
+                if (name != null && !name.isEmpty()) {
+                    Tag nbtName = TextUtil.stringToNbt(name);
+                    javaEntityData.add(new EntityData(
+                        entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME),
+                        VersionedTypes.V1_21_11.entityDataTypes().optionalComponentType,
+                        nbtName));
+                    javaEntityData.add(new EntityData(
+                        entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME_VISIBLE),
+                        VersionedTypes.V1_21_11.entityDataTypes().booleanType,
+                        true));
+                } else {
+                    javaEntityData.add(new EntityData(
+                        entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME),
+                        VersionedTypes.V1_21_11.entityDataTypes().optionalComponentType,
+                        null));
+                    javaEntityData.add(new EntityData(
+                        entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME_VISIBLE),
+                        VersionedTypes.V1_21_11.entityDataTypes().booleanType,
+                        false));
+                }
+            }
+            case NAMETAG_ALWAYS_SHOW -> {
+                byte alwaysShow = (byte) entityData.getValue();
+                javaEntityData.add(new EntityData(
+                    entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME_VISIBLE),
+                    VersionedTypes.V1_21_11.entityDataTypes().booleanType,
+                    alwaysShow == 1));
+            }
+            case RESERVED_038 -> { // SCALE (Bedrock entity data ID 38)
+                float scale = readNumber(entityData).floatValue();
+                if (entity.javaType().is(EntityTypes1_21_11.ARMOR_STAND) && scale == 0f) {
+                    // Bedrock: scale=0 hides body but keeps nametag visible
+                    // Java: invisible flag hides body but CustomNameVisible still works
+                    byte currentFlags = 0;
+                    EntityData existingFlags = entity.entityData().get(ActorDataIDs.RESERVED_0);
+                    if (existingFlags != null) {
+                        // Re-derive the flags with invisible added
+                        Set<ActorFlags> bedrockFlags = entity.entityFlags();
+                        if (bedrockFlags.contains(ActorFlags.ONFIRE)) currentFlags |= (1 << 0);
+                        if (bedrockFlags.contains(ActorFlags.SNEAKING)) currentFlags |= (1 << 1);
+                        if (bedrockFlags.contains(ActorFlags.RIDING)) currentFlags |= (1 << 2);
+                        if (bedrockFlags.contains(ActorFlags.SPRINTING)) currentFlags |= (1 << 3);
+                        if (bedrockFlags.contains(ActorFlags.SWIMMING)) currentFlags |= (1 << 4);
+                    }
+                    currentFlags |= (1 << 5); // Set invisible bit
+                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SHARED_FLAGS), VersionedTypes.V1_21_11.entityDataTypes().byteType, currentFlags));
                 }
             }
             case AGENT, BALLOON_ANCHOR -> {} // Education edition only, ignore
