@@ -57,8 +57,9 @@ import java.util.*;
 import java.util.logging.Level;
 import java.util.stream.Collectors;
 
+import net.raphimc.viabedrock.protocol.data.BedrockMappingData;
+
 // TODO: Feature: Block connections
-// TODO: Feature: Lighting
 public class ChunkTracker extends StoredObject {
 
     private static final byte[] FULL_LIGHT = new byte[ChunkSectionLight.LIGHT_LENGTH];
@@ -74,6 +75,11 @@ public class ChunkTracker extends StoredObject {
 
     private final Map<Long, BedrockChunk> chunks = new HashMap<>();
     private final Set<Long> dirtyChunks = new HashSet<>();
+    private final Set<Long> sentChunks = new HashSet<>();
+    private final Map<Long, ChunkSection[]> cachedSections = new HashMap<>();
+    private final Map<Long, byte[][]> cachedSkyLight = new HashMap<>();
+    private final Map<Long, byte[][]> cachedBlockLight = new HashMap<>();
+    private final Set<Long> pendingLightUpdates = new HashSet<>();
 
     private final Set<SubChunkPosition> subChunkRequests = new HashSet<>();
     private final Set<SubChunkPosition> pendingSubChunks = new HashSet<>();
@@ -136,7 +142,13 @@ public class ChunkTracker extends StoredObject {
     }
 
     public void unloadChunk(final ChunkPosition chunkPos) {
-        this.chunks.remove(chunkPos.chunkKey());
+        final long key = chunkPos.chunkKey();
+        this.chunks.remove(key);
+        this.sentChunks.remove(key);
+        this.cachedSections.remove(key);
+        this.cachedSkyLight.remove(key);
+        this.cachedBlockLight.remove(key);
+        this.pendingLightUpdates.remove(key);
         this.user().get(EntityTracker.class).removeItemFrame(chunkPos);
 
         final PacketWrapper unloadChunk = PacketWrapper.create(ClientboundPackets1_21_11.FORGET_LEVEL_CHUNK, this.user());
@@ -386,21 +398,634 @@ public class ChunkTracker extends StoredObject {
         }
 
         final Chunk remappedChunk = this.remapChunk(chunk);
+        final ChunkSection[] sections = remappedChunk.getSections();
+        final int sectionCount = sections.length;
+        final int lightSectionCount = sectionCount + 2; // +1 below, +1 above
+        final long chunkKey = ChunkPosition.chunkKey(chunkX, chunkZ);
+
+        // Cache remapped sections for neighbor light calculations
+        this.cachedSections.put(chunkKey, sections);
+
+        // Collect neighbor data for cross-chunk light propagation
+        final ChunkSection[][] neighborSections = collectNeighborSections(chunkX, chunkZ);
+        final byte[][][] neighborCachedSkyLight = collectNeighborCachedSkyLight(chunkX, chunkZ);
+        final byte[][][] neighborCachedBlockLight = collectNeighborCachedBlockLight(chunkX, chunkZ);
+
+        // Try global light cache first
+        final long lightCacheKey = computeCombinedLightCacheKey(sections, neighborSections, neighborCachedSkyLight, neighborCachedBlockLight);
+        final GlobalLightCache.LightCacheEntry cached = GlobalLightCache.getInstance().get(lightCacheKey);
+
+        final byte[][] skyLight;
+        final byte[][] blockLight;
+        if (cached != null) {
+            skyLight = cached.skyLight();
+            blockLight = cached.blockLight();
+        } else {
+            skyLight = this.computeSkyLight(sections, neighborSections, neighborCachedSkyLight);
+            blockLight = this.computeBlockLight(sections, neighborSections, neighborCachedBlockLight);
+            GlobalLightCache.getInstance().put(lightCacheKey, skyLight, blockLight);
+        }
+
+        // Cache computed light
+        this.cachedSkyLight.put(chunkKey, skyLight);
+        this.cachedBlockLight.put(chunkKey, blockLight);
+
+        // Strip custom block data for vanilla clients (no FabricRock mod)
+        if (!this.user().get(GameSessionStorage.class).hasFabricRock()) {
+            this.stripCustomBlockData(remappedChunk);
+        }
+
+        // Build masks
+        final BitSet skyLightMask = new BitSet();
+        final BitSet blockLightMask = new BitSet();
+        final BitSet emptySkyLightMask = new BitSet();
+        final BitSet emptyBlockLightMask = new BitSet();
+
+        final List<byte[]> skyLightArrays = new ArrayList<>();
+        final List<byte[]> blockLightArrays = new ArrayList<>();
+
+        for (int i = 0; i < lightSectionCount; i++) {
+            skyLightMask.set(i);
+            skyLightArrays.add(skyLight[i]);
+
+            if (blockLight[i] != null) {
+                blockLightMask.set(i);
+                blockLightArrays.add(blockLight[i]);
+            } else {
+                emptyBlockLightMask.set(i);
+            }
+        }
 
         final PacketWrapper levelChunkWithLight = PacketWrapper.create(ClientboundPackets1_21_11.LEVEL_CHUNK_WITH_LIGHT, this.user());
-        final BitSet lightMask = new BitSet();
-        lightMask.set(0, remappedChunk.getSections().length + 2);
         levelChunkWithLight.write(this.chunkType, remappedChunk); // chunk
-        levelChunkWithLight.write(Types.LONG_ARRAY_PRIMITIVE, lightMask.toLongArray()); // sky light mask
-        levelChunkWithLight.write(Types.LONG_ARRAY_PRIMITIVE, new long[0]); // block light mask
-        levelChunkWithLight.write(Types.LONG_ARRAY_PRIMITIVE, new long[0]); // empty sky light mask
-        levelChunkWithLight.write(Types.LONG_ARRAY_PRIMITIVE, lightMask.toLongArray()); // empty block light mask
-        levelChunkWithLight.write(Types.VAR_INT, remappedChunk.getSections().length + 2); // sky light length
-        for (int i = 0; i < remappedChunk.getSections().length + 2; i++) {
-            levelChunkWithLight.write(Types.BYTE_ARRAY_PRIMITIVE, FULL_LIGHT.clone()); // sky light
+        levelChunkWithLight.write(Types.LONG_ARRAY_PRIMITIVE, skyLightMask.toLongArray()); // sky light mask
+        levelChunkWithLight.write(Types.LONG_ARRAY_PRIMITIVE, blockLightMask.toLongArray()); // block light mask
+        levelChunkWithLight.write(Types.LONG_ARRAY_PRIMITIVE, emptySkyLightMask.toLongArray()); // empty sky light mask
+        levelChunkWithLight.write(Types.LONG_ARRAY_PRIMITIVE, emptyBlockLightMask.toLongArray()); // empty block light mask
+        levelChunkWithLight.write(Types.VAR_INT, skyLightArrays.size()); // sky light length
+        for (byte[] array : skyLightArrays) {
+            levelChunkWithLight.write(Types.BYTE_ARRAY_PRIMITIVE, array); // sky light
         }
-        levelChunkWithLight.write(Types.VAR_INT, 0); // block light length
+        levelChunkWithLight.write(Types.VAR_INT, blockLightArrays.size()); // block light length
+        for (byte[] array : blockLightArrays) {
+            levelChunkWithLight.write(Types.BYTE_ARRAY_PRIMITIVE, array); // block light
+        }
         levelChunkWithLight.send(BedrockProtocol.class);
+
+        // Mark as sent and schedule neighbor light updates for next tick
+        this.sentChunks.add(chunkKey);
+        this.markNeighborLightDirty(chunkX, chunkZ);
+    }
+
+    private void stripCustomBlockData(final Chunk chunk) {
+        final int vanillaBlockStateCount = BedrockProtocol.MAPPINGS.getVanillaBlockStateCount();
+        final int vanillaBlockEntityCount = BedrockProtocol.MAPPINGS.getVanillaBlockEntityCount();
+
+        // Replace custom block state IDs (>= vanillaBlockStateCount) with stone (ID 1)
+        for (final ChunkSection section : chunk.getSections()) {
+            if (section == null) continue;
+            final DataPalette blockPalette = section.palette(PaletteType.BLOCKS);
+            if (blockPalette == null) continue;
+            for (int i = 0; i < blockPalette.size(); i++) {
+                if (blockPalette.idByIndex(i) >= vanillaBlockStateCount) {
+                    blockPalette.setIdByIndex(i, 1); // stone
+                }
+            }
+        }
+
+        // Remove custom block entities (typeId >= vanillaBlockEntityCount or typeId < 0)
+        chunk.blockEntities().removeIf(be -> be.typeId() >= vanillaBlockEntityCount || be.typeId() < 0);
+    }
+
+    // neighborSections: [0]=-X, [1]=+X, [2]=-Z, [3]=+Z; elements may be null
+    // neighborCachedSkyLight: cached sky light from already-sent neighbors; elements may be null
+    private byte[][] computeSkyLight(final ChunkSection[] sections, final ChunkSection[][] neighborSections, final byte[][][] neighborCachedSkyLight) {
+        final int sectionCount = sections.length;
+        final int lightSectionCount = sectionCount + 2;
+        final BedrockMappingData mappings = BedrockProtocol.MAPPINGS;
+
+        // lightData[0] = below bottom section, lightData[1..sectionCount] = actual sections, lightData[sectionCount+1] = above top
+        final byte[][] lightData = new byte[lightSectionCount][];
+        for (int i = 0; i < lightSectionCount; i++) {
+            lightData[i] = new byte[ChunkSectionLight.LIGHT_LENGTH];
+        }
+
+        // Above-top section: all 15
+        Arrays.fill(lightData[sectionCount + 1], (byte) 0xFF);
+
+        // Phase 1: Column-based sky light initialization (top to bottom)
+        final int[][] skyLevel = new int[16][16];
+        for (int[] row : skyLevel) Arrays.fill(row, 15);
+
+        for (int sIdx = sectionCount - 1; sIdx >= 0; sIdx--) {
+            final DataPalette blockPalette = sections[sIdx].palette(PaletteType.BLOCKS);
+            final byte[] sectionLight = lightData[sIdx + 1];
+
+            if (blockPalette.size() == 1 && blockPalette.idByIndex(0) == 0) {
+                for (int z = 0; z < 16; z++) {
+                    for (int x = 0; x < 16; x++) {
+                        final int level = skyLevel[x][z];
+                        if (level > 0) {
+                            for (int y = 15; y >= 0; y--) {
+                                setNibble(sectionLight, x, y, z, level);
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+
+            for (int y = 15; y >= 0; y--) {
+                for (int z = 0; z < 16; z++) {
+                    for (int x = 0; x < 16; x++) {
+                        int level = skyLevel[x][z];
+                        if (level <= 0) continue;
+
+                        final int blockState = blockPalette.idAt(x, y, z);
+                        final int filter = mappings.getFilterLight(blockState);
+
+                        if (filter > 0) {
+                            level = Math.max(0, level - Math.max(1, filter));
+                        }
+
+                        skyLevel[x][z] = level;
+                        if (level > 0) {
+                            setNibble(sectionLight, x, y, z, level);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Below-bottom section: continue from skyLevel
+        for (int z = 0; z < 16; z++) {
+            for (int x = 0; x < 16; x++) {
+                final int level = skyLevel[x][z];
+                if (level > 0) {
+                    for (int y = 15; y >= 0; y--) {
+                        setNibble(lightData[0], x, y, z, level);
+                    }
+                }
+            }
+        }
+
+        // Phase 2: BFS horizontal propagation
+        final IntQueue queue = new IntQueue();
+
+        // Inject neighbor cached sky light at borders
+        injectNeighborLight(lightData, sections, neighborCachedSkyLight, queue, mappings);
+
+        // Seed the queue from internal positions
+        for (int sIdx = 0; sIdx < sectionCount; sIdx++) {
+            final byte[] sectionLight = lightData[sIdx + 1];
+            for (int y = 0; y < 16; y++) {
+                for (int z = 0; z < 16; z++) {
+                    for (int x = 0; x < 16; x++) {
+                        final int level = getNibble(sectionLight, x, y, z);
+                        if (level <= 1) continue;
+
+                        if (shouldEnqueue(lightData, sIdx, x, y, z, level)) {
+                            queue.enqueue(encodeLightPos(sIdx, x, y, z));
+                        }
+                    }
+                }
+            }
+        }
+
+        // BFS propagation
+        spreadLight(lightData, sections, neighborSections, queue, mappings);
+
+        return lightData;
+    }
+
+    private boolean shouldEnqueue(final byte[][] lightData, final int sIdx, final int x, final int y, final int z, final int level) {
+        for (int[] off : SHOULD_ENQUEUE_OFFSETS) {
+            final int nx = x + off[0];
+            final int nz = z + off[2];
+            if (nx < 0 || nx > 15 || nz < 0 || nz > 15) continue;
+            final int neighborLevel = getNibble(lightData[sIdx + 1], nx, y, nz);
+            if (neighborLevel < level - 1) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Inject neighbor cached light values at chunk borders as BFS seeds.
+     * neighborCachedLight: [0]=-X, [1]=+X, [2]=-Z, [3]=+Z; elements may be null.
+     * Each element is byte[][] with the same lightSectionCount layout as lightData.
+     */
+    private void injectNeighborLight(final byte[][] lightData, final ChunkSection[] sections,
+            final byte[][][] neighborCachedLight, final IntQueue queue, final BedrockMappingData mappings) {
+        if (neighborCachedLight == null) return;
+        final int sectionCount = sections.length;
+
+        // Direction definitions: [neighborIdx, neighborBorderCoord, targetBorderCoord, isXAxis]
+        // -X: neighbor's x=15 → our x=0;  +X: neighbor's x=0 → our x=15
+        // -Z: neighbor's z=15 → our z=0;  +Z: neighbor's z=0 → our z=15
+        final int[][] directions = {
+            {0, 15, 0, 1},   // -X
+            {1, 0, 15, 1},   // +X
+            {2, 15, 0, 0},   // -Z
+            {3, 0, 15, 0},   // +Z
+        };
+
+        for (int[] dir : directions) {
+            final int neighborIdx = dir[0];
+            final int neighborBorder = dir[1];
+            final int targetBorder = dir[2];
+            final boolean isXAxis = dir[3] == 1;
+
+            if (neighborCachedLight[neighborIdx] == null) continue;
+
+            for (int sIdx = 0; sIdx < sectionCount; sIdx++) {
+                final byte[] neighborLight = neighborCachedLight[neighborIdx][sIdx + 1]; // +1 for below-bottom offset
+                if (neighborLight == null) continue;
+
+                final DataPalette currentPalette = sections[sIdx].palette(PaletteType.BLOCKS);
+
+                for (int a = 0; a < 16; a++) {
+                    for (int y = 0; y < 16; y++) {
+                        final int nBlockX = isXAxis ? neighborBorder : a;
+                        final int nBlockZ = isXAxis ? a : neighborBorder;
+                        final int tBlockX = isXAxis ? targetBorder : a;
+                        final int tBlockZ = isXAxis ? a : targetBorder;
+
+                        final int neighborLightValue = getNibble(neighborLight, nBlockX, y, nBlockZ);
+                        if (neighborLightValue <= 1) continue;
+
+                        final int currentBlockState = currentPalette.idAt(tBlockX, y, tBlockZ);
+                        final int filter = mappings.getFilterLight(currentBlockState);
+                        final int newLevel = neighborLightValue - Math.max(1, filter);
+                        if (newLevel <= 0) continue;
+
+                        if (lightData[sIdx + 1] == null) {
+                            lightData[sIdx + 1] = new byte[ChunkSectionLight.LIGHT_LENGTH];
+                        }
+                        final int current = getNibble(lightData[sIdx + 1], tBlockX, y, tBlockZ);
+                        if (newLevel > current) {
+                            setNibble(lightData[sIdx + 1], tBlockX, y, tBlockZ, newLevel);
+                            queue.enqueue(encodeLightPos(sIdx, tBlockX, y, tBlockZ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * BFS light propagation shared by both sky light and block light.
+     * Spreads light within the current chunk. When hitting chunk borders,
+     * reads neighbor filterLight to correctly attenuate but does NOT write to neighbor light data.
+     */
+    private void spreadLight(final byte[][] lightData, final ChunkSection[] sections,
+            final ChunkSection[][] neighborSections, final IntQueue queue, final BedrockMappingData mappings) {
+        final int sectionCount = sections.length;
+
+        while (!queue.isEmpty()) {
+            final int encoded = queue.dequeue();
+            final int sIdx = (encoded >> 12) & 0xFF;
+            final int x = encoded & 0xF;
+            final int y = (encoded >> 4) & 0xF;
+            final int z = (encoded >> 8) & 0xF;
+            final int level = getNibble(lightData[sIdx + 1], x, y, z);
+            if (level <= 1) continue;
+
+            for (int[] dir : SPREAD_DIRS) {
+                int nx = x + dir[0];
+                int ny = y + dir[1];
+                int nz = z + dir[2];
+                int nSIdx = sIdx;
+
+                // Handle vertical section boundary
+                if (ny < 0) {
+                    nSIdx--;
+                    ny = 15;
+                } else if (ny > 15) {
+                    nSIdx++;
+                    ny = 0;
+                }
+
+                if (nSIdx < 0 || nSIdx >= sectionCount) continue;
+
+                // Handle horizontal chunk boundary
+                if (nx < 0 || nx > 15 || nz < 0 || nz > 15) {
+                    // Light exits the chunk — don't write, but this is fine.
+                    // Neighbor updates will be handled by updateNeighborLight().
+                    continue;
+                }
+
+                final int blockState = sections[nSIdx].palette(PaletteType.BLOCKS).idAt(nx, ny, nz);
+                final int filter = mappings.getFilterLight(blockState);
+                final int newLevel = level - Math.max(1, filter);
+                if (newLevel <= 0) continue;
+
+                if (lightData[nSIdx + 1] == null) {
+                    lightData[nSIdx + 1] = new byte[ChunkSectionLight.LIGHT_LENGTH];
+                }
+
+                final int current = getNibble(lightData[nSIdx + 1], nx, ny, nz);
+                if (newLevel > current) {
+                    setNibble(lightData[nSIdx + 1], nx, ny, nz, newLevel);
+                    queue.enqueue(encodeLightPos(nSIdx, nx, ny, nz));
+                }
+            }
+        }
+    }
+
+    // neighborSections: [0]=-X, [1]=+X, [2]=-Z, [3]=+Z; elements may be null
+    // neighborCachedBlockLight: cached block light from already-sent neighbors; elements may be null
+    private byte[][] computeBlockLight(final ChunkSection[] sections, final ChunkSection[][] neighborSections, final byte[][][] neighborCachedBlockLight) {
+        final int sectionCount = sections.length;
+        final int lightSectionCount = sectionCount + 2;
+        final BedrockMappingData mappings = BedrockProtocol.MAPPINGS;
+
+        // null means empty (no block light); only allocate sections that have light sources
+        final byte[][] lightData = new byte[lightSectionCount][];
+
+        // Phase 1: Find all light-emitting blocks in this chunk
+        final IntQueue queue = new IntQueue();
+
+        for (int sIdx = 0; sIdx < sectionCount; sIdx++) {
+            final DataPalette blockPalette = sections[sIdx].palette(PaletteType.BLOCKS);
+
+            boolean hasEmitter = false;
+            for (int i = 0; i < blockPalette.size(); i++) {
+                if (mappings.getEmitLight(blockPalette.idByIndex(i)) > 0) {
+                    hasEmitter = true;
+                    break;
+                }
+            }
+            if (!hasEmitter) continue;
+
+            for (int y = 0; y < 16; y++) {
+                for (int z = 0; z < 16; z++) {
+                    for (int x = 0; x < 16; x++) {
+                        final int blockState = blockPalette.idAt(x, y, z);
+                        final int emission = mappings.getEmitLight(blockState);
+                        if (emission > 0) {
+                            if (lightData[sIdx + 1] == null) {
+                                lightData[sIdx + 1] = new byte[ChunkSectionLight.LIGHT_LENGTH];
+                            }
+                            setNibble(lightData[sIdx + 1], x, y, z, emission);
+                            queue.enqueue(encodeLightPos(sIdx, x, y, z));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Inject neighbor cached block light at borders
+        injectNeighborLight(lightData, sections, neighborCachedBlockLight, queue, mappings);
+
+        if (queue.isEmpty()) {
+            return lightData;
+        }
+
+        // Phase 2: BFS propagation (shared with sky light)
+        spreadLight(lightData, sections, neighborSections, queue, mappings);
+
+        return lightData;
+    }
+
+    private static int encodeLightPos(final int sectionIdx, final int x, final int y, final int z) {
+        return (sectionIdx << 12) | (z << 8) | (y << 4) | x;
+    }
+
+    private static int getNibble(final byte[] lightArray, final int x, final int y, final int z) {
+        final int index = (y << 8) | (z << 4) | x;
+        final int byteIndex = index >> 1;
+        if ((index & 1) == 0) {
+            return lightArray[byteIndex] & 0xF;
+        } else {
+            return (lightArray[byteIndex] >> 4) & 0xF;
+        }
+    }
+
+    private static void setNibble(final byte[] lightArray, final int x, final int y, final int z, final int value) {
+        final int index = (y << 8) | (z << 4) | x;
+        final int byteIndex = index >> 1;
+        if ((index & 1) == 0) {
+            lightArray[byteIndex] = (byte) ((lightArray[byteIndex] & 0xF0) | (value & 0xF));
+        } else {
+            lightArray[byteIndex] = (byte) ((lightArray[byteIndex] & 0x0F) | ((value & 0xF) << 4));
+        }
+    }
+
+    private static final int[][] SHOULD_ENQUEUE_OFFSETS = {{-1, 0, 0}, {1, 0, 0}, {0, 0, -1}, {0, 0, 1}};
+    private static final int[][] SPREAD_DIRS = {{-1, 0, 0}, {1, 0, 0}, {0, -1, 0}, {0, 1, 0}, {0, 0, -1}, {0, 0, 1}};
+    private static final int[][] NEIGHBOR_OFFSETS = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
+
+    private static long computeCombinedLightCacheKey(
+            final ChunkSection[] sections,
+            final ChunkSection[][] neighborSections,
+            final byte[][][] neighborCachedSkyLight,
+            final byte[][][] neighborCachedBlockLight) {
+        long hash = 0xcbf29ce484222325L; // FNV-1a offset basis
+        hash = hashSections(hash, sections);
+        if (neighborSections != null) {
+            for (final ChunkSection[] ns : neighborSections) {
+                hash = (ns != null) ? hashSections(hash, ns) : fnv1a(hash, 0);
+            }
+        }
+        hash = hashNeighborLight(hash, neighborCachedSkyLight);
+        hash = hashNeighborLight(hash, neighborCachedBlockLight);
+        return hash;
+    }
+
+    private static long hashSections(long hash, final ChunkSection[] sections) {
+        hash = fnv1a(hash, sections.length);
+        for (final ChunkSection section : sections) {
+            if (section == null) {
+                hash = fnv1a(hash, 0);
+                continue;
+            }
+            final DataPalette palette = section.palette(PaletteType.BLOCKS);
+            if (palette.size() == 1) {
+                hash = fnv1a(hash, palette.idByIndex(0));
+            } else {
+                for (int y = 0; y < 16; y++) {
+                    for (int z = 0; z < 16; z++) {
+                        for (int x = 0; x < 16; x++) {
+                            hash = fnv1a(hash, palette.idAt(x, y, z));
+                        }
+                    }
+                }
+            }
+        }
+        return hash;
+    }
+
+    private static long hashNeighborLight(long hash, final byte[][][] neighborLight) {
+        if (neighborLight == null) return fnv1a(hash, 0);
+        for (final byte[][] nl : neighborLight) {
+            hash = hashLightData(hash, nl);
+        }
+        return hash;
+    }
+
+    private static long hashLightData(long hash, final byte[][] lightData) {
+        if (lightData == null) return fnv1a(hash, 0);
+        for (final byte[] section : lightData) {
+            if (section == null) {
+                hash = fnv1a(hash, 0);
+                continue;
+            }
+            hash = fnv1a(hash, Arrays.hashCode(section));
+        }
+        return hash;
+    }
+
+    private static long fnv1a(long hash, final int value) {
+        hash ^= value;
+        hash *= 0x100000001b3L;
+        return hash;
+    }
+
+    /**
+     * Collect neighbor sections and cached light for the 4 horizontal neighbors.
+     * Returns [neighborSections[4], neighborCachedSkyLight[4], neighborCachedBlockLight[4]].
+     */
+    private ChunkSection[][] collectNeighborSections(final int chunkX, final int chunkZ) {
+        final ChunkSection[][] neighborSections = new ChunkSection[4][];
+        for (int i = 0; i < 4; i++) {
+            final int nx = chunkX + NEIGHBOR_OFFSETS[i][0];
+            final int nz = chunkZ + NEIGHBOR_OFFSETS[i][1];
+            final long neighborKey = ChunkPosition.chunkKey(nx, nz);
+            neighborSections[i] = this.cachedSections.get(neighborKey);
+        }
+        return neighborSections;
+    }
+
+    private byte[][][] collectNeighborCachedSkyLight(final int chunkX, final int chunkZ) {
+        final byte[][][] result = new byte[4][][];
+        for (int i = 0; i < 4; i++) {
+            final int nx = chunkX + NEIGHBOR_OFFSETS[i][0];
+            final int nz = chunkZ + NEIGHBOR_OFFSETS[i][1];
+            result[i] = this.cachedSkyLight.get(ChunkPosition.chunkKey(nx, nz));
+        }
+        return result;
+    }
+
+    private byte[][][] collectNeighborCachedBlockLight(final int chunkX, final int chunkZ) {
+        final byte[][][] result = new byte[4][][];
+        for (int i = 0; i < 4; i++) {
+            final int nx = chunkX + NEIGHBOR_OFFSETS[i][0];
+            final int nz = chunkZ + NEIGHBOR_OFFSETS[i][1];
+            result[i] = this.cachedBlockLight.get(ChunkPosition.chunkKey(nx, nz));
+        }
+        return result;
+    }
+
+    /**
+     * Mark already-sent neighbors as needing a light update. The actual re-computation
+     * is deferred to tick() where updates are de-duplicated and batched.
+     */
+    private void markNeighborLightDirty(final int chunkX, final int chunkZ) {
+        for (int i = 0; i < 4; i++) {
+            final int nx = chunkX + NEIGHBOR_OFFSETS[i][0];
+            final int nz = chunkZ + NEIGHBOR_OFFSETS[i][1];
+            final long neighborKey = ChunkPosition.chunkKey(nx, nz);
+            if (this.sentChunks.contains(neighborKey) && this.cachedSections.containsKey(neighborKey)) {
+                this.pendingLightUpdates.add(neighborKey);
+            }
+        }
+    }
+
+    /**
+     * Re-compute light for a single already-sent neighbor chunk and send LIGHT_UPDATE if changed.
+     */
+    private void updateSingleNeighborLight(final long neighborKey) {
+        final ChunkSection[] neighborSections = this.cachedSections.get(neighborKey);
+        if (neighborSections == null) return;
+
+        final ChunkPosition pos = new ChunkPosition(neighborKey);
+        final int nx = pos.chunkX();
+        final int nz = pos.chunkZ();
+
+        final ChunkSection[][] neighborsOfNeighbor = collectNeighborSections(nx, nz);
+        final byte[][][] neighborSkyLightNeighbors = collectNeighborCachedSkyLight(nx, nz);
+        final byte[][][] neighborBlockLightNeighbors = collectNeighborCachedBlockLight(nx, nz);
+
+        // Try global light cache first
+        final long lightCacheKey = computeCombinedLightCacheKey(neighborSections, neighborsOfNeighbor, neighborSkyLightNeighbors, neighborBlockLightNeighbors);
+        final GlobalLightCache.LightCacheEntry cached = GlobalLightCache.getInstance().get(lightCacheKey);
+
+        final byte[][] newSkyLight;
+        final byte[][] newBlockLight;
+        if (cached != null) {
+            newSkyLight = cached.skyLight();
+            newBlockLight = cached.blockLight();
+        } else {
+            newSkyLight = this.computeSkyLight(neighborSections, neighborsOfNeighbor, neighborSkyLightNeighbors);
+            newBlockLight = this.computeBlockLight(neighborSections, neighborsOfNeighbor, neighborBlockLightNeighbors);
+            GlobalLightCache.getInstance().put(lightCacheKey, newSkyLight, newBlockLight);
+        }
+
+        final byte[][] oldSkyLight = this.cachedSkyLight.get(neighborKey);
+        final byte[][] oldBlockLight = this.cachedBlockLight.get(neighborKey);
+
+        if (hasLightChanged(oldSkyLight, newSkyLight) || hasLightChanged(oldBlockLight, newBlockLight)) {
+            this.cachedSkyLight.put(neighborKey, newSkyLight);
+            this.cachedBlockLight.put(neighborKey, newBlockLight);
+            this.sendLightUpdate(nx, nz, newSkyLight, newBlockLight);
+        }
+    }
+
+    /**
+     * Send a LIGHT_UPDATE packet to update a chunk's light without resending block data.
+     */
+    private void sendLightUpdate(final int chunkX, final int chunkZ, final byte[][] skyLight, final byte[][] blockLight) {
+        final int lightSectionCount = skyLight.length;
+
+        final BitSet skyLightMask = new BitSet();
+        final BitSet blockLightMask = new BitSet();
+        final BitSet emptySkyLightMask = new BitSet();
+        final BitSet emptyBlockLightMask = new BitSet();
+
+        final List<byte[]> skyLightArrays = new ArrayList<>();
+        final List<byte[]> blockLightArrays = new ArrayList<>();
+
+        for (int i = 0; i < lightSectionCount; i++) {
+            skyLightMask.set(i);
+            skyLightArrays.add(skyLight[i]);
+
+            if (blockLight[i] != null) {
+                blockLightMask.set(i);
+                blockLightArrays.add(blockLight[i]);
+            } else {
+                emptyBlockLightMask.set(i);
+            }
+        }
+
+        final PacketWrapper lightUpdate = PacketWrapper.create(ClientboundPackets1_21_11.LIGHT_UPDATE, this.user());
+        lightUpdate.write(Types.VAR_INT, chunkX); // chunk x
+        lightUpdate.write(Types.VAR_INT, chunkZ); // chunk z
+        lightUpdate.write(Types.LONG_ARRAY_PRIMITIVE, skyLightMask.toLongArray()); // sky light mask
+        lightUpdate.write(Types.LONG_ARRAY_PRIMITIVE, blockLightMask.toLongArray()); // block light mask
+        lightUpdate.write(Types.LONG_ARRAY_PRIMITIVE, emptySkyLightMask.toLongArray()); // empty sky light mask
+        lightUpdate.write(Types.LONG_ARRAY_PRIMITIVE, emptyBlockLightMask.toLongArray()); // empty block light mask
+        lightUpdate.write(Types.VAR_INT, skyLightArrays.size()); // sky light length
+        for (byte[] array : skyLightArrays) {
+            lightUpdate.write(Types.BYTE_ARRAY_PRIMITIVE, array); // sky light
+        }
+        lightUpdate.write(Types.VAR_INT, blockLightArrays.size()); // block light length
+        for (byte[] array : blockLightArrays) {
+            lightUpdate.write(Types.BYTE_ARRAY_PRIMITIVE, array); // block light
+        }
+        lightUpdate.send(BedrockProtocol.class);
+    }
+
+    private static boolean hasLightChanged(final byte[][] oldLight, final byte[][] newLight) {
+        if (oldLight == null || newLight == null) return oldLight != newLight;
+        if (oldLight.length != newLight.length) return true;
+        for (int i = 0; i < oldLight.length; i++) {
+            if (oldLight[i] == null && newLight[i] == null) continue;
+            if (oldLight[i] == null || newLight[i] == null) return true;
+            if (!Arrays.equals(oldLight[i], newLight[i])) return true;
+        }
+        return false;
     }
 
     public Dimension getDimension() {
@@ -430,12 +1055,32 @@ public class ChunkTracker extends StoredObject {
         return empty;
     }
 
+    private static final int MAX_CHUNKS_PER_TICK = 4;
+    private static final int MAX_LIGHT_UPDATES_PER_TICK = 8;
+
     public void tick() {
-        for (Long dirtyChunk : this.dirtyChunks) {
-            final ChunkPosition chunkPos = new ChunkPosition(dirtyChunk);
-            this.sendChunk(chunkPos.chunkX(), chunkPos.chunkZ());
+        if (!this.dirtyChunks.isEmpty()) {
+            int count = 0;
+            final Iterator<Long> it = this.dirtyChunks.iterator();
+            while (it.hasNext() && count < MAX_CHUNKS_PER_TICK) {
+                final long dirtyChunk = it.next();
+                it.remove();
+                final ChunkPosition chunkPos = new ChunkPosition(dirtyChunk);
+                this.sendChunk(chunkPos.chunkX(), chunkPos.chunkZ());
+                count++;
+            }
         }
-        this.dirtyChunks.clear();
+
+        if (!this.pendingLightUpdates.isEmpty()) {
+            int lightBudget = MAX_LIGHT_UPDATES_PER_TICK;
+            final Iterator<Long> it = this.pendingLightUpdates.iterator();
+            while (it.hasNext() && lightBudget > 0) {
+                final long chunkKey = it.next();
+                it.remove();
+                lightBudget--;
+                this.updateSingleNeighborLight(chunkKey);
+            }
+        }
 
         if (this.user().get(EntityTracker.class) == null || !this.user().get(EntityTracker.class).getClientPlayer().isInitiallySpawned()) {
             return;
@@ -719,6 +1364,36 @@ public class ChunkTracker extends StoredObject {
     }
 
     private record SubChunkPosition(int chunkX, int subChunkY, int chunkZ) {
+    }
+
+    private static final class IntQueue {
+        private int[] data;
+        private int head, tail;
+
+        IntQueue() {
+            this.data = new int[1024];
+        }
+
+        void enqueue(int value) {
+            if (tail == data.length) {
+                if (head > data.length / 4) {
+                    System.arraycopy(data, head, data, 0, tail - head);
+                    tail -= head;
+                    head = 0;
+                } else {
+                    data = Arrays.copyOf(data, data.length * 2);
+                }
+            }
+            data[tail++] = value;
+        }
+
+        int dequeue() {
+            return data[head++];
+        }
+
+        boolean isEmpty() {
+            return head >= tail;
+        }
     }
 
 }

@@ -55,6 +55,7 @@ public class GameSessionStorage extends StoredObject {
     private boolean blockBreakingServerAuthoritative;
 
     private boolean immutableWorld;
+    private boolean hasFabricRock;
     private TextComponent deathMessage;
 
     public GameSessionStorage(final UserConnection user) {
@@ -190,6 +191,14 @@ public class GameSessionStorage extends StoredObject {
 
     public void setImmutableWorld(final boolean immutableWorld) {
         this.immutableWorld = immutableWorld;
+    }
+
+    public boolean hasFabricRock() {
+        return this.hasFabricRock;
+    }
+
+    public void setHasFabricRock(final boolean hasFabricRock) {
+        this.hasFabricRock = hasFabricRock;
     }
 
     public TextComponent getDeathMessage() {

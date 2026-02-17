@@ -24,6 +24,7 @@ import com.google.common.collect.Multimap;
 import com.viaversion.nbt.io.NBTIO;
 import com.viaversion.nbt.limiter.TagLimiter;
 import com.viaversion.nbt.stringified.SNBT;
+import com.viaversion.nbt.tag.ByteArrayTag;
 import com.viaversion.nbt.tag.CompoundTag;
 import com.viaversion.nbt.tag.IntArrayTag;
 import com.viaversion.nbt.tag.ListTag;
@@ -99,6 +100,10 @@ public class BedrockMappingData extends MappingDataBase {
     private IntSet javaPreWaterloggedBlockStates;
     private Int2IntMap javaPottedBlockStates;
     private Map<String, IntSet> javaHeightMapBlockStates;
+    private byte[] javaBlockStateEmitLight;
+    private byte[] javaBlockStateFilterLight;
+    private Int2IntMap customBlockEmitLight;
+    private Int2IntMap customBlockFilterLight;
 
     // Biomes
     private CompoundTag bedrockBiomeDefinitions;
@@ -128,6 +133,8 @@ public class BedrockMappingData extends MappingDataBase {
     private final Map<String, Integer> customEntityTypeIds = new HashMap<>();
     private final Map<String, EntityTypes1_21_11> customEntityTypeFallbacks = new HashMap<>();
     private final Map<String, Integer> customBlockEntityTypeIds = new HashMap<>();
+    private int vanillaBlockStateCount;
+    private int vanillaBlockEntityCount;
 
     // Entity Effects
     private BiMap<String, Integer> javaEffects;
@@ -212,7 +219,7 @@ public class BedrockMappingData extends MappingDataBase {
                 final BlockState blockState = BlockState.fromString(javaBlockStatesJson.get(i).getAsString());
                 this.javaBlockStates.put(blockState, i);
             }
-
+            this.vanillaBlockStateCount = this.javaBlockStates.size();
             final ListTag<CompoundTag> bedrockBlockStatesTag = this.readNBT("bedrock/block_palette.nbt").getListTag("blocks", CompoundTag.class);
             this.bedrockBlockStates = new LinkedHashSet<>(bedrockBlockStatesTag.size());
             bedrockBlockStatesByIdentifier = HashMultimap.create(bedrockBlockStatesTag.size(), 32);
@@ -239,6 +246,10 @@ public class BedrockMappingData extends MappingDataBase {
             }
 
             // 加载 FabricRock 导出的自定义方块映射
+            this.customBlockEmitLight = new Int2IntOpenHashMap();
+            this.customBlockFilterLight = new Int2IntOpenHashMap();
+            ((Int2IntOpenHashMap) this.customBlockEmitLight).defaultReturnValue(-1);
+            ((Int2IntOpenHashMap) this.customBlockFilterLight).defaultReturnValue(-1);
             final File customMappingFile = new File("config/bedrock-loader/block_state_mappings.json");
             if (customMappingFile.exists()) {
                 try {
@@ -280,6 +291,20 @@ public class BedrockMappingData extends MappingDataBase {
                             this.bedrockToJavaBlockStates.put(bedrockBlockState, javaBlockState);
                             if (!keyExists && !valueExists) {
                                 addedCount++;
+                            }
+                        }
+
+                        // 3. 读取并存储自定义方块的光照属性
+                        if (mapping.has("light_emission")) {
+                            final int lightEmission = mapping.get("light_emission").getAsInt();
+                            if (lightEmission > 0) {
+                                this.customBlockEmitLight.put(javaStateId, lightEmission);
+                            }
+                        }
+                        if (mapping.has("light_filter")) {
+                            final int lightFilter = mapping.get("light_filter").getAsInt();
+                            if (lightFilter != 15) {
+                                this.customBlockFilterLight.put(javaStateId, lightFilter);
                             }
                         }
                     }
@@ -379,6 +404,16 @@ public class BedrockMappingData extends MappingDataBase {
                     blockStates.add(blockState);
                 }
                 this.javaHeightMapBlockStates.put(entry.getKey(), blockStates);
+            }
+
+            final CompoundTag blockLightDataTag = this.readNBT("java/block_light_data.nbt");
+            if (blockLightDataTag != null) {
+                this.javaBlockStateEmitLight = ((ByteArrayTag) blockLightDataTag.get("emitLight")).getValue();
+                this.javaBlockStateFilterLight = ((ByteArrayTag) blockLightDataTag.get("filterLight")).getValue();
+            } else {
+                this.getLogger().warning("Could not load block light data, lighting will be disabled");
+                this.javaBlockStateEmitLight = new byte[0];
+                this.javaBlockStateFilterLight = new byte[0];
             }
         }
 
@@ -738,7 +773,7 @@ public class BedrockMappingData extends MappingDataBase {
             for (int i = 0; i < javaBlockEntitiesJson.size(); i++) {
                 this.javaBlockEntities.put(javaBlockEntitiesJson.get(i).getAsString(), i);
             }
-
+            this.vanillaBlockEntityCount = this.javaBlockEntities.size();
             // Load custom block entity type ID mappings (exported by FabricRock)
             final File customBlockEntityTypeIdsFile = new File("config/bedrock-loader/custom_block_entity_type_ids.json");
             if (customBlockEntityTypeIdsFile.exists()) {
@@ -1193,6 +1228,28 @@ public class BedrockMappingData extends MappingDataBase {
         return this.javaHeightMapBlockStates;
     }
 
+    public int getEmitLight(final int javaBlockStateId) {
+        if (javaBlockStateId >= 0 && javaBlockStateId < this.javaBlockStateEmitLight.length) {
+            return this.javaBlockStateEmitLight[javaBlockStateId] & 0xFF;
+        }
+        if (this.customBlockEmitLight != null) {
+            final int value = this.customBlockEmitLight.get(javaBlockStateId);
+            if (value != -1) return value;
+        }
+        return 0;
+    }
+
+    public int getFilterLight(final int javaBlockStateId) {
+        if (javaBlockStateId >= 0 && javaBlockStateId < this.javaBlockStateFilterLight.length) {
+            return this.javaBlockStateFilterLight[javaBlockStateId] & 0xFF;
+        }
+        if (this.customBlockFilterLight != null) {
+            final int value = this.customBlockFilterLight.get(javaBlockStateId);
+            if (value != -1) return value;
+        }
+        return 15;
+    }
+
     public CompoundTag getBedrockBiomeDefinitions() {
         return this.bedrockBiomeDefinitions;
     }
@@ -1279,6 +1336,14 @@ public class BedrockMappingData extends MappingDataBase {
 
     public Map<String, Integer> getCustomBlockEntityTypeIds() {
         return this.customBlockEntityTypeIds;
+    }
+
+    public int getVanillaBlockStateCount() {
+        return this.vanillaBlockStateCount;
+    }
+
+    public int getVanillaBlockEntityCount() {
+        return this.vanillaBlockEntityCount;
     }
 
     public Map<String, EntityTypes1_21_11> getCustomEntityTypeFallbacks() {

@@ -40,6 +40,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketViolat
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketViolationType;
 import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
 import net.raphimc.viabedrock.protocol.storage.ClientSettingsStorage;
+import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
 import net.raphimc.viabedrock.protocol.storage.PacketSyncStorage;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
@@ -134,6 +135,9 @@ public class MultiStatePackets {
 
             if (channels.contains(ViaBedrockUtilityInterface.CONFIRM_CHANNEL)) {
                 ViaBedrockUtilityInterface.confirmPresence(wrapper.user());
+            }
+            if (channels.contains("fabricrock:confirm")) {
+                wrapper.user().get(GameSessionStorage.class).setHasFabricRock(true);
             }
         }
     };
