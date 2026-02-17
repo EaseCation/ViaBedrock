@@ -37,6 +37,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnu
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ModalFormCancelReason;
+import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.NpcRequestPacket_RequestType;
 import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomItemTags;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
 import net.raphimc.viabedrock.protocol.model.FullContainerName;
@@ -51,6 +52,8 @@ import java.util.logging.Level;
 
 public class InventoryTracker extends StoredObject {
 
+    public record NpcDialogueState(long npcEntityUniqueId, long npcEntityRuntimeId, String sceneName) {}
+
     private final InventoryContainer inventoryContainer = new InventoryContainer(this.user());
     private final OffhandContainer offhandContainer = new OffhandContainer(this.user());
     private final ArmorContainer armorContainer = new ArmorContainer(this.user());
@@ -60,6 +63,7 @@ public class InventoryTracker extends StoredObject {
     private Container currentContainer = null;
     private Container pendingCloseContainer = null;
     private IntObjectPair<Form> currentForm = null;
+    private NpcDialogueState currentNpcDialogue = null;
 
     public InventoryTracker(final UserConnection user) {
         super(user);
@@ -159,7 +163,7 @@ public class InventoryTracker extends StoredObject {
     }
 
     public boolean isAnyScreenOpen() {
-        return this.isContainerOpen() || this.currentForm != null;
+        return this.isContainerOpen() || this.currentForm != null || this.currentNpcDialogue != null;
     }
 
     public InventoryContainer getInventoryContainer() {
@@ -199,6 +203,28 @@ public class InventoryTracker extends StoredObject {
 
     public void setCurrentForm(final IntObjectPair<Form> currentForm) {
         this.currentForm = currentForm;
+    }
+
+    public NpcDialogueState getCurrentNpcDialogue() {
+        return this.currentNpcDialogue;
+    }
+
+    public void setCurrentNpcDialogue(final NpcDialogueState npcDialogue) {
+        this.currentNpcDialogue = npcDialogue;
+    }
+
+    public void closeCurrentNpcDialogue() {
+        if (this.currentNpcDialogue == null) {
+            throw new IllegalStateException("There is no NPC dialogue currently open");
+        }
+        final PacketWrapper npcRequest = PacketWrapper.create(ServerboundBedrockPackets.NPC_REQUEST, this.user());
+        npcRequest.write(BedrockTypes.UNSIGNED_VAR_LONG, this.currentNpcDialogue.npcEntityRuntimeId()); // entity runtime id
+        npcRequest.write(Types.BYTE, (byte) NpcRequestPacket_RequestType.ExecuteClosingCommands.getValue()); // type
+        npcRequest.write(BedrockTypes.STRING, ""); // command
+        npcRequest.write(Types.BYTE, (byte) 0); // action index
+        npcRequest.write(BedrockTypes.STRING, this.currentNpcDialogue.sceneName()); // scene name
+        npcRequest.sendToServer(BedrockProtocol.class);
+        this.currentNpcDialogue = null;
     }
 
     private void forceCloseCurrentContainer() {
