@@ -86,6 +86,12 @@ public class ViaBedrockUtilityInterface {
             pluginMessage.write(Types.INT, entityData.get(ActorDataIDs.SKIN_ID).<Integer>value());
         }
 
+        boolean writeScale = entityData.containsKey(ActorDataIDs.RESERVED_038);
+        pluginMessage.write(Types.BOOLEAN, writeScale);
+        if (writeScale) {
+            pluginMessage.write(Types.FLOAT, entityData.get(ActorDataIDs.RESERVED_038).<Float>value());
+        }
+
         pluginMessage.send(BedrockProtocol.class);
     }
 

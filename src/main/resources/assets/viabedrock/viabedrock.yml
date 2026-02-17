@@ -16,3 +16,5 @@ pack-cache: "disk"
 translate-show-coordinates-game-rule: false
 # If true, disables the internal server blacklist. This will allow you to connect to any server, even if it's known to ban ViaBedrock clients
 disable-server-blacklist: false
+# The language code to send to the bedrock server (e.g. "en_us", "zh_cn"). Empty = "en_us"
+language: ""

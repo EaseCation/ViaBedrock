@@ -71,6 +71,11 @@ public interface ViaBedrockConfig extends Config {
      */
     boolean shouldDisableServerBlacklist();
 
+    /**
+     * @return The language code to send to the bedrock server (e.g. "en_us", "zh_cn"). Empty = "en_us"
+     */
+    String getLanguage();
+
     enum BlobCacheMode {
 
         /**

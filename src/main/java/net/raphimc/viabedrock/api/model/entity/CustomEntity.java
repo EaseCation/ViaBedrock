@@ -141,6 +141,18 @@ public class CustomEntity extends Entity {
     }
 
     @Override
+    protected boolean translateEntityData(final ActorDataIDs id, final EntityData entityData, final List<EntityData> javaEntityData) {
+        if (id == ActorDataIDs.RESERVED_038 && this.spawned) {
+            final ChannelStorage channelStorage = this.user.get(ChannelStorage.class);
+            if (channelStorage.hasChannel(ViaBedrockUtilityInterface.CONFIRM_CHANNEL)) {
+                ViaBedrockUtilityInterface.spawnCustomEntity(this.user, this.javaUuid(), this.entityDefinition.identifier(), this.entityData());
+            }
+            return true;
+        }
+        return super.translateEntityData(id, entityData, javaEntityData);
+    }
+
+    @Override
     protected void onEntityDataChanged() {
         super.onEntityDataChanged();
 

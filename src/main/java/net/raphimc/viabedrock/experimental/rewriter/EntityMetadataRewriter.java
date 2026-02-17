@@ -21,11 +21,17 @@ import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.minecraft.EulerAngle;
 import com.viaversion.viaversion.api.minecraft.entities.EntityTypes1_21_11;
 import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
+import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
+import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
+import com.viaversion.viaversion.protocols.v1_21_9to1_21_11.packet.ClientboundPackets1_21_11;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.model.entity.Entity;
+import net.raphimc.viabedrock.api.model.entity.LivingEntity;
+import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorDataIDs;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorFlags;
+import net.raphimc.viabedrock.protocol.data.generated.java.Attributes;
 import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
 import net.raphimc.viabedrock.api.util.TextUtil;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
@@ -65,7 +71,13 @@ public class EntityMetadataRewriter {
                 if (bedrockFlags.contains(ActorFlags.INVISIBLE)) {
                     javaBitMask |= (1 << 5);
                 }
-                
+                if (entity.javaType().is(EntityTypes1_21_11.ARMOR_STAND)) {
+                    EntityData scaleData = entity.entityData().get(ActorDataIDs.RESERVED_038);
+                    if (scaleData != null && readNumber(scaleData).floatValue() == 0f) {
+                        javaBitMask |= (1 << 5);
+                    }
+                }
+
                 javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SHARED_FLAGS), VersionedTypes.V1_21_11.entityDataTypes().byteType, javaBitMask));
 
                 javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SILENT), VersionedTypes.V1_21_11.entityDataTypes().booleanType, bedrockFlags.contains(ActorFlags.SILENT)));
@@ -352,6 +364,10 @@ public class EntityMetadataRewriter {
 
                 byte javaBitMask = 0;
                 javaBitMask |= 0x04; // Has arms
+                EntityData scaleData = entity.entityData().get(ActorDataIDs.RESERVED_038);
+                if (scaleData != null && readNumber(scaleData).floatValue() == 0f) {
+                    javaBitMask |= 0x10; // Marker: zero-size bounding box (matches Bedrock scale=0)
+                }
 
                 javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.CLIENT_FLAGS), VersionedTypes.V1_21_11.entityDataTypes().byteType, javaBitMask));
 
@@ -671,22 +687,57 @@ public class EntityMetadataRewriter {
             }
             case RESERVED_038 -> { // SCALE (Bedrock entity data ID 38)
                 float scale = readNumber(entityData).floatValue();
-                if (entity.javaType().is(EntityTypes1_21_11.ARMOR_STAND) && scale == 0f) {
-                    // Bedrock: scale=0 hides body but keeps nametag visible
-                    // Java: invisible flag hides body but CustomNameVisible still works
-                    byte currentFlags = 0;
-                    EntityData existingFlags = entity.entityData().get(ActorDataIDs.RESERVED_0);
-                    if (existingFlags != null) {
-                        // Re-derive the flags with invisible added
-                        Set<ActorFlags> bedrockFlags = entity.entityFlags();
-                        if (bedrockFlags.contains(ActorFlags.ONFIRE)) currentFlags |= (1 << 0);
-                        if (bedrockFlags.contains(ActorFlags.SNEAKING)) currentFlags |= (1 << 1);
-                        if (bedrockFlags.contains(ActorFlags.RIDING)) currentFlags |= (1 << 2);
-                        if (bedrockFlags.contains(ActorFlags.SPRINTING)) currentFlags |= (1 << 3);
-                        if (bedrockFlags.contains(ActorFlags.SWIMMING)) currentFlags |= (1 << 4);
+                if (entity.javaType().is(EntityTypes1_21_11.ARMOR_STAND)) {
+                    if (scale == 0f) {
+                        // Bedrock: scale=0 hides body but keeps nametag visible
+                        // Java: invisible flag hides body, Marker removes bounding box height
+                        byte sharedFlags = 0;
+                        EntityData existingFlags = entity.entityData().get(ActorDataIDs.RESERVED_0);
+                        if (existingFlags != null) {
+                            Set<ActorFlags> bedrockFlags = entity.entityFlags();
+                            if (bedrockFlags.contains(ActorFlags.ONFIRE)) sharedFlags |= (1 << 0);
+                            if (bedrockFlags.contains(ActorFlags.SNEAKING)) sharedFlags |= (1 << 1);
+                            if (bedrockFlags.contains(ActorFlags.RIDING)) sharedFlags |= (1 << 2);
+                            if (bedrockFlags.contains(ActorFlags.SPRINTING)) sharedFlags |= (1 << 3);
+                            if (bedrockFlags.contains(ActorFlags.SWIMMING)) sharedFlags |= (1 << 4);
+                        }
+                        sharedFlags |= (1 << 5); // Set invisible bit
+                        javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SHARED_FLAGS), VersionedTypes.V1_21_11.entityDataTypes().byteType, sharedFlags));
+
+                        byte clientFlags = 0x04; // Has arms
+                        clientFlags |= 0x10; // Marker: zero-size bounding box
+                        javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.CLIENT_FLAGS), VersionedTypes.V1_21_11.entityDataTypes().byteType, clientFlags));
+                    } else {
+                        // Scale changed to non-zero: remove invisible and marker
+                        byte sharedFlags = 0;
+                        EntityData existingFlags = entity.entityData().get(ActorDataIDs.RESERVED_0);
+                        if (existingFlags != null) {
+                            Set<ActorFlags> bedrockFlags = entity.entityFlags();
+                            if (bedrockFlags.contains(ActorFlags.ONFIRE)) sharedFlags |= (1 << 0);
+                            if (bedrockFlags.contains(ActorFlags.SNEAKING)) sharedFlags |= (1 << 1);
+                            if (bedrockFlags.contains(ActorFlags.RIDING)) sharedFlags |= (1 << 2);
+                            if (bedrockFlags.contains(ActorFlags.SPRINTING)) sharedFlags |= (1 << 3);
+                            if (bedrockFlags.contains(ActorFlags.SWIMMING)) sharedFlags |= (1 << 4);
+                            if (bedrockFlags.contains(ActorFlags.INVISIBLE)) sharedFlags |= (1 << 5);
+                        }
+                        javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SHARED_FLAGS), VersionedTypes.V1_21_11.entityDataTypes().byteType, sharedFlags));
+
+                        byte clientFlags = 0x04; // Has arms, no marker
+                        javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.CLIENT_FLAGS), VersionedTypes.V1_21_11.entityDataTypes().byteType, clientFlags));
                     }
-                    currentFlags |= (1 << 5); // Set invisible bit
-                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SHARED_FLAGS), VersionedTypes.V1_21_11.entityDataTypes().byteType, currentFlags));
+                }
+
+                // Send minecraft:scale attribute for all LivingEntity types (including ARMOR_STAND when scale != 0)
+                if (entity instanceof LivingEntity && scale != 0f) {
+                    final double javaScale = Math.max(1.0 / 16.0, Math.min(16.0, (double) scale));
+
+                    final PacketWrapper updateAttributes = PacketWrapper.create(ClientboundPackets1_21_11.UPDATE_ATTRIBUTES, user);
+                    updateAttributes.write(Types.VAR_INT, entity.javaId()); // entity id
+                    updateAttributes.write(Types.VAR_INT, 1); // attribute count
+                    updateAttributes.write(Types.VAR_INT, BedrockProtocol.MAPPINGS.getJavaEntityAttributes().get(Attributes.SCALE)); // attribute id
+                    updateAttributes.write(Types.DOUBLE, javaScale); // base value
+                    updateAttributes.write(Types.VAR_INT, 0); // modifier count
+                    updateAttributes.send(BedrockProtocol.class);
                 }
             }
             case AGENT, BALLOON_ANCHOR -> {} // Education edition only, ignore

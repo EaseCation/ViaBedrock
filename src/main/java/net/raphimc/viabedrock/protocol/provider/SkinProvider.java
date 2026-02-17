@@ -33,6 +33,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.UIProfile;
 import net.raphimc.viabedrock.protocol.model.SkinData;
 import net.raphimc.viabedrock.protocol.storage.AuthData;
 import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
+import net.raphimc.viabedrock.protocol.storage.ClientSettingsStorage;
 import net.raphimc.viabedrock.protocol.storage.HandshakeStorage;
 import net.raphimc.viabedrock.protocol.types.primitive.ImageType;
 
@@ -84,7 +85,8 @@ public class SkinProvider implements Provider {
         }
         { // Client claims
             claims.put("GameVersion", ProtocolConstants.BEDROCK_VERSION_NAME);
-            claims.put("LanguageCode", "en_US");
+            final ClientSettingsStorage clientSettings = user.get(ClientSettingsStorage.class);
+            claims.put("LanguageCode", convertLocaleFormat(clientSettings != null ? clientSettings.locale() : "en_us"));
             claims.put("GraphicsMode", GraphicsMode.Fancy.getValue());
             claims.put("GuiScale", -1);
             claims.put("UIProfile", UIProfile.Classic.getValue());
@@ -111,6 +113,14 @@ public class SkinProvider implements Provider {
         }
 
         return claims;
+    }
+
+    private static String convertLocaleFormat(final String locale) {
+        final int underscoreIndex = locale.indexOf('_');
+        if (underscoreIndex > 0 && underscoreIndex < locale.length() - 1) {
+            return locale.substring(0, underscoreIndex + 1) + locale.substring(underscoreIndex + 1).toUpperCase();
+        }
+        return locale;
     }
 
     public void setSkin(final UserConnection user, final UUID playerUuid, final SkinData skin) {

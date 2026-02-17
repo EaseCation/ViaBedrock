@@ -37,6 +37,7 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
     private PackCacheMode packCacheMode;
     private boolean translateShowCoordinatesGameRule;
     private boolean disableServerBlacklist;
+    private String language;
 
     public ViaBedrockConfig(final File configFile, final Logger logger) {
         super(configFile, logger);
@@ -58,6 +59,7 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
         this.packCacheMode = PackCacheMode.byName(this.getString("pack-cache", "disk"));
         this.translateShowCoordinatesGameRule = this.getBoolean("translate-show-coordinates-game-rule", false);
         this.disableServerBlacklist = this.getBoolean("disable-server-blacklist", false);
+        this.language = this.getString("language", "");
     }
 
     @Override
@@ -117,6 +119,11 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
     @Override
     public boolean shouldDisableServerBlacklist() {
         return this.disableServerBlacklist;
+    }
+
+    @Override
+    public String getLanguage() {
+        return this.language;
     }
 
 }
