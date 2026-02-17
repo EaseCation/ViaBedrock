@@ -80,6 +80,7 @@ public class ChunkTracker extends StoredObject {
     private final Map<Long, byte[][]> cachedSkyLight = new HashMap<>();
     private final Map<Long, byte[][]> cachedBlockLight = new HashMap<>();
     private final Set<Long> pendingLightUpdates = new HashSet<>();
+    private final Set<Long> pendingAsyncLight = new HashSet<>();
 
     private final Set<SubChunkPosition> subChunkRequests = new HashSet<>();
     private final Set<SubChunkPosition> pendingSubChunks = new HashSet<>();
@@ -149,6 +150,7 @@ public class ChunkTracker extends StoredObject {
         this.cachedSkyLight.remove(key);
         this.cachedBlockLight.remove(key);
         this.pendingLightUpdates.remove(key);
+        this.pendingAsyncLight.remove(key);
         this.user().get(EntityTracker.class).removeItemFrame(chunkPos);
 
         final PacketWrapper unloadChunk = PacketWrapper.create(ClientboundPackets1_21_11.FORGET_LEVEL_CHUNK, this.user());
@@ -406,6 +408,11 @@ public class ChunkTracker extends StoredObject {
         // Cache remapped sections for neighbor light calculations
         this.cachedSections.put(chunkKey, sections);
 
+        // Strip custom block data BEFORE hash (so vanilla/FabricRock get different cache keys)
+        if (!this.user().get(GameSessionStorage.class).hasFabricRock()) {
+            this.stripCustomBlockData(remappedChunk);
+        }
+
         // Collect neighbor data for cross-chunk light propagation
         final ChunkSection[][] neighborSections = collectNeighborSections(chunkX, chunkZ);
         final byte[][][] neighborCachedSkyLight = collectNeighborCachedSkyLight(chunkX, chunkZ);
@@ -417,25 +424,51 @@ public class ChunkTracker extends StoredObject {
 
         final byte[][] skyLight;
         final byte[][] blockLight;
+
         if (cached != null) {
+            // Cache hit: use real light
             skyLight = cached.skyLight();
             blockLight = cached.blockLight();
+            this.cachedSkyLight.put(chunkKey, skyLight);
+            this.cachedBlockLight.put(chunkKey, blockLight);
+
+            this.sendChunkWithLight(remappedChunk, skyLight, blockLight, lightSectionCount);
+            this.sentChunks.add(chunkKey);
+            this.markNeighborLightDirty(chunkX, chunkZ);
         } else {
-            skyLight = this.computeSkyLight(sections, neighborSections, neighborCachedSkyLight);
-            blockLight = this.computeBlockLight(sections, neighborSections, neighborCachedBlockLight);
-            GlobalLightCache.getInstance().put(lightCacheKey, skyLight, blockLight);
+            // Cache miss: send with placeholder light, compute async
+            skyLight = generatePlaceholderSkyLight(lightSectionCount);
+            blockLight = new byte[lightSectionCount][];
+            this.cachedSkyLight.put(chunkKey, skyLight);
+            this.cachedBlockLight.put(chunkKey, blockLight);
+
+            this.sendChunkWithLight(remappedChunk, skyLight, blockLight, lightSectionCount);
+            this.sentChunks.add(chunkKey);
+            // Don't markNeighborLightDirty here — placeholder light would pollute neighbor calculations
+
+            // Submit async light computation
+            this.pendingAsyncLight.add(chunkKey);
+            final UserConnection user = this.user();
+            GlobalLightCache.getInstance().submitAsync(() -> {
+                final byte[][] realSkyLight = computeSkyLight(sections, neighborSections, neighborCachedSkyLight);
+                final byte[][] realBlockLight = computeBlockLight(sections, neighborSections, neighborCachedBlockLight);
+                GlobalLightCache.getInstance().put(lightCacheKey, realSkyLight, realBlockLight);
+
+                user.getChannel().eventLoop().execute(() -> {
+                    if (!user.getChannel().isActive()) return;
+                    if (!this.sentChunks.contains(chunkKey)) return;
+                    if (this.cachedSections.get(chunkKey) != sections) return; // chunk was overwritten
+                    this.pendingAsyncLight.remove(chunkKey);
+                    this.cachedSkyLight.put(chunkKey, realSkyLight);
+                    this.cachedBlockLight.put(chunkKey, realBlockLight);
+                    this.sendLightUpdate(chunkX, chunkZ, realSkyLight, realBlockLight);
+                    this.markNeighborLightDirty(chunkX, chunkZ);
+                });
+            });
         }
+    }
 
-        // Cache computed light
-        this.cachedSkyLight.put(chunkKey, skyLight);
-        this.cachedBlockLight.put(chunkKey, blockLight);
-
-        // Strip custom block data for vanilla clients (no FabricRock mod)
-        if (!this.user().get(GameSessionStorage.class).hasFabricRock()) {
-            this.stripCustomBlockData(remappedChunk);
-        }
-
-        // Build masks
+    private void sendChunkWithLight(final Chunk remappedChunk, final byte[][] skyLight, final byte[][] blockLight, final int lightSectionCount) {
         final BitSet skyLightMask = new BitSet();
         final BitSet blockLightMask = new BitSet();
         final BitSet emptySkyLightMask = new BitSet();
@@ -471,10 +504,15 @@ public class ChunkTracker extends StoredObject {
             levelChunkWithLight.write(Types.BYTE_ARRAY_PRIMITIVE, array); // block light
         }
         levelChunkWithLight.send(BedrockProtocol.class);
+    }
 
-        // Mark as sent and schedule neighbor light updates for next tick
-        this.sentChunks.add(chunkKey);
-        this.markNeighborLightDirty(chunkX, chunkZ);
+    private static byte[][] generatePlaceholderSkyLight(final int lightSectionCount) {
+        final byte[][] skyLight = new byte[lightSectionCount][];
+        for (int i = 0; i < lightSectionCount; i++) {
+            skyLight[i] = new byte[ChunkSectionLight.LIGHT_LENGTH];
+            Arrays.fill(skyLight[i], (byte) 0xFF);
+        }
+        return skyLight;
     }
 
     private void stripCustomBlockData(final Chunk chunk) {
@@ -939,6 +977,7 @@ public class ChunkTracker extends StoredObject {
     private void updateSingleNeighborLight(final long neighborKey) {
         final ChunkSection[] neighborSections = this.cachedSections.get(neighborKey);
         if (neighborSections == null) return;
+        if (this.pendingAsyncLight.contains(neighborKey)) return; // async already pending
 
         final ChunkPosition pos = new ChunkPosition(neighborKey);
         final int nx = pos.chunkX();
@@ -948,28 +987,42 @@ public class ChunkTracker extends StoredObject {
         final byte[][][] neighborSkyLightNeighbors = collectNeighborCachedSkyLight(nx, nz);
         final byte[][][] neighborBlockLightNeighbors = collectNeighborCachedBlockLight(nx, nz);
 
-        // Try global light cache first
         final long lightCacheKey = computeCombinedLightCacheKey(neighborSections, neighborsOfNeighbor, neighborSkyLightNeighbors, neighborBlockLightNeighbors);
         final GlobalLightCache.LightCacheEntry cached = GlobalLightCache.getInstance().get(lightCacheKey);
 
-        final byte[][] newSkyLight;
-        final byte[][] newBlockLight;
         if (cached != null) {
-            newSkyLight = cached.skyLight();
-            newBlockLight = cached.blockLight();
+            // Cache hit: synchronous compare and update
+            final byte[][] oldSkyLight = this.cachedSkyLight.get(neighborKey);
+            final byte[][] oldBlockLight = this.cachedBlockLight.get(neighborKey);
+            if (hasLightChanged(oldSkyLight, cached.skyLight()) || hasLightChanged(oldBlockLight, cached.blockLight())) {
+                this.cachedSkyLight.put(neighborKey, cached.skyLight());
+                this.cachedBlockLight.put(neighborKey, cached.blockLight());
+                this.sendLightUpdate(nx, nz, cached.skyLight(), cached.blockLight());
+            }
         } else {
-            newSkyLight = this.computeSkyLight(neighborSections, neighborsOfNeighbor, neighborSkyLightNeighbors);
-            newBlockLight = this.computeBlockLight(neighborSections, neighborsOfNeighbor, neighborBlockLightNeighbors);
-            GlobalLightCache.getInstance().put(lightCacheKey, newSkyLight, newBlockLight);
-        }
+            // Cache miss: async computation
+            this.pendingAsyncLight.add(neighborKey);
+            final UserConnection user = this.user();
+            GlobalLightCache.getInstance().submitAsync(() -> {
+                final byte[][] newSkyLight = computeSkyLight(neighborSections, neighborsOfNeighbor, neighborSkyLightNeighbors);
+                final byte[][] newBlockLight = computeBlockLight(neighborSections, neighborsOfNeighbor, neighborBlockLightNeighbors);
+                GlobalLightCache.getInstance().put(lightCacheKey, newSkyLight, newBlockLight);
 
-        final byte[][] oldSkyLight = this.cachedSkyLight.get(neighborKey);
-        final byte[][] oldBlockLight = this.cachedBlockLight.get(neighborKey);
-
-        if (hasLightChanged(oldSkyLight, newSkyLight) || hasLightChanged(oldBlockLight, newBlockLight)) {
-            this.cachedSkyLight.put(neighborKey, newSkyLight);
-            this.cachedBlockLight.put(neighborKey, newBlockLight);
-            this.sendLightUpdate(nx, nz, newSkyLight, newBlockLight);
+                user.getChannel().eventLoop().execute(() -> {
+                    if (!user.getChannel().isActive()) return;
+                    if (!this.sentChunks.contains(neighborKey)) return;
+                    if (this.cachedSections.get(neighborKey) != neighborSections) return; // chunk was overwritten
+                    this.pendingAsyncLight.remove(neighborKey);
+                    final byte[][] oldSky = this.cachedSkyLight.get(neighborKey);
+                    final byte[][] oldBlock = this.cachedBlockLight.get(neighborKey);
+                    if (hasLightChanged(oldSky, newSkyLight) || hasLightChanged(oldBlock, newBlockLight)) {
+                        this.cachedSkyLight.put(neighborKey, newSkyLight);
+                        this.cachedBlockLight.put(neighborKey, newBlockLight);
+                        this.sendLightUpdate(nx, nz, newSkyLight, newBlockLight);
+                        this.markNeighborLightDirty(nx, nz);
+                    }
+                });
+            });
         }
     }
 

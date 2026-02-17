@@ -18,19 +18,31 @@
 package net.raphimc.viabedrock.protocol.storage;
 
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public final class GlobalLightCache {
 
     private static final GlobalLightCache INSTANCE = new GlobalLightCache();
     private static final int MAX_ENTRIES = 4096;
+    private static final int LIGHT_COMPUTE_THREADS = 2;
 
     public static GlobalLightCache getInstance() {
         return INSTANCE;
     }
 
     private final ConcurrentHashMap<Long, LightCacheEntry> cache = new ConcurrentHashMap<>();
+    private final ExecutorService executor = Executors.newFixedThreadPool(LIGHT_COMPUTE_THREADS, r -> {
+        final Thread t = new Thread(r, "ViaBedrock-LightCompute");
+        t.setDaemon(true);
+        return t;
+    });
 
     private GlobalLightCache() {
+    }
+
+    public void submitAsync(final Runnable task) {
+        this.executor.submit(task);
     }
 
     public record LightCacheEntry(byte[][] skyLight, byte[][] blockLight, long timestamp) {
