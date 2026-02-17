@@ -53,6 +53,8 @@ public class ViaBedrockUtilityInterface {
         final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets1_21_11.CUSTOM_PAYLOAD, user);
         pluginMessage.write(Types.STRING, CHANNEL); // Channel
         pluginMessage.write(Types.INT, PayloadType.MODEL_REQUEST.ordinal()); // Type
+
+        pluginMessage.write(Types.UUID, uuid);
         writeString(pluginMessage, identifier);
 
         boolean writeBitmask1 = entityData.containsKey(ActorDataIDs.RESERVED_0);
@@ -78,7 +80,12 @@ public class ViaBedrockUtilityInterface {
             pluginMessage.write(Types.INT, entityData.get(ActorDataIDs.MARK_VARIANT).<Integer>value());
         }
 
-        pluginMessage.write(Types.UUID, uuid);
+        boolean writeSkinId = entityData.containsKey(ActorDataIDs.SKIN_ID);
+        pluginMessage.write(Types.BOOLEAN, writeSkinId);
+        if (writeSkinId) {
+            pluginMessage.write(Types.INT, entityData.get(ActorDataIDs.SKIN_ID).<Integer>value());
+        }
+
         pluginMessage.send(BedrockProtocol.class);
     }
 

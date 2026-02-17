@@ -226,6 +226,9 @@ public class CustomEntity extends Entity {
         if (this.entityData.containsKey(ActorDataIDs.MARK_VARIANT)) {
             queryBinding.set("mark_variant", Value.of(this.entityData.get(ActorDataIDs.MARK_VARIANT).<Integer>value()));
         }
+        if (this.entityData.containsKey(ActorDataIDs.SKIN_ID)) {
+            queryBinding.set("skin_id", Value.of(this.entityData.get(ActorDataIDs.SKIN_ID).<Integer>value()));
+        }
 
         final Set<ActorFlags> entityFlags = this.entityFlags();
         for (Map.Entry<ActorFlags, String> entry : BedrockProtocol.MAPPINGS.getBedrockEntityFlagMoLangQueries().entrySet()) {
