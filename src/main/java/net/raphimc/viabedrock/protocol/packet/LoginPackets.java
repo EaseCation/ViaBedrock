@@ -173,12 +173,21 @@ public class LoginPackets {
         } else {
             final KeyPair sessionKeyPair = CryptUtil.generateEcdsa384KeyPair();
             final String encodedPublicKey = Base64.getEncoder().encodeToString(sessionKeyPair.getPublic().getEncoded());
-            final long xuid = Math.abs(FNV1.fnv1_64(user.getProtocolInfo().getUsername().getBytes(StandardCharsets.UTF_8)));
+
+            // Use Java UUID directly as Bedrock identity when available (ViaProxy auth bridge)
+            final UUID javaUuid = user.getProtocolInfo().getUuid();
+            final String username = user.getProtocolInfo().getUsername();
+            final long xuid = javaUuid != null
+                    ? Math.abs(javaUuid.getLeastSignificantBits())
+                    : Math.abs(FNV1.fnv1_64(username.getBytes(StandardCharsets.UTF_8)));
+            final UUID identity = javaUuid != null
+                    ? javaUuid
+                    : UUID.nameUUIDFromBytes(("pocket-auth-1-xuid:" + xuid).getBytes(StandardCharsets.UTF_8));
 
             final Map<String, Object> extraData = new HashMap<>();
-            extraData.put("displayName", user.getProtocolInfo().getUsername());
+            extraData.put("displayName", username);
             extraData.put("XUID", String.valueOf(xuid));
-            extraData.put("identity", UUID.nameUUIDFromBytes(("pocket-auth-1-xuid:" + xuid).getBytes(StandardCharsets.UTF_8)));
+            extraData.put("identity", identity);
 
             final String identityJwt = Jwts.builder()
                     .signWith(sessionKeyPair.getPrivate(), Jwts.SIG.ES384)

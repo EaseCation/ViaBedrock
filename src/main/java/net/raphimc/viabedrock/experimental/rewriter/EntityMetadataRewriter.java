@@ -560,6 +560,18 @@ public class EntityMetadataRewriter {
                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received ATTACH for non-SHULKER entity " + entity.type());
                 }
             }
+            case RESERVED_053 -> { // BOUNDING_BOX_WIDTH
+                if (entity.javaType().is(EntityTypes1_21_11.INTERACTION)) {
+                    float width = readNumber(entityData).floatValue();
+                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.WIDTH), VersionedTypes.V1_21_11.entityDataTypes().floatType, width));
+                }
+            }
+            case RESERVED_054 -> { // BOUNDING_BOX_HEIGHT
+                if (entity.javaType().is(EntityTypes1_21_11.INTERACTION)) {
+                    float height = readNumber(entityData).floatValue();
+                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.HEIGHT), VersionedTypes.V1_21_11.entityDataTypes().floatType, height));
+                }
+            }
             case DATA_RADIUS -> {
                 if (entity.javaType().isOrHasParent(EntityTypes1_21_11.AREA_EFFECT_CLOUD)) {
                     float radius = readNumber(entityData).floatValue();
@@ -680,10 +692,18 @@ public class EntityMetadataRewriter {
             }
             case NAMETAG_ALWAYS_SHOW -> {
                 byte alwaysShow = (byte) entityData.getValue();
+                boolean hasName = false;
+                if (alwaysShow == 1) {
+                    final EntityData nameData = entity.entityData().get(ActorDataIDs.NAME);
+                    final EntityData nameRawData = entity.entityData().get(ActorDataIDs.NAME_RAW_TEXT);
+                    final String name = nameData != null ? (String) nameData.getValue() : null;
+                    final String nameRaw = nameRawData != null ? (String) nameRawData.getValue() : null;
+                    hasName = (name != null && !name.isEmpty()) || (nameRaw != null && !nameRaw.isEmpty());
+                }
                 javaEntityData.add(new EntityData(
                     entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME_VISIBLE),
                     VersionedTypes.V1_21_11.entityDataTypes().booleanType,
-                    alwaysShow == 1));
+                    alwaysShow == 1 && hasName));
             }
             case RESERVED_038 -> { // SCALE (Bedrock entity data ID 38)
                 float scale = readNumber(entityData).floatValue();

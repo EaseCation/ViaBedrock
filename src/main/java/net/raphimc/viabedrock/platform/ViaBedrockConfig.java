@@ -76,6 +76,11 @@ public interface ViaBedrockConfig extends Config {
      */
     String getLanguage();
 
+    /**
+     * @return The shared secret for ViaProxy authentication bridge. When set, generates HMAC-signed identity tokens in the skin JWT. Empty = disabled
+     */
+    String getViaProxyAuthSecret();
+
     enum BlobCacheMode {
 
         /**

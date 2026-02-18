@@ -38,6 +38,7 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
     private boolean translateShowCoordinatesGameRule;
     private boolean disableServerBlacklist;
     private String language;
+    private String viaProxyAuthSecret;
 
     public ViaBedrockConfig(final File configFile, final Logger logger) {
         super(configFile, logger);
@@ -60,6 +61,7 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
         this.translateShowCoordinatesGameRule = this.getBoolean("translate-show-coordinates-game-rule", false);
         this.disableServerBlacklist = this.getBoolean("disable-server-blacklist", false);
         this.language = this.getString("language", "");
+        this.viaProxyAuthSecret = this.getString("viaproxy-auth-secret", "");
     }
 
     @Override
@@ -124,6 +126,11 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
     @Override
     public String getLanguage() {
         return this.language;
+    }
+
+    @Override
+    public String getViaProxyAuthSecret() {
+        return this.viaProxyAuthSecret;
     }
 
 }

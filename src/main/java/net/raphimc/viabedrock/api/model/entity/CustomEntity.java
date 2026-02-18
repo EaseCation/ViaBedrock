@@ -120,6 +120,7 @@ public class CustomEntity extends Entity {
         if (!this.spawned) {
             this.evaluateRenderControllerChange();
             this.spawn();
+            this.sendInitialCollisionBox();
         } else {
             this.partEntities.forEach(ItemDisplayEntity::updatePositionAndRotation);
         }
@@ -147,6 +148,7 @@ public class CustomEntity extends Entity {
             if (channelStorage.hasChannel(ViaBedrockUtilityInterface.CONFIRM_CHANNEL)) {
                 ViaBedrockUtilityInterface.spawnCustomEntity(this.user, this.javaUuid(), this.entityDefinition.identifier(), this.entityData());
             }
+            this.updateCollisionBox(javaEntityData);
             return true;
         }
         return super.translateEntityData(id, entityData, javaEntityData);
@@ -215,6 +217,47 @@ public class CustomEntity extends Entity {
             setEntityData.write(VersionedTypes.V1_21_11.entityDataList, javaEntityData); // entity data
             setEntityData.send(BedrockProtocol.class);
         }
+    }
+
+    private void sendInitialCollisionBox() {
+        final List<EntityData> javaEntityData = new ArrayList<>();
+        this.updateCollisionBox(javaEntityData);
+        if (!javaEntityData.isEmpty()) {
+            final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets1_21_11.SET_ENTITY_DATA, this.user);
+            setEntityData.write(Types.VAR_INT, this.javaId()); // entity id
+            setEntityData.write(VersionedTypes.V1_21_11.entityDataList, javaEntityData); // entity data
+            setEntityData.send(BedrockProtocol.class);
+        }
+    }
+
+    private static final float DEFAULT_WIDTH = 0.6F;
+    private static final float DEFAULT_HEIGHT = 1.8F;
+
+    private void updateCollisionBox(final List<EntityData> javaEntityData) {
+        float scale = 1.0F;
+        if (this.entityData.containsKey(ActorDataIDs.RESERVED_038)) {
+            scale = this.entityData.get(ActorDataIDs.RESERVED_038).<Float>value();
+        }
+
+        float width;
+        float height;
+        if (this.entityData.containsKey(ActorDataIDs.RESERVED_053)) {
+            width = this.entityData.get(ActorDataIDs.RESERVED_053).<Float>value();
+        } else {
+            width = DEFAULT_WIDTH * scale;
+        }
+        if (this.entityData.containsKey(ActorDataIDs.RESERVED_054)) {
+            height = this.entityData.get(ActorDataIDs.RESERVED_054).<Float>value();
+        } else {
+            height = DEFAULT_HEIGHT * scale;
+        }
+
+        javaEntityData.add(new EntityData(
+                this.getJavaEntityDataIndex(EntityDataFields.WIDTH),
+                VersionedTypes.V1_21_11.entityDataTypes().floatType, width));
+        javaEntityData.add(new EntityData(
+                this.getJavaEntityDataIndex(EntityDataFields.HEIGHT),
+                VersionedTypes.V1_21_11.entityDataTypes().floatType, height));
     }
 
     private void despawn() {

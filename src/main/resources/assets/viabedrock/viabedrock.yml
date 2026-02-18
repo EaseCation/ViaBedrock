@@ -18,3 +18,8 @@ translate-show-coordinates-game-rule: false
 disable-server-blacklist: false
 # The language code to send to the bedrock server (e.g. "en_us", "zh_cn"). Empty = "en_us"
 language: ""
+# Shared secret for ViaProxy authentication bridge.
+# When set, generates HMAC-signed identity tokens in the skin JWT.
+# Must match the secret configured in the Nemisys ViaProxyAuth plugin.
+# Empty = disabled (default self-signed behavior)
+viaproxy-auth-secret: ""
