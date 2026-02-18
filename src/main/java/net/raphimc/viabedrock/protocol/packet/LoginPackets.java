@@ -177,16 +177,17 @@ public class LoginPackets {
             // Use Java UUID directly as Bedrock identity when available (ViaProxy auth bridge)
             final UUID javaUuid = user.getProtocolInfo().getUuid();
             final String username = user.getProtocolInfo().getUsername();
-            final long xuid = javaUuid != null
-                    ? Math.abs(javaUuid.getLeastSignificantBits())
-                    : Math.abs(FNV1.fnv1_64(username.getBytes(StandardCharsets.UTF_8)));
+            // 使用 base36 编码 XUID，确保长度 ≤ 13 字符，适配 Nemisys VARCHAR(16) 限制
+            final String xuid = javaUuid != null
+                    ? Long.toUnsignedString(javaUuid.getMostSignificantBits() ^ javaUuid.getLeastSignificantBits(), 36)
+                    : Long.toUnsignedString(FNV1.fnv1_64(username.getBytes(StandardCharsets.UTF_8)), 36);
             final UUID identity = javaUuid != null
                     ? javaUuid
                     : UUID.nameUUIDFromBytes(("pocket-auth-1-xuid:" + xuid).getBytes(StandardCharsets.UTF_8));
 
             final Map<String, Object> extraData = new HashMap<>();
             extraData.put("displayName", username);
-            extraData.put("XUID", String.valueOf(xuid));
+            extraData.put("XUID", xuid);
             extraData.put("identity", identity);
 
             final String identityJwt = Jwts.builder()
