@@ -28,6 +28,7 @@ import com.viaversion.viaversion.protocols.v1_21_9to1_21_11.packet.ClientboundPa
 import com.viaversion.viaversion.util.Key;
 import net.lenni0451.mcstructs_bedrock.text.utils.BedrockTranslator;
 import net.raphimc.viabedrock.ViaBedrock;
+import net.raphimc.viabedrock.api.modinterface.ModUIClientInterface;
 import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
 import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
@@ -134,11 +135,18 @@ public class MultiStatePackets {
             wrapper.user().get(ChannelStorage.class).addChannels(channels);
 
             if (channels.contains(ViaBedrockUtilityInterface.CONFIRM_CHANNEL)) {
+                // Also add the data channel early so setSkin() works before the client's PLAY-phase register
+                wrapper.user().get(ChannelStorage.class).addChannels(List.of(ViaBedrockUtilityInterface.CHANNEL));
                 ViaBedrockUtilityInterface.confirmPresence(wrapper.user());
+            }
+            if (channels.contains(ModUIClientInterface.CONFIRM_CHANNEL)) {
+                ModUIClientInterface.confirmPresence(wrapper.user());
             }
             if (channels.contains("fabricrock:confirm")) {
                 wrapper.user().get(GameSessionStorage.class).setHasFabricRock(true);
             }
+        } else if (channel.equals(ModUIClientInterface.CHANNEL)) {
+            ModUIClientInterface.handleC2S(wrapper);
         }
     };
 

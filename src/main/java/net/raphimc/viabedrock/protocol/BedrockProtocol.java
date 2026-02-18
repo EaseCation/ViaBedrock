@@ -36,6 +36,7 @@ import com.viaversion.viaversion.protocols.v1_21_9to1_21_11.packet.ClientboundPa
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufUtil;
 import net.raphimc.viabedrock.ViaBedrock;
+import net.raphimc.viabedrock.api.modinterface.ModUIClientInterface;
 import net.raphimc.viabedrock.api.protocol.StatelessTransitionProtocol;
 import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
@@ -102,6 +103,7 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
         InventoryPackets.register(this);
         WorldEffectPackets.register(this);
         UnhandledPackets.register(this);
+        ModUIClientInterface.register(this);
 
         if (ViaBedrock.getConfig().shouldEnableExperimentalFeatures()) {
             ExperimentalFeatures.registerPacketTranslators(this);

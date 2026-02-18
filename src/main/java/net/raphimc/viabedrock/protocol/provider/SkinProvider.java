@@ -150,9 +150,15 @@ public class SkinProvider implements Provider {
 
     public void setSkin(final UserConnection user, final UUID playerUuid, final SkinData skin) {
         final ChannelStorage channelStorage = user.get(ChannelStorage.class);
-        if (channelStorage.hasChannel(ViaBedrockUtilityInterface.CHANNEL)) {
+        final boolean hasVBU = channelStorage.hasChannel(ViaBedrockUtilityInterface.CHANNEL);
+        final boolean hasBSU = channelStorage.hasChannel(BedrockSkinUtilityInterface.CHANNEL);
+        ViaBedrock.getPlatform().getLogger().info("setSkin: uuid=" + playerUuid
+                + " persona=" + skin.persona()
+                + " skinData=" + (skin.skinData() != null ? skin.skinData().getWidth() + "x" + skin.skinData().getHeight() : "null")
+                + " hasVBU=" + hasVBU + " hasBSU=" + hasBSU);
+        if (hasVBU) {
             ViaBedrockUtilityInterface.sendSkin(user, playerUuid, skin);
-        } else if (channelStorage.hasChannel(BedrockSkinUtilityInterface.CHANNEL)) {
+        } else if (hasBSU) {
             BedrockSkinUtilityInterface.sendSkin(user, playerUuid, skin);
         }
     }

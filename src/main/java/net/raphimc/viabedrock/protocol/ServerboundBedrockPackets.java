@@ -103,7 +103,8 @@ public enum ServerboundBedrockPackets implements ServerboundPacketType {
     UPDATE_CLIENT_OPTIONS(MinecraftPacketIds.UpdateClientOptions.getValue()),
     PLAYER_LOCATION(MinecraftPacketIds.PlayerLocation.getValue()),
     PACK_SETTING_CHANGE(MinecraftPacketIds.ServerboundPackSettingChange.getValue()),
-    DATA_STORE(MinecraftPacketIds.ServerboundDataStore.getValue());
+    DATA_STORE(MinecraftPacketIds.ServerboundDataStore.getValue()),
+    PY_RPC(0xC8);
 
     private static final ServerboundBedrockPackets[] REGISTRY = new ServerboundBedrockPackets[512];
 

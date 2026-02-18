@@ -96,7 +96,7 @@ public class ViaBedrockUtilityInterface {
     }
 
     public static void sendSkin(final UserConnection user, final UUID uuid, final SkinData skin) {
-        if (skin.skinData() == null || skin.persona()) {
+        if (skin.skinData() == null) {
             return;
         }
 
@@ -120,7 +120,7 @@ public class ViaBedrockUtilityInterface {
             }
 
             pluginMessage.write(Types.INT, chunkCount);
-            pluginMessage.send(BedrockProtocol.class);
+            pluginMessage.scheduleSend(BedrockProtocol.class);
         }
         for (int i = 0; i < chunkCount; i++) {
             final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets1_21_11.CUSTOM_PAYLOAD, user);
@@ -133,7 +133,7 @@ public class ViaBedrockUtilityInterface {
             } else {
                 pluginMessage.write(Types.REMAINING_BYTES, Arrays.copyOfRange(skinData, i * maxPayloadSize, Math.min((i + 1) * maxPayloadSize, skinData.length)));
             }
-            pluginMessage.send(BedrockProtocol.class);
+            pluginMessage.scheduleSend(BedrockProtocol.class);
         }
         if (skin.capeData() != null) {
             final byte[] capeData = ImageType.getImageData(skin.capeData());
@@ -147,7 +147,7 @@ public class ViaBedrockUtilityInterface {
             writeString(pluginMessage, skin.capeId());
             pluginMessage.write(Types.INT, capeData.length);
             pluginMessage.write(Types.REMAINING_BYTES, capeData);
-            pluginMessage.send(BedrockProtocol.class);
+            pluginMessage.scheduleSend(BedrockProtocol.class);
         }
     }
 
