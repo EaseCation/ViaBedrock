@@ -26,6 +26,7 @@ import net.raphimc.viabedrock.api.model.resourcepack.BiomeDefinitions;
 import net.raphimc.viabedrock.api.model.resourcepack.FogDefinitions;
 import net.raphimc.viabedrock.api.util.MathUtil;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
+import net.raphimc.viabedrock.protocol.data.enums.Dimension;
 import net.raphimc.viabedrock.protocol.data.generated.java.RegistryKeys;
 import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
 import net.raphimc.viabedrock.protocol.storage.ResourcePacksStorage;
@@ -67,6 +68,13 @@ public class JavaRegistries {
             dimensionTag.putInt("height", height);
             dimensionTag.putInt("logical_height", height);
             dimensionRegistry.getCompoundTag(entry.getKey()).putAll(dimensionTag);
+        }
+
+        for (Dimension dim : Dimension.values()) {
+            final CompoundTag original = dimensionRegistry.getCompoundTag(dim.getKey());
+            if (original != null) {
+                dimensionRegistry.put(dim.getAltKey(), original.copy());
+            }
         }
     }
 

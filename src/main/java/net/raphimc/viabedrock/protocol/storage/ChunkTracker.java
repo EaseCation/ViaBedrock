@@ -69,6 +69,7 @@ public class ChunkTracker extends StoredObject {
     }
 
     private final Dimension dimension;
+    private final String dimensionKey;
     private final int minY;
     private final int worldHeight;
     private final Type<Chunk> chunkType;
@@ -90,15 +91,19 @@ public class ChunkTracker extends StoredObject {
     private int radius;
 
     public ChunkTracker(final UserConnection user, final Dimension dimension) {
+        this(user, dimension, dimension.getKey());
+    }
+
+    public ChunkTracker(final UserConnection user, final Dimension dimension, final String dimensionKey) {
         super(user);
         this.dimension = dimension;
+        this.dimensionKey = dimensionKey;
 
         final GameSessionStorage gameSession = user.get(GameSessionStorage.class);
         final CompoundTag registries = gameSession.getJavaRegistries();
-        final String dimensionKey = this.dimension.getKey();
         final CompoundTag dimensionRegistry = registries.getCompoundTag(RegistryKeys.DIMENSION_TYPE);
         final CompoundTag biomeRegistry = registries.getCompoundTag(RegistryKeys.WORLDGEN_BIOME);
-        final CompoundTag dimensionTag = dimensionRegistry.getCompoundTag(dimensionKey);
+        final CompoundTag dimensionTag = dimensionRegistry.getCompoundTag(this.dimension.getKey());
         this.minY = dimensionTag.getNumberTag("min_y").asInt();
         this.worldHeight = dimensionTag.getNumberTag("height").asInt();
         this.chunkType = new ChunkType1_21_5(this.worldHeight >> 4, MathUtil.ceilLog2(BedrockProtocol.MAPPINGS.getJavaBlockStates().size()), MathUtil.ceilLog2(biomeRegistry.size()));
@@ -1083,6 +1088,10 @@ public class ChunkTracker extends StoredObject {
 
     public Dimension getDimension() {
         return this.dimension;
+    }
+
+    public String getDimensionKey() {
+        return this.dimensionKey;
     }
 
     public int getMinY() {

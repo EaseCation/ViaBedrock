@@ -19,12 +19,15 @@ package net.raphimc.viabedrock.protocol.data.enums;
 
 public enum Dimension {
 
-    OVERWORLD("minecraft:overworld"),
-    NETHER("minecraft:the_nether"),
-    END("minecraft:the_end");
+    OVERWORLD("minecraft:overworld", "viabedrock:overworld"),
+    NETHER("minecraft:the_nether", "viabedrock:the_nether"),
+    END("minecraft:the_end", "viabedrock:the_end");
 
     public static String[] getDimensionKeys() {
-        return new String[]{OVERWORLD.getKey(), NETHER.getKey(), END.getKey()};
+        return new String[]{
+                OVERWORLD.getKey(), NETHER.getKey(), END.getKey(),
+                OVERWORLD.getAltKey(), NETHER.getAltKey(), END.getAltKey()
+        };
     }
 
     public static Dimension getByValue(final int value) {
@@ -35,13 +38,19 @@ public enum Dimension {
     }
 
     private final String key;
+    private final String altKey;
 
-    Dimension(final String key) {
+    Dimension(final String key, final String altKey) {
         this.key = key;
+        this.altKey = altKey;
     }
 
     public String getKey() {
         return this.key;
+    }
+
+    public String getAltKey() {
+        return this.altKey;
     }
 
 }

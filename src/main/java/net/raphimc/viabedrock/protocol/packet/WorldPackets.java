@@ -128,7 +128,13 @@ public class WorldPackets {
             final GameSessionStorage gameSession = wrapper.user().get(GameSessionStorage.class);
             final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
 
-            final Dimension dimension = Dimension.values()[wrapper.read(BedrockTypes.VAR_INT)]; // dimension
+            final int dimensionId = wrapper.read(BedrockTypes.VAR_INT); // dimension
+            final Dimension dimension = Dimension.getByValue(dimensionId);
+            if (dimension == null) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received CHANGE_DIMENSION with invalid dimension id: " + dimensionId);
+                wrapper.cancel();
+                return;
+            }
             final Position3f position = wrapper.read(BedrockTypes.POSITION_3F); // position
             wrapper.read(Types.BOOLEAN); // respawn
             final Long loadingScreenId;
@@ -138,12 +144,18 @@ public class WorldPackets {
                 loadingScreenId = null;
             }
 
-            if (dimension == wrapper.user().get(ChunkTracker.class).getDimension()) {
-                // Bedrock client gets stuck in loading terrain until a proper CHANGE_DIMENSION packet is received
-                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received CHANGE_DIMENSION packet for the same dimension");
+            final ChunkTracker oldChunkTracker = wrapper.user().get(ChunkTracker.class);
+            final String dimensionKey;
+            if (dimension == oldChunkTracker.getDimension()) {
+                // Same dimension: toggle between normal and alt key for Java client chunk reload
+                dimensionKey = oldChunkTracker.getDimensionKey().equals(dimension.getKey())
+                        ? dimension.getAltKey()
+                        : dimension.getKey();
+            } else {
+                dimensionKey = dimension.getKey();
             }
 
-            wrapper.user().put(new ChunkTracker(wrapper.user(), dimension));
+            wrapper.user().put(new ChunkTracker(wrapper.user(), dimension, dimensionKey));
             final EntityTracker oldEntityTracker = wrapper.user().get(EntityTracker.class);
             final ClientPlayerEntity clientPlayer = oldEntityTracker.getClientPlayer();
             oldEntityTracker.prepareForRespawn();
@@ -161,8 +173,8 @@ public class WorldPackets {
                 inventoryTracker.closeCurrentForm();
             }
 
-            wrapper.write(Types.VAR_INT, dimension.ordinal()); // dimension id
-            wrapper.write(Types.STRING, dimension.getKey()); // dimension name
+            wrapper.write(Types.VAR_INT, dimension.ordinal()); // dimension type id
+            wrapper.write(Types.STRING, dimensionKey); // dimension name
             wrapper.write(Types.LONG, 0L); // hashed seed
             wrapper.write(Types.BYTE, (byte) clientPlayer.javaGameMode().ordinal()); // game mode
             wrapper.write(Types.BYTE, (byte) -1); // previous game mode
