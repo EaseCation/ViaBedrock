@@ -36,7 +36,8 @@ import java.util.logging.Level;
 public class UITextureResourceRewriter implements ResourcePackRewriter.Rewriter {
 
     private static final String[] TEXTURE_PREFIXES = {"textures/ui/", "textures/gui/"};
-    private static final String[] EXTENSIONS = {".png", ".json"};
+    private static final String[] COPY_EXTENSIONS = {".png", ".json"};
+    private static final String[] IMAGE_EXTENSIONS = {".jpg", ".jpeg"};
 
     @Override
     public void apply(final ResourcePacksStorage resourcePacksStorage, final ResourcePack.Content javaContent) {
@@ -45,7 +46,8 @@ public class UITextureResourceRewriter implements ResourcePackRewriter.Rewriter 
             final ResourcePack.Content bedrockContent = pack.content();
 
             for (final String prefix : TEXTURE_PREFIXES) {
-                for (final String extension : EXTENSIONS) {
+                // PNG and JSON files: copy directly
+                for (final String extension : COPY_EXTENSIONS) {
                     final List<String> files = bedrockContent.getFilesDeep(prefix, extension);
                     for (final String bedrockPath : files) {
                         // Java resource identifiers must be lowercase
@@ -54,6 +56,23 @@ public class UITextureResourceRewriter implements ResourcePackRewriter.Rewriter 
                         if (!javaContent.contains(javaPath)) {
                             javaContent.copyFrom(bedrockContent, bedrockPath, javaPath);
                             count++;
+                        }
+                    }
+                }
+
+                // JPG/JPEG files: convert to PNG
+                for (final String extension : IMAGE_EXTENSIONS) {
+                    final List<String> files = bedrockContent.getFilesDeep(prefix, extension);
+                    for (final String bedrockPath : files) {
+                        // Strip .jpg/.jpeg and replace with .png
+                        final String basePath = bedrockPath.substring(0, bedrockPath.length() - extension.length());
+                        final String javaPath = "assets/minecraft/" + basePath.toLowerCase(Locale.ROOT) + ".png";
+                        if (!javaContent.contains(javaPath)) {
+                            final ResourcePack.Content.LazyImage image = bedrockContent.getImage(bedrockPath);
+                            if (image != null) {
+                                javaContent.putPngImage(javaPath, image);
+                                count++;
+                            }
                         }
                     }
                 }

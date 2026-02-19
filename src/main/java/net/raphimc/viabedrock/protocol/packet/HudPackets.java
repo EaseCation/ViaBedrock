@@ -59,6 +59,7 @@ public class HudPackets {
         protocol.registerClientbound(ClientboundBedrockPackets.PLAYER_LIST, ClientboundPackets1_21_11.PLAYER_INFO_UPDATE, wrapper -> {
             final PlayerListStorage playerListStorage = wrapper.user().get(PlayerListStorage.class);
             final ScoreboardTracker scoreboardTracker = wrapper.user().get(ScoreboardTracker.class);
+            final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
 
             final byte rawAction = wrapper.read(Types.BYTE); // action
             final PlayerListPacketType action = PlayerListPacketType.getByValue(rawAction);
@@ -75,9 +76,16 @@ public class HudPackets {
                     wrapper.write(Types.VAR_INT, length); // length
                     for (int i = 0; i < length; i++) {
                         uuids[i] = wrapper.read(BedrockTypes.UUID); // uuid
+                        entityUniqueIds[i] = wrapper.read(BedrockTypes.VAR_LONG); // entity unique id
+
+                        // Remap local player UUID: Bedrock server assigns a different UUID than the Java UUID generated during login
+                        if (entityTracker.getClientPlayer() != null
+                                && entityTracker.getClientPlayer().uniqueId() == entityUniqueIds[i]) {
+                            uuids[i] = entityTracker.getClientPlayer().javaUuid();
+                        }
+
                         wrapper.write(Types.UUID, uuids[i]); // uuid
                         wrapper.write(Types.STRING, StringUtil.encodeUUID(uuids[i])); // username
-                        entityUniqueIds[i] = wrapper.read(BedrockTypes.VAR_LONG); // entity unique id
                         names[i] = wrapper.read(BedrockTypes.STRING); // username
                         final String xuid = wrapper.read(BedrockTypes.STRING); // xuid
                         final String platformOnlineId = wrapper.read(BedrockTypes.STRING); // platform online id
