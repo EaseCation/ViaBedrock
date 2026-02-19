@@ -161,6 +161,12 @@ public class CustomEntity extends Entity {
         if (this.evaluateRenderControllerChange()) {
             this.despawn();
             this.spawn();
+        } else {
+            // Notify VBU of metadata changes (variant, flags, etc.) even if render controller didn't change
+            final ChannelStorage channelStorage = this.user.get(ChannelStorage.class);
+            if (channelStorage.hasChannel(ViaBedrockUtilityInterface.CONFIRM_CHANNEL)) {
+                ViaBedrockUtilityInterface.spawnCustomEntity(this.user, this.javaUuid(), this.entityDefinition.identifier(), this.entityData());
+            }
         }
     }
 
