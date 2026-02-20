@@ -63,4 +63,8 @@ public interface ViaBedrockPlatform {
         return new File(this.getDataCacheFolder(), "blob_cache");
     }
 
+    default File getJavaPacksCacheFolder() {
+        return new File(this.getDataCacheFolder(), "java_packs_cache");
+    }
+
 }

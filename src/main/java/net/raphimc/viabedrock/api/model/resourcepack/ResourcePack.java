@@ -486,9 +486,13 @@ public class ResourcePack {
         public byte[] toZip() throws IOException {
             final ByteArrayOutputStream baos = new ByteArrayOutputStream(1024 * 1024 * 4);
             final ZipOutputStream zipOutputStream = new ZipOutputStream(baos);
-            for (final Map.Entry<String, byte[]> entry : this.content.entrySet()) {
-                zipOutputStream.putNextEntry(new ZipEntry(entry.getKey()));
-                zipOutputStream.write(entry.getValue());
+            final List<String> sortedKeys = new ArrayList<>(this.content.keySet());
+            Collections.sort(sortedKeys);
+            for (final String key : sortedKeys) {
+                final ZipEntry entry = new ZipEntry(key);
+                entry.setTimeLocal(java.time.LocalDateTime.of(2024, 1, 1, 0, 0, 0));
+                zipOutputStream.putNextEntry(entry);
+                zipOutputStream.write(this.content.get(key));
                 zipOutputStream.closeEntry();
             }
             zipOutputStream.close();

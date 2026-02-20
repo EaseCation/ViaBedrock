@@ -41,7 +41,10 @@ public class ResourcePackHttpServer {
 
     private final InetSocketAddress bindAddress;
     private final ChannelFuture channelFuture;
-    private final Map<UUID, UserConnection> connections = new HashMap<>();
+    private final Map<UUID, ConnectionInfo> connections = new HashMap<>();
+
+    private record ConnectionInfo(UserConnection user, String cacheKey) {
+    }
 
     public ResourcePackHttpServer(final InetSocketAddress bindAddress) {
         this.bindAddress = bindAddress;
@@ -71,23 +74,33 @@ public class ResourcePackHttpServer {
                                         return;
                                     }
                                     final UUID uuid = UUID.fromString(queryStringDecoder.parameters().get("token").get(0));
-                                    final UserConnection user = ResourcePackHttpServer.this.connections.get(uuid);
-                                    if (user == null) {
+                                    final ConnectionInfo connInfo = ResourcePackHttpServer.this.connections.get(uuid);
+                                    if (connInfo == null) {
                                         ctx.close();
                                         return;
                                     }
 
-                                    final ResourcePacksStorage resourcePacksStorage = user.get(ResourcePacksStorage.class);
+                                    final ResourcePacksStorage resourcePacksStorage = connInfo.user().get(ResourcePacksStorage.class);
                                     while (!resourcePacksStorage.hasFinishedLoading()) {
                                         Thread.sleep(100);
                                     }
 
                                     try {
-                                        final long start = System.nanoTime();
-                                        final ResourcePack.Content javaContent = ResourcePackRewriter.bedrockToJava(resourcePacksStorage);
-                                        final byte[] data = javaContent.toZip();
-                                        final long end = System.nanoTime();
-                                        ViaBedrock.getPlatform().getLogger().log(Level.INFO, "Converted packs in " + ((end - start) / 1_000_000L) + "ms");
+                                        final String cacheKey = connInfo.cacheKey();
+                                        final JavaPackCache cache = ViaBedrock.getJavaPackCache();
+
+                                        final byte[] data;
+                                        if (cache.has(cacheKey)) {
+                                            data = cache.getData(cacheKey);
+                                            ViaBedrock.getPlatform().getLogger().log(Level.INFO, "Serving cached java resource pack");
+                                        } else {
+                                            final long start = System.nanoTime();
+                                            final ResourcePack.Content javaContent = ResourcePackRewriter.bedrockToJava(resourcePacksStorage);
+                                            data = javaContent.toZip();
+                                            final long end = System.nanoTime();
+                                            ViaBedrock.getPlatform().getLogger().log(Level.INFO, "Converted packs in " + ((end - start) / 1_000_000L) + "ms");
+                                            cache.put(cacheKey, data);
+                                        }
 
                                         final DefaultHttpResponse response = new DefaultHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK);
                                         response.headers().set(HttpHeaderNames.TRANSFER_ENCODING, HttpHeaderValues.CHUNKED);
@@ -114,9 +127,9 @@ public class ResourcePackHttpServer {
                 .syncUninterruptibly();
     }
 
-    public void addConnection(final UUID uuid, final UserConnection connection) {
+    public void addConnection(final UUID uuid, final UserConnection connection, final String cacheKey) {
         synchronized (this.connections) {
-            this.connections.put(uuid, connection);
+            this.connections.put(uuid, new ConnectionInfo(connection, cacheKey));
         }
 
         connection.getChannel().closeFuture().addListener(future -> {

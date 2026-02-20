@@ -28,7 +28,9 @@ import com.viaversion.viaversion.util.Pair;
 import com.viaversion.viaversion.util.Triple;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.http.BedrockPackDownloader;
+import net.raphimc.viabedrock.api.http.JavaPackCache;
 import net.raphimc.viabedrock.api.model.resourcepack.ResourcePack;
+import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
 import net.raphimc.viabedrock.api.util.TextUtil;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
@@ -39,9 +41,11 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ResourcePack
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.ResourcePackAction;
 import net.raphimc.viabedrock.protocol.model.Experiment;
 import net.raphimc.viabedrock.protocol.provider.ResourcePackProvider;
+import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
 import net.raphimc.viabedrock.protocol.storage.ResourcePacksStorage;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.logging.Level;
@@ -82,13 +86,25 @@ public class ResourcePackPackets {
                     pack.setCdnUrl(null); // Use the old resource pack downloading method
                 });
 
+                final boolean hasVBU = wrapper.user().get(ChannelStorage.class).hasChannel(ViaBedrockUtilityInterface.CONFIRM_CHANNEL);
+                final String cacheKey = JavaPackCache.computeCacheKey(resourcePacksStorage.getPacks(), hasVBU);
+                final JavaPackCache cache = ViaBedrock.getJavaPackCache();
+
                 final UUID httpToken = UUID.randomUUID();
-                ViaBedrock.getResourcePackServer().addConnection(httpToken, wrapper.user());
+                ViaBedrock.getResourcePackServer().addConnection(httpToken, wrapper.user(), cacheKey);
+                String cachedHash = "";
+                try {
+                    if (cache.has(cacheKey)) {
+                        cachedHash = cache.getHash(cacheKey);
+                    }
+                } catch (Throwable e) {
+                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to read java pack cache", e);
+                }
 
                 final PacketWrapper resourcePackPush = PacketWrapper.create(wrapper.getPacketType(), wrapper.user());
-                resourcePackPush.write(Types.UUID, UUID.randomUUID()); // pack id
+                resourcePackPush.write(Types.UUID, UUID.nameUUIDFromBytes(cacheKey.getBytes(StandardCharsets.UTF_8))); // pack id
                 resourcePackPush.write(Types.STRING, ViaBedrock.getResourcePackServer().getUrl() + "?token=" + httpToken); // url
-                resourcePackPush.write(Types.STRING, ""); // hash
+                resourcePackPush.write(Types.STRING, cachedHash); // hash
                 resourcePackPush.write(Types.BOOLEAN, false); // requires accept
                 resourcePackPush.write(Types.OPTIONAL_TAG, TextUtil.stringToNbt(
                         "\n§aIf you press 'Yes', the resource packs will be downloaded and converted to the Java Edition format. " +

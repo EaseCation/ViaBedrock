@@ -17,6 +17,7 @@
  */
 package net.raphimc.viabedrock;
 
+import net.raphimc.viabedrock.api.http.JavaPackCache;
 import net.raphimc.viabedrock.api.http.ResourcePackHttpServer;
 import net.raphimc.viabedrock.platform.ViaBedrockConfig;
 import net.raphimc.viabedrock.platform.ViaBedrockPlatform;
@@ -32,6 +33,7 @@ public class ViaBedrock {
     private static ViaBedrockPlatform platform;
     private static ViaBedrockConfig config;
     private static ResourcePackHttpServer resourcePackServer;
+    private static JavaPackCache javaPackCache;
 
     private ViaBedrock() {
     }
@@ -49,6 +51,7 @@ public class ViaBedrock {
             } catch (Throwable e) {
                 throw new IllegalStateException("Failed to start resource pack HTTP server", e);
             }
+            ViaBedrock.javaPackCache = new JavaPackCache(platform.getJavaPacksCacheFolder());
         }
         if (config.shouldEnableExperimentalFeatures()) {
             platform.getLogger().log(Level.WARNING, "Experimental features are enabled. These features might not be fully stable/tested and may cause issues.");
@@ -65,6 +68,10 @@ public class ViaBedrock {
 
     public static ResourcePackHttpServer getResourcePackServer() {
         return ViaBedrock.resourcePackServer;
+    }
+
+    public static JavaPackCache getJavaPackCache() {
+        return ViaBedrock.javaPackCache;
     }
 
 }
