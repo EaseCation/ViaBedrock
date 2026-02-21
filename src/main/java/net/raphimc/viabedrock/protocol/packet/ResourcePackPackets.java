@@ -30,7 +30,6 @@ import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.http.BedrockPackDownloader;
 import net.raphimc.viabedrock.api.http.JavaPackCache;
 import net.raphimc.viabedrock.api.model.resourcepack.ResourcePack;
-import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
 import net.raphimc.viabedrock.api.util.TextUtil;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
@@ -41,7 +40,6 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ResourcePack
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.ResourcePackAction;
 import net.raphimc.viabedrock.protocol.model.Experiment;
 import net.raphimc.viabedrock.protocol.provider.ResourcePackProvider;
-import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
 import net.raphimc.viabedrock.protocol.storage.ResourcePacksStorage;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
@@ -86,8 +84,7 @@ public class ResourcePackPackets {
                     pack.setCdnUrl(null); // Use the old resource pack downloading method
                 });
 
-                final boolean hasVBU = wrapper.user().get(ChannelStorage.class).hasChannel(ViaBedrockUtilityInterface.CONFIRM_CHANNEL);
-                final String cacheKey = JavaPackCache.computeCacheKey(resourcePacksStorage.getPacks(), hasVBU);
+                final String cacheKey = JavaPackCache.computeCacheKey(resourcePacksStorage.getPacks());
                 final JavaPackCache cache = ViaBedrock.getJavaPackCache();
 
                 final UUID httpToken = UUID.randomUUID();

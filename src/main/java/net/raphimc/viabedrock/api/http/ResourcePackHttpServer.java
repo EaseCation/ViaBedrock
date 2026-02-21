@@ -96,6 +96,14 @@ public class ResourcePackHttpServer {
                                         } else {
                                             final long start = System.nanoTime();
                                             final ResourcePack.Content javaContent = ResourcePackRewriter.bedrockToJava(resourcePacksStorage);
+                                            // Always include bedrock mcpack files for VBU compatibility,
+                                            // regardless of whether VBU channel is registered at this point
+                                            for (ResourcePack pack : resourcePacksStorage.getPacks()) {
+                                                final String mcpackPath = "bedrock/" + pack.packId() + ".mcpack";
+                                                if (javaContent.get(mcpackPath) == null) {
+                                                    javaContent.put(mcpackPath, pack.content().toZip());
+                                                }
+                                            }
                                             data = javaContent.toZip();
                                             final long end = System.nanoTime();
                                             ViaBedrock.getPlatform().getLogger().log(Level.INFO, "Converted packs in " + ((end - start) / 1_000_000L) + "ms");

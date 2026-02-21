@@ -37,12 +37,11 @@ public class JavaPackCache {
         this.cacheFolder.mkdirs();
     }
 
-    public static String computeCacheKey(final Collection<ResourcePack> packs, final boolean hasVBU) {
+    public static String computeCacheKey(final Collection<ResourcePack> packs) {
         final String raw = packs.stream()
                 .map(p -> p.packId() + "_" + p.version())
                 .sorted()
-                .collect(Collectors.joining(","))
-                + "_vbu=" + hasVBU;
+                .collect(Collectors.joining(","));
         return sha1Hex(raw.getBytes(StandardCharsets.UTF_8));
     }
 
