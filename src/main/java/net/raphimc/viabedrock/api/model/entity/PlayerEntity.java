@@ -28,6 +28,7 @@ import com.viaversion.viaversion.protocols.v1_21_9to1_21_11.packet.ClientboundPa
 import net.raphimc.viabedrock.api.util.StringUtil;
 import net.raphimc.viabedrock.api.util.TextUtil;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
+import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorDataIDs;
 import net.raphimc.viabedrock.protocol.data.enums.java.PlayerTeamAction;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.TeamCollisionRule;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.TeamVisibility;
@@ -67,16 +68,20 @@ public class PlayerEntity extends LivingEntity {
 
     public final void updateName(final String name) {
         this.setName(name);
+        final boolean hasVisibleName = name != null && !TextUtil.stripFormatting(name).isEmpty();
+        this.sendTeamUpdate(hasVisibleName ? name : "", hasVisibleName);
+    }
 
+    private void sendTeamUpdate(final String prefix, final boolean nameTagVisible) {
         final PacketWrapper setPlayerTeam = PacketWrapper.create(ClientboundPackets1_21_11.SET_PLAYER_TEAM, this.user);
         setPlayerTeam.write(Types.STRING, "vb_" + this.javaId); // team name
         setPlayerTeam.write(Types.BYTE, (byte) PlayerTeamAction.CHANGE.ordinal()); // mode
         setPlayerTeam.write(Types.TAG, TextUtil.stringToNbt("vb_" + this.javaId)); // display name
         setPlayerTeam.write(Types.BYTE, (byte) 3); // flags
-        setPlayerTeam.write(Types.VAR_INT, TeamVisibility.ALWAYS.ordinal()); // name tag visibility
+        setPlayerTeam.write(Types.VAR_INT, (nameTagVisible ? TeamVisibility.ALWAYS : TeamVisibility.NEVER).ordinal()); // name tag visibility
         setPlayerTeam.write(Types.VAR_INT, TeamCollisionRule.NEVER.ordinal()); // collision rule
         setPlayerTeam.write(Types.VAR_INT, TextFormatting.RESET.getOrdinal()); // color
-        setPlayerTeam.write(Types.TAG, TextUtil.stringToNbt(name)); // prefix
+        setPlayerTeam.write(Types.TAG, TextUtil.stringToNbt(prefix)); // prefix
         setPlayerTeam.write(Types.TAG, TextUtil.stringToNbt("")); // suffix
         setPlayerTeam.send(BedrockProtocol.class);
     }
@@ -102,6 +107,23 @@ public class PlayerEntity extends LivingEntity {
 
     public void setAbilities(final PlayerAbilities abilities) {
         this.abilities = abilities;
+    }
+
+    @Override
+    protected boolean translateEntityData(final ActorDataIDs id, final EntityData entityData, final List<EntityData> javaEntityData) {
+        switch (id) {
+            case NAME, NAME_RAW_TEXT -> {
+                final String name = (String) entityData.getValue();
+                this.updateName(name != null ? name : "");
+            }
+            case NAMETAG_ALWAYS_SHOW -> {
+                final byte alwaysShow = (byte) entityData.getValue();
+                final String currentName = this.name();
+                final boolean hasVisibleName = alwaysShow == 1 && currentName != null && !TextUtil.stripFormatting(currentName).isEmpty();
+                this.sendTeamUpdate(hasVisibleName ? currentName : "", hasVisibleName);
+            }
+        }
+        return super.translateEntityData(id, entityData, javaEntityData);
     }
 
     @Override

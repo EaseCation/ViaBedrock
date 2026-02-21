@@ -669,7 +669,7 @@ public class EntityMetadataRewriter {
             }
             case NAME, NAME_RAW_TEXT -> {
                 String name = (String) entityData.getValue();
-                if (name != null && !name.isEmpty()) {
+                if (name != null && !TextUtil.stripFormatting(name).isEmpty()) {
                     Tag nbtName = TextUtil.stringToNbt(name);
                     javaEntityData.add(new EntityData(
                         entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME),
@@ -698,7 +698,7 @@ public class EntityMetadataRewriter {
                     final EntityData nameRawData = entity.entityData().get(ActorDataIDs.NAME_RAW_TEXT);
                     final String name = nameData != null ? (String) nameData.getValue() : null;
                     final String nameRaw = nameRawData != null ? (String) nameRawData.getValue() : null;
-                    hasName = (name != null && !name.isEmpty()) || (nameRaw != null && !nameRaw.isEmpty());
+                    hasName = (name != null && !TextUtil.stripFormatting(name).isEmpty()) || (nameRaw != null && !TextUtil.stripFormatting(nameRaw).isEmpty());
                 }
                 javaEntityData.add(new EntityData(
                     entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME_VISIBLE),

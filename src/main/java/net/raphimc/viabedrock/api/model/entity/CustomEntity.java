@@ -74,6 +74,7 @@ public class CustomEntity extends Entity {
     private final List<EvaluatedModel> models = new ArrayList<>();
     private final List<ItemDisplayEntity> partEntities = new ArrayList<>();
     private boolean spawned;
+    private boolean collisionBoxSent;
 
     public CustomEntity(final UserConnection user, final long uniqueId, final long runtimeId, final String type, final int javaId, final EntityDefinitions.EntityDefinition entityDefinition) {
         super(user, uniqueId, runtimeId, type, javaId, UUID.randomUUID(), EntityTypes1_21_11.INTERACTION);
@@ -120,7 +121,6 @@ public class CustomEntity extends Entity {
         if (!this.spawned) {
             this.evaluateRenderControllerChange();
             this.spawn();
-            this.sendInitialCollisionBox();
         } else {
             this.partEntities.forEach(ItemDisplayEntity::updatePositionAndRotation);
         }
@@ -149,6 +149,12 @@ public class CustomEntity extends Entity {
                 ViaBedrockUtilityInterface.spawnCustomEntity(this.user, this.javaUuid(), this.entityDefinition.identifier(), this.entityData());
             }
             this.updateCollisionBox(javaEntityData);
+            this.collisionBoxSent = true;
+            return true;
+        }
+        if ((id == ActorDataIDs.RESERVED_053 || id == ActorDataIDs.RESERVED_054) && this.spawned) {
+            this.updateCollisionBox(javaEntityData);
+            this.collisionBoxSent = true;
             return true;
         }
         return super.translateEntityData(id, entityData, javaEntityData);
@@ -157,6 +163,11 @@ public class CustomEntity extends Entity {
     @Override
     protected void onEntityDataChanged() {
         super.onEntityDataChanged();
+
+        if (!this.collisionBoxSent && this.spawned) {
+            this.sendInitialCollisionBox();
+            this.collisionBoxSent = true;
+        }
 
         if (this.evaluateRenderControllerChange()) {
             this.despawn();
@@ -245,18 +256,14 @@ public class CustomEntity extends Entity {
             scale = this.entityData.get(ActorDataIDs.RESERVED_038).<Float>value();
         }
 
-        float width;
-        float height;
-        if (this.entityData.containsKey(ActorDataIDs.RESERVED_053)) {
-            width = this.entityData.get(ActorDataIDs.RESERVED_053).<Float>value();
-        } else {
-            width = DEFAULT_WIDTH * scale;
-        }
-        if (this.entityData.containsKey(ActorDataIDs.RESERVED_054)) {
-            height = this.entityData.get(ActorDataIDs.RESERVED_054).<Float>value();
-        } else {
-            height = DEFAULT_HEIGHT * scale;
-        }
+        float width = this.entityData.containsKey(ActorDataIDs.RESERVED_053)
+                ? this.entityData.get(ActorDataIDs.RESERVED_053).<Float>value()
+                : DEFAULT_WIDTH;
+        float height = this.entityData.containsKey(ActorDataIDs.RESERVED_054)
+                ? this.entityData.get(ActorDataIDs.RESERVED_054).<Float>value()
+                : DEFAULT_HEIGHT;
+        width *= scale;
+        height *= scale;
 
         javaEntityData.add(new EntityData(
                 this.getJavaEntityDataIndex(EntityDataFields.WIDTH),

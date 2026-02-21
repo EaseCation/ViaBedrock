@@ -75,6 +75,20 @@ public class TextUtil {
         return textComponentToNbt(stringToTextComponent(text));
     }
 
+    public static String stripFormatting(final String text) {
+        if (text == null) return null;
+        final StringBuilder out = new StringBuilder();
+        final char[] chars = text.toCharArray();
+        for (int i = 0; i < chars.length; i++) {
+            if (chars[i] == BedrockTextFormatting.COLOR_CHAR && i + 1 < chars.length) {
+                i++;
+            } else {
+                out.append(chars[i]);
+            }
+        }
+        return out.toString();
+    }
+
     public static Tag textComponentToNbt(final TextComponent textComponent) {
         return ProtocolConstants.JAVA_TEXT_COMPONENT_SERIALIZER.serializeNbtTree(textComponent);
     }

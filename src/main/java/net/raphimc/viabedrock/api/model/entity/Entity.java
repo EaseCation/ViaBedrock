@@ -106,6 +106,8 @@ public class Entity {
     }
 
     public final void updateEntityData(final EntityData[] entityData, final List<EntityData> javaEntityData) {
+        // First pass: validate and store all entity data so translators see the latest values from the entire batch
+        final List<Map.Entry<ActorDataIDs, EntityData>> validData = new ArrayList<>();
         for (EntityData data : entityData) {
             final ActorDataIDs dataId = ActorDataIDs.getByValue(data.id());
             if (dataId == null) {
@@ -118,9 +120,13 @@ public class Entity {
                 continue;
             }
             this.entityData.put(dataId, data);
-            if (!this.translateEntityData(dataId, data, javaEntityData)) {
+            validData.add(Map.entry(dataId, data));
+        }
+        // Second pass: translate all validated entity data
+        for (Map.Entry<ActorDataIDs, EntityData> entry : validData) {
+            if (!this.translateEntityData(entry.getKey(), entry.getValue(), javaEntityData)) {
                 // TODO: Log warning when entity data translation is fully implemented
-                // ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received unknown entity data: " + dataId + " for entity type: " + this.type);
+                // ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received unknown entity data: " + entry.getKey() + " for entity type: " + this.type);
             }
         }
         this.onEntityDataChanged();
