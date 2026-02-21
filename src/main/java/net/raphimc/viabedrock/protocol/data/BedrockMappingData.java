@@ -336,11 +336,11 @@ public class BedrockMappingData extends MappingDataBase {
             for (Map.Entry<String, JsonElement> entry : bedrockBlockTraitsJson.entrySet()) {
                 final String traitName = entry.getKey();
                 final JsonObject enabledStatesJson = entry.getValue().getAsJsonObject();
-                final Map<String, Map<String, Set<String>>> traitStateProperties = new HashMap<>(enabledStatesJson.size());
+                final Map<String, Map<String, Set<String>>> traitStateProperties = new LinkedHashMap<>(enabledStatesJson.size());
                 for (Map.Entry<String, JsonElement> enabledStatesEntry : enabledStatesJson.entrySet()) {
                     final String enabledStateName = enabledStatesEntry.getKey();
                     final JsonObject propertiesJson = enabledStatesEntry.getValue().getAsJsonObject();
-                    final Map<String, Set<String>> properties = new HashMap<>(propertiesJson.size());
+                    final Map<String, Set<String>> properties = new LinkedHashMap<>(propertiesJson.size());
                     for (Map.Entry<String, JsonElement> propertiesEntry : propertiesJson.entrySet()) {
                         final String propertyName = propertiesEntry.getKey();
                         final JsonArray valuesJson = propertiesEntry.getValue().getAsJsonArray();

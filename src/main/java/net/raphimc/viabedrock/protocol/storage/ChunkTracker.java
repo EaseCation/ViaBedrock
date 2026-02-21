@@ -337,6 +337,7 @@ public class ChunkTracker extends StoredObject {
 
         final BlockStateRewriter blockStateRewriter = this.user().get(BlockStateRewriter.class);
         final EntityTracker entityTracker = this.user().get(EntityTracker.class);
+        final boolean hasFabricRock = this.user().get(GameSessionStorage.class).hasFabricRock();
         final int sectionX = blockPosition.x() & 15;
         final int sectionY = blockPosition.y() & 15;
         final int sectionZ = blockPosition.z() & 15;
@@ -358,6 +359,7 @@ public class ChunkTracker extends StoredObject {
         palette.setIdAt(sectionX, sectionY, sectionZ, blockState);
 
         int remappedBlockState = this.getJavaBlockState(section, sectionX, sectionY, sectionZ);
+
         if (!Objects.equals(prevTag, tag)) {
             this.getChunk(blockPosition.x() >> 4, blockPosition.z() >> 4).removeBlockEntityAt(blockPosition);
             entityTracker.removeItemFrame(blockPosition);
@@ -378,11 +380,25 @@ public class ChunkTracker extends StoredObject {
                 }
 
                 if (javaBlockEntity != null && javaBlockEntity.tag() != null) {
+                    if (!hasFabricRock) {
+                        final int vanillaBlockStateCount = BedrockProtocol.MAPPINGS.getVanillaBlockStateCount();
+                        final int vanillaBlockEntityCount = BedrockProtocol.MAPPINGS.getVanillaBlockEntityCount();
+                        if (remappedBlockState >= vanillaBlockStateCount) {
+                            remappedBlockState = 1; // stone
+                        }
+                        if (javaBlockEntity.typeId() >= vanillaBlockEntityCount || javaBlockEntity.typeId() < 0) {
+                            return new IntObjectImmutablePair<>(remappedBlockState, null);
+                        }
+                    }
                     return new IntObjectImmutablePair<>(remappedBlockState, javaBlockEntity);
                 }
             } else if (CustomBlockTags.ITEM_FRAME.equals(tag)) {
                 entityTracker.spawnItemFrame(blockPosition, blockStateRewriter.blockState(blockState));
             }
+        }
+
+        if (!hasFabricRock && remappedBlockState >= BedrockProtocol.MAPPINGS.getVanillaBlockStateCount()) {
+            remappedBlockState = 1; // stone
         }
 
         return new IntObjectImmutablePair<>(remappedBlockState, null);

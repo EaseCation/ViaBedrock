@@ -22,18 +22,18 @@
   "minecraft:placement_direction": {
     "minecraft:cardinal_direction": {
       "minecraft:cardinal_direction": [
-        "north",
         "south",
-        "east",
-        "west"
+        "west",
+        "north",
+        "east"
       ]
     },
     "minecraft:corner_and_cardinal_direction": {
       "minecraft:cardinal_direction": [
-        "north",
         "south",
-        "east",
-        "west"
+        "west",
+        "north",
+        "east"
       ],
       "minecraft:corner": [
         "none",
@@ -49,8 +49,8 @@
         "up",
         "north",
         "south",
-        "east",
-        "west"
+        "west",
+        "east"
       ]
     }
   },
@@ -61,8 +61,8 @@
         "up",
         "north",
         "south",
-        "east",
-        "west"
+        "west",
+        "east"
       ]
     },
     "minecraft:vertical_half": {

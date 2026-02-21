@@ -149,6 +149,44 @@ public class ViaBedrockUtilityInterface {
             pluginMessage.write(Types.REMAINING_BYTES, capeData);
             pluginMessage.scheduleSend(BedrockProtocol.class);
         }
+        if (skin.animations() != null && !skin.animations().isEmpty()) {
+            for (int animIndex = 0; animIndex < skin.animations().size(); animIndex++) {
+                final SkinData.AnimationData anim = skin.animations().get(animIndex);
+                if (anim.image() == null) continue;
+
+                final byte[] animData = ImageType.getImageData(anim.image());
+                final int animChunkCount = (int) Math.ceil(animData.length / (double) maxPayloadSize);
+
+                {
+                    final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets1_21_11.CUSTOM_PAYLOAD, user);
+                    pluginMessage.write(Types.STRING, CHANNEL);
+                    pluginMessage.write(Types.INT, PayloadType.SKIN_ANIMATION_INFO.ordinal());
+                    pluginMessage.write(Types.UUID, uuid);
+                    pluginMessage.write(Types.INT, animIndex);
+                    pluginMessage.write(Types.INT, anim.type());
+                    pluginMessage.write(Types.FLOAT, anim.frames());
+                    pluginMessage.write(Types.INT, anim.expression());
+                    pluginMessage.write(Types.INT, anim.image().getWidth());
+                    pluginMessage.write(Types.INT, anim.image().getHeight());
+                    pluginMessage.write(Types.INT, animChunkCount);
+                    pluginMessage.scheduleSend(BedrockProtocol.class);
+                }
+                for (int i = 0; i < animChunkCount; i++) {
+                    final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets1_21_11.CUSTOM_PAYLOAD, user);
+                    pluginMessage.write(Types.STRING, CHANNEL);
+                    pluginMessage.write(Types.INT, PayloadType.SKIN_ANIMATION_DATA.ordinal());
+                    pluginMessage.write(Types.UUID, uuid);
+                    pluginMessage.write(Types.INT, animIndex);
+                    pluginMessage.write(Types.INT, i);
+                    if (animChunkCount == 1) {
+                        pluginMessage.write(Types.REMAINING_BYTES, animData);
+                    } else {
+                        pluginMessage.write(Types.REMAINING_BYTES, Arrays.copyOfRange(animData, i * maxPayloadSize, Math.min((i + 1) * maxPayloadSize, animData.length)));
+                    }
+                    pluginMessage.scheduleSend(BedrockProtocol.class);
+                }
+            }
+        }
     }
 
     private static void writeString(final PacketWrapper wrapper, final String s) {
@@ -158,6 +196,7 @@ public class ViaBedrockUtilityInterface {
 
     private enum PayloadType {
         CONFIRM, MODEL_REQUEST, ANIMATE,
-        CAPE, SKIN_INFORMATION, SKIN_DATA
+        CAPE, SKIN_INFORMATION, SKIN_DATA,
+        SKIN_ANIMATION_INFO, SKIN_ANIMATION_DATA
     }
 }
