@@ -384,7 +384,7 @@ public class ChunkTracker extends StoredObject {
                         final int vanillaBlockStateCount = BedrockProtocol.MAPPINGS.getVanillaBlockStateCount();
                         final int vanillaBlockEntityCount = BedrockProtocol.MAPPINGS.getVanillaBlockEntityCount();
                         if (remappedBlockState >= vanillaBlockStateCount) {
-                            remappedBlockState = 1; // stone
+                            remappedBlockState = BedrockProtocol.MAPPINGS.getCustomBlockFallback(remappedBlockState);
                         }
                         if (javaBlockEntity.typeId() >= vanillaBlockEntityCount || javaBlockEntity.typeId() < 0) {
                             return new IntObjectImmutablePair<>(remappedBlockState, null);
@@ -398,7 +398,7 @@ public class ChunkTracker extends StoredObject {
         }
 
         if (!hasFabricRock && remappedBlockState >= BedrockProtocol.MAPPINGS.getVanillaBlockStateCount()) {
-            remappedBlockState = 1; // stone
+            remappedBlockState = BedrockProtocol.MAPPINGS.getCustomBlockFallback(remappedBlockState);
         }
 
         return new IntObjectImmutablePair<>(remappedBlockState, null);
@@ -540,14 +540,15 @@ public class ChunkTracker extends StoredObject {
         final int vanillaBlockStateCount = BedrockProtocol.MAPPINGS.getVanillaBlockStateCount();
         final int vanillaBlockEntityCount = BedrockProtocol.MAPPINGS.getVanillaBlockEntityCount();
 
-        // Replace custom block state IDs (>= vanillaBlockStateCount) with stone (ID 1)
+        // Replace custom block state IDs (>= vanillaBlockStateCount) with their fallback blocks
         for (final ChunkSection section : chunk.getSections()) {
             if (section == null) continue;
             final DataPalette blockPalette = section.palette(PaletteType.BLOCKS);
             if (blockPalette == null) continue;
             for (int i = 0; i < blockPalette.size(); i++) {
-                if (blockPalette.idByIndex(i) >= vanillaBlockStateCount) {
-                    blockPalette.setIdByIndex(i, 1); // stone
+                final int stateId = blockPalette.idByIndex(i);
+                if (stateId >= vanillaBlockStateCount) {
+                    blockPalette.setIdByIndex(i, BedrockProtocol.MAPPINGS.getCustomBlockFallback(stateId));
                 }
             }
         }

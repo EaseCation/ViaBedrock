@@ -104,6 +104,7 @@ public class BedrockMappingData extends MappingDataBase {
     private byte[] javaBlockStateFilterLight;
     private Int2IntMap customBlockEmitLight;
     private Int2IntMap customBlockFilterLight;
+    private Int2IntMap customBlockFallbacks; // java_state_id -> fallback java_state_id
 
     // Biomes
     private CompoundTag bedrockBiomeDefinitions;
@@ -248,12 +249,15 @@ public class BedrockMappingData extends MappingDataBase {
             // 加载 FabricRock 导出的自定义方块映射
             this.customBlockEmitLight = new Int2IntOpenHashMap();
             this.customBlockFilterLight = new Int2IntOpenHashMap();
+            this.customBlockFallbacks = new Int2IntOpenHashMap();
             ((Int2IntOpenHashMap) this.customBlockEmitLight).defaultReturnValue(-1);
             ((Int2IntOpenHashMap) this.customBlockFilterLight).defaultReturnValue(-1);
-            final File customMappingFile = new File("config/bedrock-loader/block_state_mappings.json");
+            ((Int2IntOpenHashMap) this.customBlockFallbacks).defaultReturnValue(1); // default: stone
+            final File customMappingFile = new File(System.getProperty("user.dir"), "config/bedrock-loader/block_state_mappings.json");
             if (customMappingFile.exists()) {
                 try {
                     final JsonObject customMappingsRoot = new Gson().fromJson(new FileReader(customMappingFile), JsonObject.class);
+                    final int formatVersion = customMappingsRoot.has("format_version") ? customMappingsRoot.get("format_version").getAsInt() : 1;
                     final JsonObject customMappings = customMappingsRoot.getAsJsonObject("mappings");
 
                     int addedCount = 0;
@@ -307,10 +311,24 @@ public class BedrockMappingData extends MappingDataBase {
                                 this.customBlockFilterLight.put(javaStateId, lightFilter);
                             }
                         }
+
+                        // 4. 读取 fallback_block (format_version >= 2)
+                        if (formatVersion >= 2 && mapping.has("fallback_block")) {
+                            final String fallbackBlockStr = mapping.get("fallback_block").getAsString();
+                            final BlockState fallbackBlockState = BlockState.fromString(fallbackBlockStr);
+                            if (this.javaBlockStates.containsKey(fallbackBlockState)) {
+                                this.customBlockFallbacks.put(javaStateId, this.javaBlockStates.get(fallbackBlockState).intValue());
+                            } else {
+                                ViaBedrock.getPlatform().getLogger().warning(
+                                    "Unknown fallback block '" + fallbackBlockStr + "' for custom block state ID " + javaStateId + ", using stone"
+                                );
+                            }
+                        }
                     }
 
-                    ViaBedrock.getPlatform().getLogger().info("Loaded " + addedCount + " custom block state mappings from FabricRock" +
-                        (skippedCount > 0 ? " (skipped " + skippedCount + " due to ID conflicts)" : ""));
+                    ViaBedrock.getPlatform().getLogger().info("Loaded " + addedCount + " custom block state mappings from FabricRock (format v" + formatVersion + ")" +
+                        (skippedCount > 0 ? " (skipped " + skippedCount + " due to ID conflicts)" : "") +
+                        ", fallbacks: " + this.customBlockFallbacks.size());
                 } catch (Exception e) {
                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to load custom block state mappings", e);
                 }
@@ -690,7 +708,7 @@ public class BedrockMappingData extends MappingDataBase {
             }
 
             // 加载自定义实体类型 ID 映射（第一阶段：只加载 java_type_id）
-            final File customEntityTypeIdsFile = new File("config/bedrock-loader/custom_entity_type_ids.json");
+            final File customEntityTypeIdsFile = new File(System.getProperty("user.dir"), "config/bedrock-loader/custom_entity_type_ids.json");
             JsonObject customEntityMappings = null;
             if (customEntityTypeIdsFile.exists()) {
                 try {
@@ -775,7 +793,7 @@ public class BedrockMappingData extends MappingDataBase {
             }
             this.vanillaBlockEntityCount = this.javaBlockEntities.size();
             // Load custom block entity type ID mappings (exported by FabricRock)
-            final File customBlockEntityTypeIdsFile = new File("config/bedrock-loader/custom_block_entity_type_ids.json");
+            final File customBlockEntityTypeIdsFile = new File(System.getProperty("user.dir"), "config/bedrock-loader/custom_block_entity_type_ids.json");
             if (customBlockEntityTypeIdsFile.exists()) {
                 try {
                     final JsonObject customBlockEntityRoot = new Gson().fromJson(new FileReader(customBlockEntityTypeIdsFile), JsonObject.class);
@@ -1344,6 +1362,10 @@ public class BedrockMappingData extends MappingDataBase {
 
     public int getVanillaBlockEntityCount() {
         return this.vanillaBlockEntityCount;
+    }
+
+    public int getCustomBlockFallback(final int javaStateId) {
+        return this.customBlockFallbacks != null ? this.customBlockFallbacks.get(javaStateId) : 1;
     }
 
     public Map<String, EntityTypes1_21_11> getCustomEntityTypeFallbacks() {
