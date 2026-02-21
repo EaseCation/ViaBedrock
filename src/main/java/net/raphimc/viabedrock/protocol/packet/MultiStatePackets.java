@@ -141,6 +141,7 @@ public class MultiStatePackets {
             }
             if (channels.contains(ModUIClientInterface.CONFIRM_CHANNEL)) {
                 ModUIClientInterface.confirmPresence(wrapper.user());
+                ModUIClientInterface.sendEntityMappingSync(wrapper.user());
             }
             if (channels.contains("fabricrock:confirm")) {
                 wrapper.user().get(GameSessionStorage.class).setHasFabricRock(true);

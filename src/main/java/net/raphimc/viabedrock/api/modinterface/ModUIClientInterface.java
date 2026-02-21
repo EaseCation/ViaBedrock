@@ -22,12 +22,16 @@ import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.protocols.v1_21_9to1_21_11.packet.ClientboundPackets1_21_11;
 import net.raphimc.viabedrock.ViaBedrock;
+import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
+import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
+import java.nio.ByteBuffer;
+import java.util.Collection;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class ModUIClientInterface {
@@ -82,8 +86,52 @@ public class ModUIClientInterface {
         }
     }
 
+    // --- Entity ID Mapping ---
+
+    private static final byte OP_ADD = 0;
+    private static final byte OP_REMOVE = 1;
+    private static final byte OP_SYNC = 2;
+
+    public static void sendEntityMappingAdd(final UserConnection user, final long runtimeId, final int javaId) {
+        if (!user.get(ChannelStorage.class).hasChannel(CONFIRM_CHANNEL)) return;
+        final byte[] data = ByteBuffer.allocate(1 + 8 + 4).put(OP_ADD).putLong(runtimeId).putInt(javaId).array();
+        sendEntityMappingPayload(user, data);
+    }
+
+    public static void sendEntityMappingRemove(final UserConnection user, final long runtimeId) {
+        if (!user.get(ChannelStorage.class).hasChannel(CONFIRM_CHANNEL)) return;
+        final byte[] data = ByteBuffer.allocate(1 + 8).put(OP_REMOVE).putLong(runtimeId).array();
+        sendEntityMappingPayload(user, data);
+    }
+
+    public static void sendEntityMappingSync(final UserConnection user) {
+        if (!user.get(ChannelStorage.class).hasChannel(CONFIRM_CHANNEL)) return;
+        if (!user.has(EntityTracker.class)) return;
+        final Collection<Entity> entities = user.get(EntityTracker.class).getEntities();
+        final ByteBuffer buf = ByteBuffer.allocate(1 + 4 + entities.size() * (8 + 4));
+        buf.put(OP_SYNC);
+        buf.putInt(entities.size());
+        for (final Entity entity : entities) {
+            buf.putLong(entity.runtimeId());
+            buf.putInt(entity.javaId());
+        }
+        sendEntityMappingPayload(user, buf.array());
+    }
+
+    private static void sendEntityMappingPayload(final UserConnection user, final byte[] data) {
+        try {
+            final PacketWrapper pw = PacketWrapper.create(ClientboundPackets1_21_11.CUSTOM_PAYLOAD, user);
+            pw.write(Types.STRING, CHANNEL);
+            pw.write(Types.INT, PayloadType.ENTITY_MAPPING.ordinal());
+            pw.write(Types.REMAINING_BYTES, data);
+            pw.scheduleSend(BedrockProtocol.class);
+        } catch (final Exception e) {
+            ViaBedrock.getPlatform().getLogger().warning("[ModUIClient] Failed to send entity mapping: " + e.getMessage());
+        }
+    }
+
     private enum PayloadType {
-        CONFIRM, PY_RPC_DATA
+        CONFIRM, PY_RPC_DATA, ENTITY_MAPPING
     }
 
 }

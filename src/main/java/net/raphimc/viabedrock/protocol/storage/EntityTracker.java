@@ -29,6 +29,7 @@ import com.viaversion.viaversion.protocols.v1_21_9to1_21_11.packet.ClientboundPa
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.model.BlockState;
 import net.raphimc.viabedrock.api.model.entity.*;
+import net.raphimc.viabedrock.api.modinterface.ModUIClientInterface;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 
 import java.util.*;
@@ -103,6 +104,8 @@ public class EntityTracker extends StoredObject {
             player.createTeam();
         }
 
+        ModUIClientInterface.sendEntityMappingAdd(this.user(), entity.runtimeId(), entity.javaId());
+
         return entity;
     }
 
@@ -110,6 +113,8 @@ public class EntityTracker extends StoredObject {
         if (entity instanceof ClientPlayerEntity) {
             throw new IllegalArgumentException("Cannot remove client player entity");
         }
+
+        ModUIClientInterface.sendEntityMappingRemove(this.user(), entity.runtimeId());
 
         this.entities.remove(entity.uniqueId());
         this.runtimeIdToUniqueId.remove(entity.runtimeId());
@@ -195,6 +200,10 @@ public class EntityTracker extends StoredObject {
 
     public Entity getEntityByJid(final int javaId) {
         return this.entities.get(this.javaIdToUniqueId.get(javaId));
+    }
+
+    public Collection<Entity> getEntities() {
+        return this.entities.values();
     }
 
     public ClientPlayerEntity getClientPlayer() {
