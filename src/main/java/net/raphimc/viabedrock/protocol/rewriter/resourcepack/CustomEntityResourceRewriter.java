@@ -18,15 +18,20 @@
 package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
 
 import com.viaversion.viaversion.util.Key;
+import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.model.resourcepack.EntityDefinitions;
 import net.raphimc.viabedrock.api.model.resourcepack.ResourcePack;
 import net.raphimc.viabedrock.protocol.storage.ResourcePacksStorage;
 import org.cube.converter.converter.enums.RotationType;
+import org.cube.converter.model.element.Parent;
 import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
 import org.cube.converter.model.impl.java.JavaItemModel;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.logging.Level;
 
 public class CustomEntityResourceRewriter extends ItemModelResourceRewriter {
 
@@ -57,11 +62,41 @@ public class CustomEntityResourceRewriter extends ItemModelResourceRewriter {
 
                 for (Map.Entry<String, String> textureEntry : entityDefinition.entityData().getTextures().entrySet()) {
                     final String javaTexturePath = this.getJavaTexturePath(textureEntry.getValue());
-                    final String key = entityEntry.getKey() + "_" + modelEntry.getKey() + "_" + textureEntry.getKey();
-                    final JavaItemModel itemModelData = bedrockGeometry.toJavaItemModel("viabedrock:" + javaTexturePath, RotationType.HACKY_POST_1_21_6);
-                    resourcePacksStorage.getConverterData().put("ce_" + key + "_scale", itemModelData.getScale());
-                    javaContent.putString("assets/viabedrock/models/" + this.getJavaModelName(key) + ".json", itemModelData.compile().toString());
-                    modelsList.add(key);
+                    final String baseKey = entityEntry.getKey() + "_" + modelEntry.getKey() + "_" + textureEntry.getKey();
+
+                    // Generate per-bone item models
+                    final List<String> boneNames = new ArrayList<>();
+                    for (Parent bone : bedrockGeometry.getParents()) {
+                        if (bone.getCubes().isEmpty()) continue;
+
+                        final String boneName = bone.getName().toLowerCase();
+                        try {
+                            // Create a standalone geometry containing only this bone
+                            final BedrockGeometryModel perBoneGeometry = new BedrockGeometryModel(
+                                    bedrockGeometry.getIdentifier() + "_" + boneName,
+                                    bedrockGeometry.getTextureSize());
+                            final Parent clonedBone = bone.clone();
+                            clonedBone.setParent(null);
+                            perBoneGeometry.getParents().add(clonedBone);
+
+                            final JavaItemModel itemModel = perBoneGeometry.toJavaItemModel(
+                                    "viabedrock:" + javaTexturePath, RotationType.HACKY_POST_1_21_6);
+
+                            final String boneKey = baseKey + "_" + boneName;
+                            final float safeScale = Float.isFinite(itemModel.getScale()) ? itemModel.getScale() : 1.0f;
+                            resourcePacksStorage.getConverterData().put("ce_" + boneKey + "_scale", safeScale);
+                            javaContent.putString("assets/viabedrock/models/" + this.getJavaModelName(boneKey) + ".json",
+                                    itemModel.compile().toString());
+                            modelsList.add(boneKey);
+                            boneNames.add(boneName);
+                        } catch (Throwable e) {
+                            ViaBedrock.getPlatform().getLogger().log(Level.WARNING,
+                                    "Failed to generate per-bone model for " + boneName + " in " + baseKey, e);
+                        }
+                    }
+
+                    // Store ordered bone name list for this geometry+texture combination
+                    resourcePacksStorage.getConverterData().put("ce_" + baseKey + "_bones", boneNames);
                 }
             }
         }

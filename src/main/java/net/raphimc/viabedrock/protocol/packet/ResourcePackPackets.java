@@ -211,6 +211,11 @@ public class ResourcePackPackets {
             }
             resourcePacksStorage.setPackStack(resourcePackIds);
 
+            // Initialize runtime data (BedrockMotion PackManager + per-bone metadata) immediately
+            // after pack stack is set. This ensures data is available even when the Java client
+            // uses its cached resource pack and doesn't trigger a new HTTP download.
+            net.raphimc.viabedrock.protocol.rewriter.ResourcePackRewriter.initRuntimeData(resourcePacksStorage);
+
             if (!resourcePacksStorage.isJavaClientWaitingForPack()) {
                 final PacketWrapper resourcePackClientResponse = wrapper.create(ServerboundBedrockPackets.RESOURCE_PACK_CLIENT_RESPONSE);
                 resourcePackClientResponse.write(Types.BYTE, (byte) ResourcePackResponse.ResourcePackStackFinished.getValue()); // status

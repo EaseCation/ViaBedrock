@@ -65,9 +65,10 @@ public class CustomAttachableResourceRewriter extends ItemModelResourceRewriter 
 
                 final JsonObject display = new JsonObject();
                 final JsonArray scaling = new JsonArray();
-                scaling.add(itemModelData.getScale());
-                scaling.add(itemModelData.getScale());
-                scaling.add(itemModelData.getScale());
+                final float safeScale = Float.isFinite(itemModelData.getScale()) ? itemModelData.getScale() : 1.0f;
+                scaling.add(safeScale);
+                scaling.add(safeScale);
+                scaling.add(safeScale);
 
                 final JsonObject value = new JsonObject();
                 value.add("scale", scaling);
