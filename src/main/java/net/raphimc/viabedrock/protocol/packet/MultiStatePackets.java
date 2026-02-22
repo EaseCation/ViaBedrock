@@ -28,8 +28,8 @@ import com.viaversion.viaversion.protocols.v1_21_9to1_21_11.packet.ClientboundPa
 import com.viaversion.viaversion.util.Key;
 import net.lenni0451.mcstructs_bedrock.text.utils.BedrockTranslator;
 import net.raphimc.viabedrock.ViaBedrock;
-import net.raphimc.viabedrock.api.modinterface.ModUIClientInterface;
 import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
+import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
@@ -41,7 +41,6 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketViolat
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketViolationType;
 import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
 import net.raphimc.viabedrock.protocol.storage.ClientSettingsStorage;
-import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
 import net.raphimc.viabedrock.protocol.storage.PacketSyncStorage;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
@@ -139,15 +138,9 @@ public class MultiStatePackets {
                 wrapper.user().get(ChannelStorage.class).addChannels(List.of(ViaBedrockUtilityInterface.CHANNEL));
                 ViaBedrockUtilityInterface.confirmPresence(wrapper.user());
             }
-            if (channels.contains(ModUIClientInterface.CONFIRM_CHANNEL)) {
-                ModUIClientInterface.confirmPresence(wrapper.user());
-                ModUIClientInterface.sendEntityMappingSync(wrapper.user());
-            }
-            if (channels.contains("fabricrock:confirm")) {
-                wrapper.user().get(GameSessionStorage.class).setHasFabricRock(true);
-            }
-        } else if (channel.equals(ModUIClientInterface.CHANNEL)) {
-            ModUIClientInterface.handleC2S(wrapper);
+            ExperimentalFeatures.dispatchChannelRegistered(wrapper.user(), new java.util.HashSet<>(channels));
+        } else {
+            ExperimentalFeatures.dispatchCustomPayload(channel, wrapper);
         }
     };
 

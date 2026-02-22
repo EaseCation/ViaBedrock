@@ -36,6 +36,7 @@ import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.api.model.entity.LivingEntity;
 import net.raphimc.viabedrock.api.model.resourcepack.EntityDefinitions;
 import net.raphimc.viabedrock.api.util.MathUtil;
+import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.api.util.RegistryUtil;
 import net.raphimc.viabedrock.api.util.TextUtil;
@@ -88,14 +89,11 @@ public class EntityPackets {
             final EntityLink[] entityLinks = wrapper.read(BedrockTypes.ENTITY_LINK_ARRAY); // entity links
 
             final Entity entity;
-            final Integer customJavaTypeId = BedrockProtocol.MAPPINGS.getCustomEntityTypeIds().get(type);
+            final Entity resolvedEntity = ExperimentalFeatures.dispatchResolveEntity(wrapper.user(), entityUniqueId, entityRuntimeId, type);
 
-            if (customJavaTypeId != null) {
-                // 使用自定义类型 ID
-                final EntityTypes1_21_11 fallbackType = BedrockProtocol.MAPPINGS.getCustomEntityTypeFallbacks().getOrDefault(type, EntityTypes1_21_11.PIG);
-                entity = entityTracker.addEntity(entityUniqueId, entityRuntimeId, type, fallbackType, customJavaTypeId);
+            if (resolvedEntity != null) {
+                entity = resolvedEntity;
             } else {
-                // 使用原有逻辑
                 final EntityTypes1_21_11 javaEntityType = BedrockProtocol.MAPPINGS.getBedrockToJavaEntities().get(type);
                 if (javaEntityType != null) {
                     entity = entityTracker.addEntity(entityUniqueId, entityRuntimeId, type, javaEntityType);

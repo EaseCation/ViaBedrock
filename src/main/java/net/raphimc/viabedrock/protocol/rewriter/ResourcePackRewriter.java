@@ -29,7 +29,6 @@ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomAttachableRes
 import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomEntityResourceRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomItemTextureResourceRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.resourcepack.GlyphSheetResourceRewriter;
-import net.raphimc.viabedrock.protocol.rewriter.resourcepack.UITextureResourceRewriter;
 import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
 import net.raphimc.viabedrock.protocol.storage.ResourcePacksStorage;
 import org.cube.converter.converter.enums.RotationType;
@@ -52,7 +51,10 @@ public class ResourcePackRewriter {
         REWRITERS.add(new CustomItemTextureResourceRewriter());
         REWRITERS.add(new CustomAttachableResourceRewriter());
         REWRITERS.add(new CustomEntityResourceRewriter());
-        REWRITERS.add(new UITextureResourceRewriter());
+    }
+
+    public static void registerRewriter(final Rewriter rewriter) {
+        REWRITERS.add(rewriter);
     }
 
     public static ResourcePack.Content bedrockToJava(final ResourcePacksStorage resourcePacksStorage) {

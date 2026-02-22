@@ -28,7 +28,8 @@ import com.viaversion.viaversion.util.Pair;
 import com.viaversion.viaversion.util.Triple;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.http.BedrockPackDownloader;
-import net.raphimc.viabedrock.api.http.JavaPackCache;
+import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
+import net.raphimc.viabedrock.experimental.resourcepack.JavaPackCache;
 import net.raphimc.viabedrock.api.model.resourcepack.ResourcePack;
 import net.raphimc.viabedrock.api.util.TextUtil;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
@@ -211,10 +212,7 @@ public class ResourcePackPackets {
             }
             resourcePacksStorage.setPackStack(resourcePackIds);
 
-            // Initialize runtime data (BedrockMotion PackManager + per-bone metadata) immediately
-            // after pack stack is set. This ensures data is available even when the Java client
-            // uses its cached resource pack and doesn't trigger a new HTTP download.
-            net.raphimc.viabedrock.protocol.rewriter.ResourcePackRewriter.initRuntimeData(resourcePacksStorage);
+            ExperimentalFeatures.dispatchResourcePackStackSet(wrapper.user());
 
             if (!resourcePacksStorage.isJavaClientWaitingForPack()) {
                 final PacketWrapper resourcePackClientResponse = wrapper.create(ServerboundBedrockPackets.RESOURCE_PACK_CLIENT_RESPONSE);

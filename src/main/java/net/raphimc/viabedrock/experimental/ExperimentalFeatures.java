@@ -28,6 +28,7 @@ import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.model.container.Container;
 import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
 import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
+import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.experimental.model.inventory.BedrockInventoryTransaction;
 import net.raphimc.viabedrock.experimental.model.inventory.InventoryActionData;
@@ -36,13 +37,23 @@ import net.raphimc.viabedrock.experimental.model.inventory.InventoryTransactionD
 import net.raphimc.viabedrock.experimental.model.map.MapDecoration;
 import net.raphimc.viabedrock.experimental.model.map.MapObject;
 import net.raphimc.viabedrock.experimental.model.map.MapTrackedObject;
+import net.raphimc.viabedrock.experimental.block.CustomBlockMappingModule;
+import net.raphimc.viabedrock.experimental.dimension.AlternateDimensionModule;
+import net.raphimc.viabedrock.experimental.entity.CustomEntityTypeResolver;
+import net.raphimc.viabedrock.experimental.light.AsyncLightModule;
+import net.raphimc.viabedrock.experimental.npc.NpcDialogueModule;
+import net.raphimc.viabedrock.experimental.modinterface.ModUIClientModule;
+import net.raphimc.viabedrock.experimental.resourcepack.ResourcePackModule;
 import net.raphimc.viabedrock.experimental.rewriter.InventoryTransactionRewriter;
 import net.raphimc.viabedrock.experimental.storage.MapTracker;
+import net.raphimc.viabedrock.experimental.storage.MultilineNametagTracker;
 import net.raphimc.viabedrock.experimental.util.JavaMapPaletteUtil;
 import net.raphimc.viabedrock.experimental.util.ProtocolUtil;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
+import net.raphimc.viabedrock.protocol.data.BedrockMappingData;
+import net.raphimc.viabedrock.protocol.data.enums.Dimension;
 import net.raphimc.viabedrock.protocol.data.enums.Direction;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.ItemUseInventoryTransaction_TriggerType;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
@@ -57,7 +68,9 @@ import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 import java.util.logging.Level;
 
 /**
@@ -66,9 +79,145 @@ import java.util.logging.Level;
  */
 public class ExperimentalFeatures {
 
+    private static final List<FeatureModule> MODULES = new ArrayList<>();
+
+    public static List<FeatureModule> getModules() {
+        return Collections.unmodifiableList(MODULES);
+    }
+
+    public static void registerModule(final FeatureModule module) {
+        MODULES.add(module);
+    }
+
+    // --- Module dispatch methods ---
+
+    public static void dispatchMappingsLoad(final BedrockMappingData data, final MappingLoadPhase phase) {
+        for (final FeatureModule module : MODULES) {
+            try {
+                module.onMappingsLoad(data, phase);
+            } catch (final Throwable e) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error in module onMappingsLoad (" + phase + ")", e);
+            }
+        }
+    }
+
+    public static void dispatchEntityAdded(final UserConnection user, final Entity entity) {
+        for (final FeatureModule module : MODULES) {
+            try {
+                module.onEntityAdded(user, entity);
+            } catch (final Throwable e) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error in module onEntityAdded", e);
+            }
+        }
+    }
+
+    public static void dispatchEntityRemoved(final UserConnection user, final Entity entity) {
+        for (final FeatureModule module : MODULES) {
+            try {
+                module.onEntityRemoved(user, entity);
+            } catch (final Throwable e) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error in module onEntityRemoved", e);
+            }
+        }
+    }
+
+    public static void dispatchChannelRegistered(final UserConnection user, final Set<String> channels) {
+        for (final FeatureModule module : MODULES) {
+            try {
+                module.onChannelRegistered(user, channels);
+            } catch (final Throwable e) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error in module onChannelRegistered", e);
+            }
+        }
+    }
+
+    public static String dispatchResolveDimensionKey(final Dimension dimension, final ChunkTracker oldChunkTracker) {
+        for (final FeatureModule module : MODULES) {
+            try {
+                final String result = module.resolveDimensionKey(dimension, oldChunkTracker);
+                if (result != null) {
+                    return result;
+                }
+            } catch (final Throwable e) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error in module resolveDimensionKey", e);
+            }
+        }
+        return null;
+    }
+
+    public static Entity dispatchResolveEntity(final UserConnection user, final long uniqueId, final long runtimeId, final String type) {
+        for (final FeatureModule module : MODULES) {
+            try {
+                final Entity result = module.resolveEntity(user, uniqueId, runtimeId, type);
+                if (result != null) {
+                    return result;
+                }
+            } catch (final Throwable e) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error in module resolveEntity", e);
+            }
+        }
+        return null;
+    }
+
+    public static void dispatchResourcePackStackSet(final UserConnection user) {
+        for (final FeatureModule module : MODULES) {
+            try {
+                module.onResourcePackStackSet(user);
+            } catch (final Throwable e) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error in module onResourcePackStackSet", e);
+            }
+        }
+    }
+
+    public static void dispatchChunkTrackerCreated(final ChunkTracker tracker) {
+        for (final FeatureModule module : MODULES) {
+            try {
+                module.onChunkTrackerCreated(tracker);
+            } catch (final Throwable e) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error in module onChunkTrackerCreated", e);
+            }
+        }
+    }
+
+    public static boolean dispatchCustomPayload(final String channel, final PacketWrapper wrapper) {
+        for (final FeatureModule module : MODULES) {
+            try {
+                if (module.handleCustomPayload(channel, wrapper)) {
+                    return true;
+                }
+            } catch (final Throwable e) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error in module handleCustomPayload", e);
+            }
+        }
+        return false;
+    }
+
+    public static void registerModules() {
+        registerModule(new ModUIClientModule());
+        registerModule(new AlternateDimensionModule());
+        registerModule(new CustomEntityTypeResolver());
+        registerModule(new CustomBlockMappingModule());
+        registerModule(new ResourcePackModule());
+        registerModule(new NpcDialogueModule());
+        registerModule(new AsyncLightModule());
+    }
+
+    // --- Existing experimental features ---
+
     private static final int MAP_FLAGS_ALL = ClientboundMapItemDataPacket_Type.Creation.getValue() | ClientboundMapItemDataPacket_Type.DecorationUpdate.getValue() | ClientboundMapItemDataPacket_Type.TextureUpdate.getValue();
 
     public static void registerPacketTranslators(final BedrockProtocol protocol) {
+        // Dispatch to feature modules
+        for (final FeatureModule module : MODULES) {
+            try {
+                module.onPacketRegistration(protocol);
+            } catch (final Throwable e) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error in module onPacketRegistration", e);
+            }
+        }
+
+        MultilineNametagTracker.registerHandlers(protocol);
+
         ProtocolUtil.prependServerbound(protocol, ServerboundPackets1_21_6.PLAYER_ACTION, wrapper -> {
             final InventoryTransactionRewriter inventoryTransactionRewriter = wrapper.user().get(InventoryTransactionRewriter.class);
             final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
@@ -536,5 +685,15 @@ public class ExperimentalFeatures {
     public static void registerStorages(final UserConnection user) {
         user.put(new InventoryTransactionRewriter(user));
         user.put(new MapTracker(user));
+        user.put(new MultilineNametagTracker(user));
+
+        // Dispatch to feature modules
+        for (final FeatureModule module : MODULES) {
+            try {
+                module.onStorageRegistration(user);
+            } catch (final Throwable e) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error in module onStorageRegistration", e);
+            }
+        }
     }
 }

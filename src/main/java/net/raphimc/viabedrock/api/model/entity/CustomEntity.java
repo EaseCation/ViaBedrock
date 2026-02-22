@@ -43,8 +43,8 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorDataIDs
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorFlags;
 import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
 import net.raphimc.viabedrock.protocol.model.Position3f;
-import net.raphimc.viabedrock.protocol.model.animation.ServerEntityTicker;
-import net.raphimc.viabedrock.protocol.model.animation.SimpleBoneModel;
+import net.raphimc.viabedrock.experimental.model.animation.ServerEntityTicker;
+import net.raphimc.viabedrock.experimental.model.animation.SimpleBoneModel;
 import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomEntityResourceRewriter;
 import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
@@ -80,6 +80,15 @@ public class CustomEntity extends Entity {
     private int ticksSinceLastUpdate;
     private int currentLodInterval = 4;
 
+    // Movement tracking for query bindings
+    private Position3f prevEntityPosition;
+    private float accumulatedDistance;
+    private float groundSpeed;
+    private float verticalSpeed;
+    private float positionDeltaX;
+    private float positionDeltaY;
+    private float positionDeltaZ;
+
     public CustomEntity(final UserConnection user, final long uniqueId, final long runtimeId, final String type, final int javaId, final EntityDefinitions.EntityDefinition entityDefinition) {
         super(user, uniqueId, runtimeId, type, javaId, UUID.randomUUID(), EntityTypes1_21_11.INTERACTION);
         this.entityDefinition = entityDefinition;
@@ -88,6 +97,9 @@ public class CustomEntity extends Entity {
     @Override
     public void tick() {
         super.tick();
+
+        // Update movement tracking every tick (needed for accurate speed/distance computation)
+        this.updateMovementTracking();
 
         // Server-side animation only when VBU is not present
         if (this.serverTicker == null || !this.spawned || this.boneEntities.isEmpty()) {
@@ -440,11 +452,29 @@ public class CustomEntity extends Entity {
         this.currentLodInterval = Integer.MAX_VALUE;
     }
 
+    // ---- Movement tracking ----
+
+    private void updateMovementTracking() {
+        if (this.prevEntityPosition != null && this.position != null) {
+            this.positionDeltaX = this.position.x() - this.prevEntityPosition.x();
+            this.positionDeltaY = this.position.y() - this.prevEntityPosition.y();
+            this.positionDeltaZ = this.position.z() - this.prevEntityPosition.z();
+
+            final float horizontalDist = (float) Math.sqrt(
+                    this.positionDeltaX * this.positionDeltaX + this.positionDeltaZ * this.positionDeltaZ);
+            this.accumulatedDistance += horizontalDist;
+            this.groundSpeed = horizontalDist * 20f; // blocks per second (20 tps)
+            this.verticalSpeed = this.positionDeltaY * 20f;
+        }
+        this.prevEntityPosition = this.position;
+    }
+
     // ---- Query bindings ----
 
     private MutableObjectBinding buildQueryBindings() {
         final MutableObjectBinding queryBinding = new MutableObjectBinding();
 
+        // Entity data queries (variant, mark_variant, skin_id)
         if (this.entityData.containsKey(ActorDataIDs.VARIANT)) {
             queryBinding.set("variant", Value.of(this.entityData.get(ActorDataIDs.VARIANT).<Integer>value()));
         }
@@ -455,6 +485,7 @@ public class CustomEntity extends Entity {
             queryBinding.set("skin_id", Value.of(this.entityData.get(ActorDataIDs.SKIN_ID).<Integer>value()));
         }
 
+        // Entity flags
         final Set<ActorFlags> entityFlags = this.entityFlags();
         for (Map.Entry<ActorFlags, String> entry : BedrockProtocol.MAPPINGS.getBedrockEntityFlagMoLangQueries().entrySet()) {
             if (entityFlags.contains(entry.getKey())) {
@@ -464,6 +495,59 @@ public class CustomEntity extends Entity {
         if (entityFlags.contains(ActorFlags.ONFIRE)) {
             queryBinding.set("is_onfire", Value.of(true));
         }
+
+        // Movement queries
+        queryBinding.set("modified_distance_moved", Value.of(this.accumulatedDistance));
+        queryBinding.set("modified_move_speed", Value.of(this.groundSpeed));
+        queryBinding.set("ground_speed", Value.of(this.groundSpeed));
+        queryBinding.set("vertical_speed", Value.of(this.verticalSpeed));
+
+        // State queries
+        queryBinding.set("is_on_ground", Value.of(this.onGround));
+        queryBinding.set("is_alive", Value.of(true));
+        queryBinding.set("life_time", Value.of(this.age / 20.0f));
+
+        // Rotation queries (rotation: pitch=x, yaw=y, headYaw=z)
+        queryBinding.set("body_y_rotation", Value.of(this.rotation.y()));
+        queryBinding.set("body_x_rotation", Value.of(this.rotation.x()));
+        queryBinding.set("target_x_rotation", Value.of(this.rotation.x()));
+        queryBinding.set("target_y_rotation", Value.of(this.rotation.z()));
+        queryBinding.set("head_x_rotation", Value.of(this.rotation.x()));
+        queryBinding.set("head_y_rotation", Value.of(this.rotation.z()));
+
+        // Camera distance and rotation_to_camera
+        final EntityTracker entityTracker = this.user.get(EntityTracker.class);
+        final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
+        if (clientPlayer != null && clientPlayer.position() != null && this.position != null) {
+            final float dx = clientPlayer.position().x() - this.position.x();
+            final float dy = clientPlayer.position().y() - this.position.y();
+            final float dz = clientPlayer.position().z() - this.position.z();
+            final float distFromCamera = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+            queryBinding.set("distance_from_camera", Value.of(distFromCamera));
+
+            final float horizontalDist = (float) Math.sqrt(dx * dx + dz * dz);
+            final float rotToCameraX = -(float) Math.toDegrees(Math.atan2(dy, horizontalDist));
+            final float rotToCameraY = -(float) (Math.toDegrees(Math.atan2(dx, dz)) + this.rotation.y() - 180.0);
+            queryBinding.setFunction("rotation_to_camera", (double arg) -> {
+                if ((int) arg == 0) return (double) rotToCameraX;
+                if ((int) arg == 1) return (double) rotToCameraY;
+                return 0.0;
+            });
+        } else {
+            queryBinding.set("distance_from_camera", Value.of(0));
+        }
+
+        // position_delta function
+        final float pdx = this.positionDeltaX;
+        final float pdy = this.positionDeltaY;
+        final float pdz = this.positionDeltaZ;
+        queryBinding.setFunction("position_delta", (double arg) -> {
+            int axis = (int) arg;
+            if (axis == 0) return (double) pdx;
+            if (axis == 1) return (double) pdy;
+            if (axis == 2) return (double) pdz;
+            return 0.0;
+        });
 
         return queryBinding;
     }

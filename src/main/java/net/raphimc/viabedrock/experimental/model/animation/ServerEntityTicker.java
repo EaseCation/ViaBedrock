@@ -15,7 +15,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-package net.raphimc.viabedrock.protocol.model.animation;
+package net.raphimc.viabedrock.experimental.model.animation;
 
 import net.easecation.bedrockmotion.animator.Animator;
 import net.easecation.bedrockmotion.controller.AnimationController;

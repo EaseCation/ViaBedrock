@@ -46,6 +46,7 @@ import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
+import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.protocol.data.enums.Dimension;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ServerboundLoadingScreenPacketType;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.SpawnPositionType;
@@ -145,15 +146,8 @@ public class WorldPackets {
             }
 
             final ChunkTracker oldChunkTracker = wrapper.user().get(ChunkTracker.class);
-            final String dimensionKey;
-            if (dimension == oldChunkTracker.getDimension()) {
-                // Same dimension: toggle between normal and alt key for Java client chunk reload
-                dimensionKey = oldChunkTracker.getDimensionKey().equals(dimension.getKey())
-                        ? dimension.getAltKey()
-                        : dimension.getKey();
-            } else {
-                dimensionKey = dimension.getKey();
-            }
+            final String resolvedKey = ExperimentalFeatures.dispatchResolveDimensionKey(dimension, oldChunkTracker);
+            final String dimensionKey = resolvedKey != null ? resolvedKey : dimension.getKey();
 
             wrapper.user().put(new ChunkTracker(wrapper.user(), dimension, dimensionKey));
             final EntityTracker oldEntityTracker = wrapper.user().get(EntityTracker.class);

@@ -41,12 +41,13 @@ import com.viaversion.viaversion.libs.gson.JsonArray;
 import com.viaversion.viaversion.libs.gson.JsonElement;
 import com.viaversion.viaversion.libs.gson.JsonObject;
 import com.viaversion.viaversion.libs.gson.JsonPrimitive;
-import com.viaversion.viaversion.libs.gson.Gson;
 import com.viaversion.viaversion.util.GsonUtil;
 import com.viaversion.viaversion.util.Key;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import net.raphimc.viabedrock.ViaBedrock;
+import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
+import net.raphimc.viabedrock.experimental.MappingLoadPhase;
 import net.raphimc.viabedrock.api.BedrockProtocolVersion;
 import net.raphimc.viabedrock.api.chunk.blockstate.BlockStateUpgrader;
 import net.raphimc.viabedrock.api.item.ItemUpgrader;
@@ -60,13 +61,9 @@ import net.raphimc.viabedrock.api.util.JsonUtil;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.SoundSource;
 import net.raphimc.viabedrock.protocol.data.generated.java.RegistryKeys;
-import net.raphimc.viabedrock.protocol.rewriter.BlockEntityRewriter;
-import net.raphimc.viabedrock.protocol.rewriter.blockentity.ModBlockBlockEntityRewriter;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.io.DataInputStream;
-import java.io.File;
-import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -131,8 +128,6 @@ public class BedrockMappingData extends MappingDataBase {
     private BiMap<String, Integer> javaBlockEntities;
     private BiMap<String, Integer> javaEntityAttributes;
     private Map<EntityTypes1_21_11, List<String>> javaEntityDataFields;
-    private final Map<String, Integer> customEntityTypeIds = new HashMap<>();
-    private final Map<String, EntityTypes1_21_11> customEntityTypeFallbacks = new HashMap<>();
     private final Map<String, Integer> customBlockEntityTypeIds = new HashMap<>();
     private int vanillaBlockStateCount;
     private int vanillaBlockEntityCount;
@@ -246,93 +241,7 @@ public class BedrockMappingData extends MappingDataBase {
                 }
             }
 
-            // 加载 FabricRock 导出的自定义方块映射
-            this.customBlockEmitLight = new Int2IntOpenHashMap();
-            this.customBlockFilterLight = new Int2IntOpenHashMap();
-            this.customBlockFallbacks = new Int2IntOpenHashMap();
-            ((Int2IntOpenHashMap) this.customBlockEmitLight).defaultReturnValue(-1);
-            ((Int2IntOpenHashMap) this.customBlockFilterLight).defaultReturnValue(-1);
-            ((Int2IntOpenHashMap) this.customBlockFallbacks).defaultReturnValue(1); // default: stone
-            final File customMappingFile = new File(System.getProperty("user.dir"), "config/bedrock-loader/block_state_mappings.json");
-            if (customMappingFile.exists()) {
-                try {
-                    final JsonObject customMappingsRoot = new Gson().fromJson(new FileReader(customMappingFile), JsonObject.class);
-                    final int formatVersion = customMappingsRoot.has("format_version") ? customMappingsRoot.get("format_version").getAsInt() : 1;
-                    final JsonObject customMappings = customMappingsRoot.getAsJsonObject("mappings");
-
-                    int addedCount = 0;
-                    int skippedCount = 0;
-                    for (Map.Entry<String, JsonElement> entry : customMappings.entrySet()) {
-                        final String bedrockStateStr = entry.getKey();
-                        final JsonObject mapping = entry.getValue().getAsJsonObject();
-                        final String javaStateStr = mapping.get("java_state").getAsString();
-                        final int javaStateId = mapping.get("java_state_id").getAsInt();
-
-                        // 1. 添加到 javaBlockStates BiMap
-                        final BlockState javaBlockState = BlockState.fromString(javaStateStr);
-
-                        // 检查 key 和 value 是否已存在
-                        boolean keyExists = this.javaBlockStates.containsKey(javaBlockState);
-                        boolean valueExists = this.javaBlockStates.containsValue(javaStateId);
-
-                        if (keyExists || valueExists) {
-                            if (valueExists) {
-                                // 找出占用这个 ID 的原版方块
-                                BlockState existingState = this.javaBlockStates.inverse().get(javaStateId);
-                                ViaBedrock.getPlatform().getLogger().warning(
-                                    "ID conflict: Custom block '" + javaStateStr + "' wants ID " + javaStateId +
-                                    ", but it's already used by '" + existingState + "'"
-                                );
-                            }
-                            skippedCount++;
-                        } else {
-                            this.javaBlockStates.put(javaBlockState, javaStateId);
-                        }
-
-                        // 2. 添加到 bedrockToJavaBlockStates Map
-                        final BlockState bedrockBlockState = BlockState.fromString(bedrockStateStr);
-                        if (!this.bedrockToJavaBlockStates.containsKey(bedrockBlockState)) {
-                            this.bedrockToJavaBlockStates.put(bedrockBlockState, javaBlockState);
-                            if (!keyExists && !valueExists) {
-                                addedCount++;
-                            }
-                        }
-
-                        // 3. 读取并存储自定义方块的光照属性
-                        if (mapping.has("light_emission")) {
-                            final int lightEmission = mapping.get("light_emission").getAsInt();
-                            if (lightEmission > 0) {
-                                this.customBlockEmitLight.put(javaStateId, lightEmission);
-                            }
-                        }
-                        if (mapping.has("light_filter")) {
-                            final int lightFilter = mapping.get("light_filter").getAsInt();
-                            if (lightFilter != 15) {
-                                this.customBlockFilterLight.put(javaStateId, lightFilter);
-                            }
-                        }
-
-                        // 4. 读取 fallback_block (format_version >= 2)
-                        if (formatVersion >= 2 && mapping.has("fallback_block")) {
-                            final String fallbackBlockStr = mapping.get("fallback_block").getAsString();
-                            final BlockState fallbackBlockState = BlockState.fromString(fallbackBlockStr);
-                            if (this.javaBlockStates.containsKey(fallbackBlockState)) {
-                                this.customBlockFallbacks.put(javaStateId, this.javaBlockStates.get(fallbackBlockState).intValue());
-                            } else {
-                                ViaBedrock.getPlatform().getLogger().warning(
-                                    "Unknown fallback block '" + fallbackBlockStr + "' for custom block state ID " + javaStateId + ", using stone"
-                                );
-                            }
-                        }
-                    }
-
-                    ViaBedrock.getPlatform().getLogger().info("Loaded " + addedCount + " custom block state mappings from FabricRock (format v" + formatVersion + ")" +
-                        (skippedCount > 0 ? " (skipped " + skippedCount + " due to ID conflicts)" : "") +
-                        ", fallbacks: " + this.customBlockFallbacks.size());
-                } catch (Exception e) {
-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to load custom block state mappings", e);
-                }
-            }
+            ExperimentalFeatures.dispatchMappingsLoad(this, MappingLoadPhase.AFTER_BLOCK_STATES);
 
             final JsonObject bedrockCustomBlockTagsJson = this.readJson("custom/block_tags.json");
             this.bedrockCustomBlockTags = new HashMap<>();
@@ -707,30 +616,6 @@ public class BedrockMappingData extends MappingDataBase {
                 }
             }
 
-            // 加载自定义实体类型 ID 映射（第一阶段：只加载 java_type_id）
-            final File customEntityTypeIdsFile = new File(System.getProperty("user.dir"), "config/bedrock-loader/custom_entity_type_ids.json");
-            JsonObject customEntityMappings = null;
-            if (customEntityTypeIdsFile.exists()) {
-                try {
-                    final JsonObject customEntityRoot = new Gson().fromJson(new FileReader(customEntityTypeIdsFile), JsonObject.class);
-                    customEntityMappings = customEntityRoot.getAsJsonObject("mappings");
-
-                    int loadedCount = 0;
-                    for (Map.Entry<String, JsonElement> entry : customEntityMappings.entrySet()) {
-                        final String bedrockType = Key.namespaced(entry.getKey());
-                        final JsonObject mapping = entry.getValue().getAsJsonObject();
-                        final int javaTypeId = mapping.get("java_type_id").getAsInt();
-
-                        this.customEntityTypeIds.put(bedrockType, javaTypeId);
-                        loadedCount++;
-                    }
-
-                    ViaBedrock.getPlatform().getLogger().info("Loaded " + loadedCount + " custom entity type ID mappings");
-                } catch (Exception e) {
-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to load custom entity type ID mappings", e);
-                }
-            }
-
             final JsonObject bedrockToJavaEntityMappingsJson = this.readJson("custom/entity_mappings.json");
             this.bedrockToJavaEntities = new HashMap<>(bedrockToJavaEntityMappingsJson.size());
             final Set<String> unmappedEntities = new HashSet<>();
@@ -762,29 +647,7 @@ public class BedrockMappingData extends MappingDataBase {
                 }
             }
 
-            // 加载自定义实体类型 ID 映射（第二阶段：处理 fallback_type）
-            if (customEntityMappings != null) {
-                try {
-                    for (Map.Entry<String, JsonElement> entry : customEntityMappings.entrySet()) {
-                        final String bedrockType = Key.namespaced(entry.getKey());
-                        final JsonObject mapping = entry.getValue().getAsJsonObject();
-
-                        // 加载降级类型（可选）
-                        if (mapping.has("fallback_type")) {
-                            final String fallbackTypeStr = mapping.get("fallback_type").getAsString();
-                            final String fallbackTypeNormalized = Key.namespaced(fallbackTypeStr);
-                            final EntityTypes1_21_11 fallbackType = this.bedrockToJavaEntities.get(fallbackTypeNormalized);
-                            if (fallbackType != null) {
-                                this.customEntityTypeFallbacks.put(bedrockType, fallbackType);
-                            } else {
-                                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown fallback entity type: " + fallbackTypeStr + " for custom entity: " + bedrockType);
-                            }
-                        }
-                    }
-                } catch (Exception e) {
-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to process custom entity fallback types", e);
-                }
-            }
+            ExperimentalFeatures.dispatchMappingsLoad(this, MappingLoadPhase.AFTER_ENTITY_MAPPINGS);
 
             final JsonArray javaBlockEntitiesJson = javaViaMappingJson.get("blockentities").getAsJsonArray();
             this.javaBlockEntities = HashBiMap.create(javaBlockEntitiesJson.size());
@@ -792,51 +655,7 @@ public class BedrockMappingData extends MappingDataBase {
                 this.javaBlockEntities.put(javaBlockEntitiesJson.get(i).getAsString(), i);
             }
             this.vanillaBlockEntityCount = this.javaBlockEntities.size();
-            // Load custom block entity type ID mappings (exported by FabricRock)
-            final File customBlockEntityTypeIdsFile = new File(System.getProperty("user.dir"), "config/bedrock-loader/custom_block_entity_type_ids.json");
-            if (customBlockEntityTypeIdsFile.exists()) {
-                try {
-                    final JsonObject customBlockEntityRoot = new Gson().fromJson(new FileReader(customBlockEntityTypeIdsFile), JsonObject.class);
-                    final JsonObject customBlockEntityMappings = customBlockEntityRoot.getAsJsonObject("mappings");
-                    final ModBlockBlockEntityRewriter modBlockRewriter = new ModBlockBlockEntityRewriter();
-
-                    int loadedCount = 0;
-                    for (Map.Entry<String, JsonElement> entry : customBlockEntityMappings.entrySet()) {
-                        final String blockIdentifier = Key.namespaced(entry.getKey());
-                        final JsonObject mapping = entry.getValue().getAsJsonObject();
-                        final int javaTypeId = mapping.get("java_type_id").getAsInt();
-                        final String customTag = "mod_block:" + blockIdentifier;
-
-                        // Store the mapping
-                        this.customBlockEntityTypeIds.put(blockIdentifier, javaTypeId);
-
-                        // Register to javaBlockEntities: tag -> java type id (BiMap requires unique keys and values)
-                        if (!this.javaBlockEntities.containsKey(customTag) && !this.javaBlockEntities.containsValue(javaTypeId)) {
-                            this.javaBlockEntities.put(customTag, javaTypeId);
-                        } else {
-                            ViaBedrock.getPlatform().getLogger().warning(
-                                    "Block entity type conflict for " + blockIdentifier +
-                                            " (tag=" + customTag + ", typeId=" + javaTypeId + "), skipping");
-                            continue;
-                        }
-
-                        // Register to bedrockCustomBlockTags: block identifier -> tag
-                        // (bypasses block_tags.json validation since custom blocks are not in bedrockBlockStatesByIdentifier)
-                        if (!this.bedrockCustomBlockTags.containsKey(blockIdentifier)) {
-                            this.bedrockCustomBlockTags.put(blockIdentifier, customTag);
-                        }
-
-                        // Register block entity rewriter
-                        BlockEntityRewriter.registerRewriter(customTag, modBlockRewriter);
-
-                        loadedCount++;
-                    }
-
-                    ViaBedrock.getPlatform().getLogger().info("Loaded " + loadedCount + " custom block entity type ID mappings from FabricRock");
-                } catch (Exception e) {
-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to load custom block entity type ID mappings", e);
-                }
-            }
+            ExperimentalFeatures.dispatchMappingsLoad(this, MappingLoadPhase.AFTER_BLOCK_ENTITIES);
 
             final JsonArray javaEntityAttributesJson = javaViaMappingJson.get("attributes").getAsJsonArray();
             this.javaEntityAttributes = HashBiMap.create(javaEntityAttributesJson.size());
@@ -1348,10 +1167,6 @@ public class BedrockMappingData extends MappingDataBase {
         return this.javaEntityDataFields;
     }
 
-    public Map<String, Integer> getCustomEntityTypeIds() {
-        return this.customEntityTypeIds;
-    }
-
     public Map<String, Integer> getCustomBlockEntityTypeIds() {
         return this.customBlockEntityTypeIds;
     }
@@ -1368,8 +1183,16 @@ public class BedrockMappingData extends MappingDataBase {
         return this.customBlockFallbacks != null ? this.customBlockFallbacks.get(javaStateId) : 1;
     }
 
-    public Map<String, EntityTypes1_21_11> getCustomEntityTypeFallbacks() {
-        return this.customEntityTypeFallbacks;
+    public void setCustomBlockEmitLight(final Int2IntMap customBlockEmitLight) {
+        this.customBlockEmitLight = customBlockEmitLight;
+    }
+
+    public void setCustomBlockFilterLight(final Int2IntMap customBlockFilterLight) {
+        this.customBlockFilterLight = customBlockFilterLight;
+    }
+
+    public void setCustomBlockFallbacks(final Int2IntMap customBlockFallbacks) {
+        this.customBlockFallbacks = customBlockFallbacks;
     }
 
     public BiMap<String, Integer> getJavaEffects() {
