@@ -39,6 +39,7 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
     private boolean disableServerBlacklist;
     private String language;
     private String viaProxyAuthSecret;
+    private boolean enableServerEntityAnimation;
 
     public ViaBedrockConfig(final File configFile, final Logger logger) {
         super(configFile, logger);
@@ -62,6 +63,7 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
         this.disableServerBlacklist = this.getBoolean("disable-server-blacklist", false);
         this.language = this.getString("language", "");
         this.viaProxyAuthSecret = this.getString("viaproxy-auth-secret", "");
+        this.enableServerEntityAnimation = this.getBoolean("enable-server-entity-animation", true);
     }
 
     @Override
@@ -131,6 +133,11 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
     @Override
     public String getViaProxyAuthSecret() {
         return this.viaProxyAuthSecret;
+    }
+
+    @Override
+    public boolean shouldEnableServerEntityAnimation() {
+        return this.enableServerEntityAnimation;
     }
 
 }

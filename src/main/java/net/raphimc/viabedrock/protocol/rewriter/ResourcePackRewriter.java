@@ -94,6 +94,9 @@ public class ResourcePackRewriter {
      * whether the Java client downloads or caches the resource pack.
      */
     public static void initRuntimeData(final ResourcePacksStorage resourcePacksStorage) {
+        if (!ViaBedrock.getConfig().shouldEnableServerEntityAnimation()) {
+            return; // Server-side animation disabled, skip BedrockMotion initialization
+        }
         initBedrockMotionPackManager(resourcePacksStorage);
         initCustomEntityBoneData(resourcePacksStorage);
     }

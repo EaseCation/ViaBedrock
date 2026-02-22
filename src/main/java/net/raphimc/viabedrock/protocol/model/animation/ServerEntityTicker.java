@@ -21,6 +21,7 @@ import net.easecation.bedrockmotion.animator.Animator;
 import net.easecation.bedrockmotion.controller.AnimationController;
 import net.easecation.bedrockmotion.controller.AnimationControllerInstance;
 import net.easecation.bedrockmotion.model.AnimationEventListener;
+import net.easecation.bedrockmotion.mocha.LayeredScope;
 import net.easecation.bedrockmotion.mocha.MoLangEngine;
 import net.easecation.bedrockmotion.pack.PackManager;
 import net.easecation.bedrockmotion.pack.definitions.AnimationDefinitions;
@@ -170,8 +171,8 @@ public class ServerEntityTicker implements AnimationEventListener {
     public Map<String, SimpleBoneModel.WorldTransform> tick(MutableObjectBinding queryBindings) {
         this.age++;
 
-        // Build frame scope with query bindings
-        final Scope frameScope = entityScope.copy();
+        // Build frame scope with query bindings (LayeredScope avoids expensive deep copy)
+        final LayeredScope frameScope = new LayeredScope(entityScope);
         queryBindings.set("life_time", Value.of(this.age / 20.0f));
         queryBindings.block();
         frameScope.set("query", queryBindings);
@@ -189,11 +190,8 @@ public class ServerEntityTicker implements AnimationEventListener {
         }
 
         // Reset bones, then apply all animations
+        // Order: standalone animators first, then controllers (matches VBU client-side order)
         boneModel.resetAllBones();
-
-        for (AnimationControllerInstance ci : controllerInstances) {
-            ci.animate(boneModel);
-        }
 
         for (Animator animator : animators) {
             try {
@@ -201,6 +199,10 @@ public class ServerEntityTicker implements AnimationEventListener {
             } catch (IOException e) {
                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Animation error", e);
             }
+        }
+
+        for (AnimationControllerInstance ci : controllerInstances) {
+            ci.animate(boneModel);
         }
 
         // Collect world transforms from animated bones
@@ -214,7 +216,7 @@ public class ServerEntityTicker implements AnimationEventListener {
      * @return true if models changed
      */
     public boolean evaluateRenderControllers(MutableObjectBinding queryBindings) {
-        final Scope scope = entityScope.copy();
+        final LayeredScope scope = new LayeredScope(entityScope);
         queryBindings.block();
         scope.set("query", queryBindings);
         scope.set("q", queryBindings);

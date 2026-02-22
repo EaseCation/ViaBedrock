@@ -189,6 +189,9 @@ public class CustomEntity extends Entity {
         if (channelStorage.hasChannel(ViaBedrockUtilityInterface.CONFIRM_CHANNEL)) {
             return; // VBU mod handles animations client-side
         }
+        if (!ViaBedrock.getConfig().shouldEnableServerEntityAnimation()) {
+            return; // Server-side animation disabled by config
+        }
 
         final ResourcePacksStorage resourcePacksStorage = this.user.get(ResourcePacksStorage.class);
 
@@ -272,23 +275,25 @@ public class CustomEntity extends Entity {
                         boneEntity.getJavaEntityDataIndex(EntityDataFields.ITEM_STACK),
                         VersionedTypes.V1_21_11.entityDataTypes.itemType, item));
 
-                // Scale
+                // Entity-level scale (from RESERVED_038 entity data)
+                final float entityScale = getEntityScale();
+
+                // Scale (model scale * entity scale)
                 javaEntityData.add(new EntityData(
                         boneEntity.getJavaEntityDataIndex(EntityDataFields.SCALE),
                         VersionedTypes.V1_21_11.entityDataTypes.vector3FType,
-                        new Vector3f(scale, scale, scale)));
+                        new Vector3f(scale * entityScale, scale * entityScale, scale * entityScale)));
 
-                // Translation: rest pose offset
-                // Formula: TRANSLATION = bonePivotWorld_java - R * P_offset
-                // At rest: R = identity, bonePivotWorld_java = bedrockPivotToJavaBlocks(restPivot)
-                // So: TRANSLATION = bedrockPivotToJavaBlocks(restPivot) - restOffset
+                // Translation: rest pose offset, scaled by entity scale
+                // Formula: TRANSLATION = (bonePivotWorld_java - R * P_offset) * entityScale
+                // At rest: R = identity, so TRANSLATION = (bedrockPivotToJavaBlocks(restPivot) - restOffset) * entityScale
                 final Vector3f pivotJava = bedrockPivotToJavaBlocks(restPivot);
                 javaEntityData.add(new EntityData(
                         boneEntity.getJavaEntityDataIndex(EntityDataFields.TRANSLATION),
                         VersionedTypes.V1_21_11.entityDataTypes.vector3FType,
-                        new Vector3f(pivotJava.x() - restOffset.x(),
-                                pivotJava.y() - restOffset.y(),
-                                pivotJava.z() - restOffset.z())));
+                        new Vector3f((pivotJava.x() - restOffset.x()) * entityScale,
+                                (pivotJava.y() - restOffset.y()) * entityScale,
+                                (pivotJava.z() - restOffset.z()) * entityScale)));
 
                 // LEFT_ROTATION: identity quaternion initially
                 javaEntityData.add(new EntityData(
@@ -347,6 +352,8 @@ public class CustomEntity extends Entity {
     // ---- Animation updates ----
 
     private void sendBoneTransformUpdates(Map<String, SimpleBoneModel.WorldTransform> transforms) {
+        final float entityScale = getEntityScale();
+
         for (BoneDisplayEntity boneEntity : this.boneEntities) {
             final SimpleBoneModel.WorldTransform transform = transforms.get(boneEntity.boneName);
             if (transform == null) continue;
@@ -359,7 +366,7 @@ public class CustomEntity extends Entity {
             // Convert rotation quaternion from Bedrock to Java space (X flip)
             final Quaternion rotJava = bedrockQuatToJava(transform.rotation());
 
-            // TRANSLATION = bonePivotWorld_java - R * P_offset
+            // TRANSLATION = (bonePivotWorld_java - R * P_offset) * entityScale
             // This ensures cubes rotate around the bone's pivot, not the model origin.
             // R * P_offset: rotate the rest offset by the current rotation
             final org.joml.Quaternionf rj = new org.joml.Quaternionf(rotJava.x(), rotJava.y(), rotJava.z(), rotJava.w());
@@ -370,9 +377,9 @@ public class CustomEntity extends Entity {
             javaEntityData.add(new EntityData(
                     boneEntity.getJavaEntityDataIndex(EntityDataFields.TRANSLATION),
                     VersionedTypes.V1_21_11.entityDataTypes.vector3FType,
-                    new Vector3f(pivotJava.x() - rotatedOffset.x,
-                            pivotJava.y() - rotatedOffset.y,
-                            pivotJava.z() - rotatedOffset.z)));
+                    new Vector3f((pivotJava.x() - rotatedOffset.x) * entityScale,
+                            (pivotJava.y() - rotatedOffset.y) * entityScale,
+                            (pivotJava.z() - rotatedOffset.z) * entityScale)));
 
             // Rotation
             javaEntityData.add(new EntityData(
@@ -380,13 +387,15 @@ public class CustomEntity extends Entity {
                     VersionedTypes.V1_21_11.entityDataTypes.quaternionType,
                     rotJava));
 
-            // Scale from animation (model scale * animation scale)
+            // Scale from animation (model scale * animation scale * entity scale)
             final org.joml.Vector3f animScale = transform.scale();
             final float baseScale = boneEntity.modelScale;
             javaEntityData.add(new EntityData(
                     boneEntity.getJavaEntityDataIndex(EntityDataFields.SCALE),
                     VersionedTypes.V1_21_11.entityDataTypes.vector3FType,
-                    new Vector3f(baseScale * animScale.x, baseScale * animScale.y, baseScale * animScale.z)));
+                    new Vector3f(baseScale * animScale.x * entityScale,
+                            baseScale * animScale.y * entityScale,
+                            baseScale * animScale.z * entityScale)));
 
             // Set interpolation: duration = LOD interval, start = 0 (now)
             javaEntityData.add(new EntityData(
@@ -505,6 +514,15 @@ public class CustomEntity extends Entity {
         javaEntityData.add(new EntityData(
                 this.getJavaEntityDataIndex(EntityDataFields.HEIGHT),
                 VersionedTypes.V1_21_11.entityDataTypes().floatType, height));
+    }
+
+    // ---- Entity scale helper ----
+
+    private float getEntityScale() {
+        if (this.entityData.containsKey(ActorDataIDs.RESERVED_038)) {
+            return this.entityData.get(ActorDataIDs.RESERVED_038).<Float>value();
+        }
+        return 1.0F;
     }
 
     // ---- Coordinate conversion helpers ----

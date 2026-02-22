@@ -174,14 +174,17 @@ public class SimpleBoneModel implements IBoneModel {
         final Vector3f offset = bone.getOffset();
         final Vector3f rot = bone.getRotation();
 
+        // Bedrock bone transform: T(pivot + offset) * R(ZYX) * S * T(-pivot)
+        // Scale must be applied BEFORE the un-pivot translation,
+        // so that scaling happens relative to the bone's pivot point, not the origin.
         return new Matrix4f()
                 .translate(pivot.x + offset.x, pivot.y + offset.y, pivot.z + offset.z)
                 .rotateZYX(
                         (float) Math.toRadians(rot.z),
                         (float) Math.toRadians(rot.y),
                         (float) Math.toRadians(rot.x))
-                .translate(-pivot.x, -pivot.y, -pivot.z)
-                .scale(bone.getScaleX(), bone.getScaleY(), bone.getScaleZ());
+                .scale(bone.getScaleX(), bone.getScaleY(), bone.getScaleZ())
+                .translate(-pivot.x, -pivot.y, -pivot.z);
     }
 
     /**

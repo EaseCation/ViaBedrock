@@ -23,3 +23,7 @@ language: ""
 # Must match the secret configured in the Nemisys ViaProxyAuth plugin.
 # Empty = disabled (default self-signed behavior)
 viaproxy-auth-secret: ""
+# Enables server-side entity animation using Display Entities when ViaBedrockUtility mod is not present.
+# When disabled, custom entities will only show as invisible interaction boxes (upstream behavior).
+# This setting has no effect when ViaBedrockUtility mod is installed (client-side rendering is always used).
+enable-server-entity-animation: true
