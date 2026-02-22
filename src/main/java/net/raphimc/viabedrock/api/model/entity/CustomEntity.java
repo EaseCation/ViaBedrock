@@ -378,20 +378,25 @@ public class CustomEntity extends Entity {
             // Convert rotation quaternion from Bedrock to Java space (X flip)
             final Quaternion rotJava = bedrockQuatToJava(transform.rotation());
 
-            // TRANSLATION = (bonePivotWorld_java - R * P_offset) * entityScale
-            // This ensures cubes rotate around the bone's pivot, not the model origin.
-            // R * P_offset: rotate the rest offset by the current rotation
+            // Extract animation scale (worldScale from bone hierarchy)
+            final org.joml.Vector3f animScale = transform.scale();
+
+            // TRANSLATION = entityScale * (pivotJava - R * diag(worldScale) * restOffset)
+            // Scale restOffset by worldScale BEFORE rotating, so that the rotation/scale
+            // center stays at the bone's pivot regardless of animation scale.
             final org.joml.Quaternionf rj = new org.joml.Quaternionf(rotJava.x(), rotJava.y(), rotJava.z(), rotJava.w());
-            final org.joml.Vector3f rotatedOffset = new org.joml.Vector3f(
-                    boneEntity.restOffset.x(), boneEntity.restOffset.y(), boneEntity.restOffset.z());
-            rj.transform(rotatedOffset);
+            final org.joml.Vector3f scaledRotatedOffset = new org.joml.Vector3f(
+                    boneEntity.restOffset.x() * animScale.x,
+                    boneEntity.restOffset.y() * animScale.y,
+                    boneEntity.restOffset.z() * animScale.z);
+            rj.transform(scaledRotatedOffset);
 
             javaEntityData.add(new EntityData(
                     boneEntity.getJavaEntityDataIndex(EntityDataFields.TRANSLATION),
                     VersionedTypes.V1_21_11.entityDataTypes.vector3FType,
-                    new Vector3f((pivotJava.x() - rotatedOffset.x) * entityScale,
-                            (pivotJava.y() - rotatedOffset.y) * entityScale,
-                            (pivotJava.z() - rotatedOffset.z) * entityScale)));
+                    new Vector3f((pivotJava.x() - scaledRotatedOffset.x) * entityScale,
+                            (pivotJava.y() - scaledRotatedOffset.y) * entityScale,
+                            (pivotJava.z() - scaledRotatedOffset.z) * entityScale)));
 
             // Rotation
             javaEntityData.add(new EntityData(
@@ -400,7 +405,6 @@ public class CustomEntity extends Entity {
                     rotJava));
 
             // Scale from animation (model scale * animation scale * entity scale)
-            final org.joml.Vector3f animScale = transform.scale();
             final float baseScale = boneEntity.modelScale;
             javaEntityData.add(new EntityData(
                     boneEntity.getJavaEntityDataIndex(EntityDataFields.SCALE),

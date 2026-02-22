@@ -21,7 +21,6 @@ import com.viaversion.nbt.tag.Tag;
 import com.viaversion.viaversion.api.connection.StoredObject;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.minecraft.Vector3d;
-import com.viaversion.viaversion.api.minecraft.Vector3f;
 import com.viaversion.viaversion.api.minecraft.entities.EntityTypes1_21_11;
 import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
@@ -41,7 +40,6 @@ import net.raphimc.viabedrock.protocol.data.enums.java.generated.TeamCollisionRu
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.TeamVisibility;
 import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
-import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.util.*;
 
@@ -54,10 +52,18 @@ import java.util.*;
  * <p>
  * Fully decoupled from upstream code — uses ProtocolUtil.appendClientbound to hook
  * into existing packet handlers without modifying them.
+ * <p>
+ * IMPORTANT: After resetReader(), the wrapper contains Java-format data (written by the
+ * upstream handler via write()), NOT the original Bedrock data (consumed by read() and lost).
+ * All append handlers must read Java types (e.g. Types.VAR_INT) not Bedrock types.
  */
 public class MultilineNametagTracker extends StoredObject {
 
     private final Map<Long, NametagDisplayInfo> displays = new HashMap<>();
+    // Reverse mapping: host entity Java ID → entity uniqueId
+    // Needed because by the time our REMOVE_ENTITY handler runs,
+    // the entity is already removed from EntityTracker.
+    private final Map<Integer, Long> hostJavaIdToUniqueId = new HashMap<>();
 
     public MultilineNametagTracker(final UserConnection user) {
         super(user);
@@ -67,104 +73,147 @@ public class MultilineNametagTracker extends StoredObject {
 
     public static void registerHandlers(final BedrockProtocol protocol) {
         // 1. ADD_ENTITY — detect multiline nametags on entity spawn
+        // Upstream uses send()+cancel() pattern. After resetReader(), packetValues contain
+        // Java ADD_ENTITY format: VarInt(javaId), UUID, VarInt(typeId), ...
         ProtocolUtil.appendClientbound(protocol, ClientboundBedrockPackets.ADD_ENTITY, wrapper -> {
             final MultilineNametagTracker tracker = wrapper.user().get(MultilineNametagTracker.class);
             if (tracker == null) return;
-            wrapper.resetReader();
-            wrapper.read(BedrockTypes.VAR_LONG); // entity unique id
-            final long entityRuntimeId = wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // entity runtime id
             final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
             if (entityTracker == null) return;
-            final Entity entity = entityTracker.getEntityByRid(entityRuntimeId);
-            if (entity != null) {
-                tracker.handleEntityDataUpdate(entity);
+            try {
+                wrapper.resetReader();
+                final int javaEntityId = wrapper.passthrough(Types.VAR_INT);
+                final Entity entity = entityTracker.getEntityByJid(javaEntityId);
+                if (entity != null) {
+                    tracker.handleEntityDataUpdate(entity);
+                }
+            } catch (final Exception ignored) {
             }
         });
 
         // 2. ADD_PLAYER — detect multiline nametags on player spawn
+        // Upstream uses send()+cancel() pattern. After resetReader(), packetValues contain
+        // Java ADD_ENTITY format: VarInt(javaId), UUID, VarInt(typeId), ...
         ProtocolUtil.appendClientbound(protocol, ClientboundBedrockPackets.ADD_PLAYER, wrapper -> {
             final MultilineNametagTracker tracker = wrapper.user().get(MultilineNametagTracker.class);
             if (tracker == null) return;
-            wrapper.resetReader();
-            wrapper.read(BedrockTypes.UUID); // uuid
-            wrapper.read(BedrockTypes.STRING); // username
-            final long entityRuntimeId = wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // entity runtime id
             final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
             if (entityTracker == null) return;
-            final Entity entity = entityTracker.getEntityByRid(entityRuntimeId);
-            if (entity != null) {
-                tracker.handleEntityDataUpdate(entity);
+            try {
+                wrapper.resetReader();
+                final int javaEntityId = wrapper.passthrough(Types.VAR_INT);
+                final Entity entity = entityTracker.getEntityByJid(javaEntityId);
+                if (entity != null) {
+                    tracker.handleEntityDataUpdate(entity);
+                }
+            } catch (final Exception ignored) {
             }
         });
 
         // 3. SET_ENTITY_DATA — detect nametag changes
+        // Upstream writes: VarInt(javaId), EntityDataList(javaEntityData)
         ProtocolUtil.appendClientbound(protocol, ClientboundBedrockPackets.SET_ENTITY_DATA, wrapper -> {
             if (wrapper.isCancelled()) return;
             final MultilineNametagTracker tracker = wrapper.user().get(MultilineNametagTracker.class);
             if (tracker == null) return;
-            wrapper.resetReader();
-            final long entityRuntimeId = wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // entity runtime id
             final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
             if (entityTracker == null) return;
-            final Entity entity = entityTracker.getEntityByRid(entityRuntimeId);
-            if (entity != null) {
-                tracker.handleEntityDataUpdate(entity);
+            try {
+                wrapper.resetReader();
+                final int javaEntityId = wrapper.passthrough(Types.VAR_INT);
+                final Entity entity = entityTracker.getEntityByJid(javaEntityId);
+                if (entity != null) {
+                    tracker.handleEntityDataUpdate(entity);
+                }
+            } catch (final Exception ignored) {
             }
         });
 
         // 4. MOVE_ENTITY_ABSOLUTE — position sync
+        // Upstream writes ENTITY_POSITION_SYNC: VarInt(javaId), Double(x), ...
+        // For client player teleport, may write PLAYER_POSITION (different format) — caught by try-catch.
         ProtocolUtil.appendClientbound(protocol, ClientboundBedrockPackets.MOVE_ENTITY_ABSOLUTE, wrapper -> {
             if (wrapper.isCancelled()) return;
             final MultilineNametagTracker tracker = wrapper.user().get(MultilineNametagTracker.class);
             if (tracker == null) return;
-            wrapper.resetReader();
-            final long entityRuntimeId = wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // entity runtime id
             final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
             if (entityTracker == null) return;
-            final Entity entity = entityTracker.getEntityByRid(entityRuntimeId);
-            if (entity != null) {
-                tracker.handlePositionUpdate(entity);
+            try {
+                wrapper.resetReader();
+                final int javaEntityId = wrapper.passthrough(Types.VAR_INT);
+                final Long entityUid = tracker.hostJavaIdToUniqueId.get(javaEntityId);
+                if (entityUid == null) return;
+                final Entity entity = entityTracker.getEntityByUid(entityUid);
+                if (entity != null) {
+                    tracker.handlePositionUpdate(entity);
+                }
+            } catch (final Exception ignored) {
             }
         });
 
         // 5. MOVE_ENTITY_DELTA — position sync
+        // Same Java format as MOVE_ENTITY_ABSOLUTE for non-client entities.
         ProtocolUtil.appendClientbound(protocol, ClientboundBedrockPackets.MOVE_ENTITY_DELTA, wrapper -> {
             if (wrapper.isCancelled()) return;
             final MultilineNametagTracker tracker = wrapper.user().get(MultilineNametagTracker.class);
             if (tracker == null) return;
-            wrapper.resetReader();
-            final long entityRuntimeId = wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // entity runtime id
             final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
             if (entityTracker == null) return;
-            final Entity entity = entityTracker.getEntityByRid(entityRuntimeId);
-            if (entity != null) {
-                tracker.handlePositionUpdate(entity);
+            try {
+                wrapper.resetReader();
+                final int javaEntityId = wrapper.passthrough(Types.VAR_INT);
+                final Long entityUid = tracker.hostJavaIdToUniqueId.get(javaEntityId);
+                if (entityUid == null) return;
+                final Entity entity = entityTracker.getEntityByUid(entityUid);
+                if (entity != null) {
+                    tracker.handlePositionUpdate(entity);
+                }
+            } catch (final Exception ignored) {
             }
         });
 
         // 6. MOVE_PLAYER — player position sync
+        // Upstream writes ENTITY_POSITION_SYNC: VarInt(javaId), ...
+        // For OnlyHeadRot: MOVE_ENTITY_ROT with VarInt first (handled).
+        // For client player teleport: PLAYER_POSITION (caught by try-catch).
         ProtocolUtil.appendClientbound(protocol, ClientboundBedrockPackets.MOVE_PLAYER, wrapper -> {
             if (wrapper.isCancelled()) return;
             final MultilineNametagTracker tracker = wrapper.user().get(MultilineNametagTracker.class);
             if (tracker == null) return;
-            wrapper.resetReader();
-            final long entityRuntimeId = wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // entity runtime id
             final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
             if (entityTracker == null) return;
-            final Entity entity = entityTracker.getEntityByRid(entityRuntimeId);
-            if (entity != null && entity != entityTracker.getClientPlayer()) {
-                tracker.handlePositionUpdate(entity);
+            try {
+                wrapper.resetReader();
+                final int javaEntityId = wrapper.passthrough(Types.VAR_INT);
+                final Long entityUid = tracker.hostJavaIdToUniqueId.get(javaEntityId);
+                if (entityUid == null) return;
+                final Entity entity = entityTracker.getEntityByUid(entityUid);
+                if (entity != null && entity != entityTracker.getClientPlayer()) {
+                    tracker.handlePositionUpdate(entity);
+                }
+            } catch (final Exception ignored) {
             }
         });
 
         // 7. REMOVE_ENTITY — cleanup TEXT_DISPLAY
+        // Upstream writes REMOVE_ENTITIES: VarIntArrayPrimitive(int[]{javaId})
+        // Entity is already removed from EntityTracker at this point,
+        // so we use hostJavaIdToUniqueId for reverse lookup.
         ProtocolUtil.appendClientbound(protocol, ClientboundBedrockPackets.REMOVE_ENTITY, wrapper -> {
             if (wrapper.isCancelled()) return;
             final MultilineNametagTracker tracker = wrapper.user().get(MultilineNametagTracker.class);
             if (tracker == null) return;
-            wrapper.resetReader();
-            final long entityUniqueId = wrapper.read(BedrockTypes.VAR_LONG); // entity unique id
-            tracker.handleEntityRemoved(entityUniqueId);
+            try {
+                wrapper.resetReader();
+                final int[] javaEntityIds = wrapper.passthrough(Types.VAR_INT_ARRAY_PRIMITIVE);
+                for (final int javaId : javaEntityIds) {
+                    final Long entityUid = tracker.hostJavaIdToUniqueId.get(javaId);
+                    if (entityUid != null) {
+                        tracker.handleEntityRemoved(entityUid);
+                    }
+                }
+            } catch (final Exception ignored) {
+            }
         });
 
         // 8. CHANGE_DIMENSION — clear all state
@@ -184,7 +233,14 @@ public class MultilineNametagTracker extends StoredObject {
      * Handles entity data updates — checks for multiline nametags and creates/updates/removes TEXT_DISPLAY.
      */
     public void handleEntityDataUpdate(final Entity entity) {
-        final String name = getEntityName(entity);
+        String name = getEntityName(entity);
+        if (name != null) {
+            // Strip trailing newlines to avoid empty bottom line in TEXT_DISPLAY
+            while (name.endsWith("\n")) {
+                name = name.substring(0, name.length() - 1);
+            }
+            if (name.isEmpty()) name = null;
+        }
         final boolean isMultiline = isMultilineName(name);
         final boolean alwaysShow = isNametagAlwaysShown(entity);
         final NametagDisplayInfo existing = displays.get(entity.uniqueId());
@@ -200,6 +256,7 @@ public class MultilineNametagTracker extends StoredObject {
         } else {
             if (existing != null) {
                 // Remove TEXT_DISPLAY (name became single-line, empty, or hidden)
+                hostJavaIdToUniqueId.remove(existing.hostJavaId);
                 removeTextDisplay(existing);
                 displays.remove(entity.uniqueId());
             }
@@ -221,6 +278,7 @@ public class MultilineNametagTracker extends StoredObject {
     public void handleEntityRemoved(final long entityUniqueId) {
         final NametagDisplayInfo info = displays.remove(entityUniqueId);
         if (info != null) {
+            hostJavaIdToUniqueId.remove(info.hostJavaId);
             removeTextDisplay(info);
         }
     }
@@ -231,6 +289,7 @@ public class MultilineNametagTracker extends StoredObject {
      */
     public void clearAll() {
         displays.clear();
+        hostJavaIdToUniqueId.clear();
     }
 
     // ---- TEXT_DISPLAY management ----
@@ -241,19 +300,25 @@ public class MultilineNametagTracker extends StoredObject {
 
         final int javaId = entityTracker.getNextJavaEntityId();
         final UUID uuid = UUID.randomUUID();
-        final NametagDisplayInfo info = new NametagDisplayInfo(javaId, uuid, entity.uniqueId(), name);
+        final NametagDisplayInfo info = new NametagDisplayInfo(javaId, uuid, entity.uniqueId(), entity.javaId(), name);
         displays.put(entity.uniqueId(), info);
+        hostJavaIdToUniqueId.put(entity.javaId(), entity.uniqueId());
 
         // 1. Send corrective SET_ENTITY_DATA to hide the host entity's original CUSTOM_NAME
         sendClearHostNametag(entity);
 
-        // 2. Spawn TEXT_DISPLAY entity
+        // 2. Spawn TEXT_DISPLAY entity at the nametag position directly.
+        // The vertical offset is baked into the world Y coordinate (not TRANSLATION)
+        // to avoid billboard rotation distortion (MC-261696: billboard is applied before translation).
+        info.lastHeight = getEffectiveHeight(entity);
+        info.lastScale = getEffectiveScale(entity);
+        final double nametagY = getNametagY(entity, info);
         final PacketWrapper addEntity = PacketWrapper.create(ClientboundPackets1_21_11.ADD_ENTITY, this.user());
         addEntity.write(Types.VAR_INT, javaId); // entity id
         addEntity.write(Types.UUID, uuid); // uuid
         addEntity.write(Types.VAR_INT, EntityTypes1_21_11.TEXT_DISPLAY.getId()); // type id
         addEntity.write(Types.DOUBLE, (double) entity.position().x()); // x
-        addEntity.write(Types.DOUBLE, (double) entity.position().y()); // y
+        addEntity.write(Types.DOUBLE, nametagY); // y
         addEntity.write(Types.DOUBLE, (double) entity.position().z()); // z
         addEntity.write(Types.MOVEMENT_VECTOR, Vector3d.ZERO); // velocity
         addEntity.write(Types.BYTE, (byte) 0); // pitch
@@ -263,42 +328,37 @@ public class MultilineNametagTracker extends StoredObject {
         addEntity.send(BedrockProtocol.class);
 
         // 3. Configure TEXT_DISPLAY entity data
-        sendTextDisplayEntityData(info, entity, name);
+        sendTextDisplayEntityData(info, name);
     }
 
     private void updateTextDisplay(final Entity entity, final NametagDisplayInfo info, final String name) {
         final boolean nameChanged = !name.equals(info.lastNameText);
         final float currentHeight = getEffectiveHeight(entity);
         final float currentScale = getEffectiveScale(entity);
-        final boolean translationChanged = currentHeight != info.lastHeight || currentScale != info.lastScale;
+        final boolean heightChanged = currentHeight != info.lastHeight || currentScale != info.lastScale;
 
-        if (nameChanged || translationChanged) {
+        if (nameChanged || heightChanged) {
             // Re-send corrective packet to ensure host nametag stays hidden
             sendClearHostNametag(entity);
 
-            // Update TEXT_DISPLAY
-            final List<EntityData> displayData = new ArrayList<>();
             if (nameChanged) {
                 info.lastNameText = name;
                 final Tag textNbt = TextUtil.stringToNbt(name);
+                final List<EntityData> displayData = new ArrayList<>();
                 displayData.add(new EntityData(
                         textDisplayIndex(EntityDataFields.TEXT),
                         VersionedTypes.V1_21_11.entityDataTypes().componentType,
                         textNbt));
-            }
-            if (translationChanged) {
-                info.lastHeight = currentHeight;
-                info.lastScale = currentScale;
-                displayData.add(new EntityData(
-                        textDisplayIndex(EntityDataFields.TRANSLATION),
-                        VersionedTypes.V1_21_11.entityDataTypes().vector3FType,
-                        new Vector3f(0f, currentHeight * currentScale + 0.5f, 0f)));
-            }
-            if (!displayData.isEmpty()) {
                 final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets1_21_11.SET_ENTITY_DATA, this.user());
                 setEntityData.write(Types.VAR_INT, info.textDisplayJavaId);
                 setEntityData.write(VersionedTypes.V1_21_11.entityDataList, displayData);
                 setEntityData.send(BedrockProtocol.class);
+            }
+            if (heightChanged) {
+                // Height offset is in world position, not TRANSLATION — send position sync
+                info.lastHeight = currentHeight;
+                info.lastScale = currentScale;
+                sendPositionSync(entity, info);
             }
         }
     }
@@ -309,10 +369,8 @@ public class MultilineNametagTracker extends StoredObject {
         removeEntities.send(BedrockProtocol.class);
     }
 
-    private void sendTextDisplayEntityData(final NametagDisplayInfo info, final Entity entity, final String name) {
+    private void sendTextDisplayEntityData(final NametagDisplayInfo info, final String name) {
         info.lastNameText = name;
-        info.lastHeight = getEffectiveHeight(entity);
-        info.lastScale = getEffectiveScale(entity);
 
         final Tag textNbt = TextUtil.stringToNbt(name);
         final List<EntityData> displayData = new ArrayList<>();
@@ -323,17 +381,14 @@ public class MultilineNametagTracker extends StoredObject {
                 VersionedTypes.V1_21_11.entityDataTypes().componentType,
                 textNbt));
 
-        // BILLBOARD_RENDER_CONSTRAINTS = 3 (CENTER — always face the player, like vanilla nametags)
+        // BILLBOARD_RENDER_CONSTRAINTS = 3 (CENTER — face camera on all axes, matches vanilla nametag rendering)
         displayData.add(new EntityData(
                 textDisplayIndex(EntityDataFields.BILLBOARD_RENDER_CONSTRAINTS),
                 VersionedTypes.V1_21_11.entityDataTypes().byteType,
                 (byte) 3));
 
-        // TRANSLATION — vertical offset above entity's bounding box
-        displayData.add(new EntityData(
-                textDisplayIndex(EntityDataFields.TRANSLATION),
-                VersionedTypes.V1_21_11.entityDataTypes().vector3FType,
-                new Vector3f(0f, info.lastHeight * info.lastScale + 0.5f, 0f)));
+        // No TRANSLATION — vertical offset is baked into the entity's world Y position
+        // to avoid billboard rotation distortion (MC-261696: billboard is applied before translation).
 
         // BACKGROUND_COLOR = 0x40000000 (semi-transparent black, matches vanilla nametag style)
         displayData.add(new EntityData(
@@ -353,6 +408,12 @@ public class MultilineNametagTracker extends StoredObject {
                 VersionedTypes.V1_21_11.entityDataTypes().floatType,
                 1.0f));
 
+        // STYLE_FLAGS = 0x02 (see_through — render through blocks, like Bedrock nametags)
+        displayData.add(new EntityData(
+                textDisplayIndex(EntityDataFields.STYLE_FLAGS),
+                VersionedTypes.V1_21_11.entityDataTypes().byteType,
+                (byte) 0x02));
+
         final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets1_21_11.SET_ENTITY_DATA, this.user());
         setEntityData.write(Types.VAR_INT, info.textDisplayJavaId);
         setEntityData.write(VersionedTypes.V1_21_11.entityDataList, displayData);
@@ -363,9 +424,7 @@ public class MultilineNametagTracker extends StoredObject {
         final PacketWrapper posSync = PacketWrapper.create(ClientboundPackets1_21_11.ENTITY_POSITION_SYNC, this.user());
         posSync.write(Types.VAR_INT, info.textDisplayJavaId); // entity id
         posSync.write(Types.DOUBLE, (double) entity.position().x()); // x
-        // Subtract eyeOffset: MOVE_PLAYER stores head position (feet + eyeOffset) but we need feet position.
-        // For non-player entities eyeOffset=0 so this is a no-op.
-        posSync.write(Types.DOUBLE, (double) (entity.position().y() - entity.eyeOffset())); // y
+        posSync.write(Types.DOUBLE, getNametagY(entity, info)); // y
         posSync.write(Types.DOUBLE, (double) entity.position().z()); // z
         posSync.write(Types.DOUBLE, 0D); // velocity x
         posSync.write(Types.DOUBLE, 0D); // velocity y
@@ -374,6 +433,18 @@ public class MultilineNametagTracker extends StoredObject {
         posSync.write(Types.FLOAT, 0F); // pitch
         posSync.write(Types.BOOLEAN, false); // on ground
         posSync.send(BedrockProtocol.class);
+    }
+
+    /**
+     * Calculates the world Y position for the TEXT_DISPLAY nametag.
+     * The vertical offset is baked into the world position (not TRANSLATION) to avoid
+     * billboard rotation distortion (MC-261696: billboard is applied before translation).
+     */
+    private static double getNametagY(final Entity entity, final NametagDisplayInfo info) {
+        // entity.position().y() is head position for players, feet position for other entities.
+        // Subtract eyeOffset to normalize to feet position.
+        final double feetY = entity.position().y() - entity.eyeOffset();
+        return feetY + info.lastHeight * info.lastScale + 0.25;
     }
 
     /**
@@ -478,14 +549,16 @@ public class MultilineNametagTracker extends StoredObject {
         final int textDisplayJavaId;
         final UUID textDisplayUuid;
         final long entityUniqueId;
+        final int hostJavaId;
         String lastNameText;
         float lastHeight;
         float lastScale;
 
-        NametagDisplayInfo(final int textDisplayJavaId, final UUID textDisplayUuid, final long entityUniqueId, final String nameText) {
+        NametagDisplayInfo(final int textDisplayJavaId, final UUID textDisplayUuid, final long entityUniqueId, final int hostJavaId, final String nameText) {
             this.textDisplayJavaId = textDisplayJavaId;
             this.textDisplayUuid = textDisplayUuid;
             this.entityUniqueId = entityUniqueId;
+            this.hostJavaId = hostJavaId;
             this.lastNameText = nameText;
         }
     }
