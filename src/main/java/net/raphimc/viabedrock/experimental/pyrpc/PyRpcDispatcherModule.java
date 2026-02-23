@@ -51,34 +51,21 @@ public class PyRpcDispatcherModule implements FeatureModule {
 
     @Override
     public void onPacketRegistration(final BedrockProtocol protocol) {
-        protocol.registerClientbound(ClientboundBedrockPackets.PY_RPC, ClientboundPackets1_21_11.CUSTOM_PAYLOAD, wrapper -> {
+        protocol.registerClientbound(ClientboundBedrockPackets.PY_RPC, null, wrapper -> {
+            wrapper.cancel();
             final byte[] data = wrapper.read(BedrockTypes.BYTE_ARRAY); // MsgPack data
             wrapper.read(BedrockTypes.INT_LE); // msgId (not needed for S2C forwarding)
 
             final ChannelStorage channels = wrapper.user().get(ChannelStorage.class);
-            boolean sentFirst = false;
 
             for (final PyRpcConsumer consumer : consumers) {
                 if (!channels.hasChannel(consumer.confirmChannel())) continue;
 
-                if (!sentFirst) {
-                    // Reuse original wrapper for the first consumer
-                    wrapper.write(Types.STRING, consumer.dataChannel());
-                    wrapper.write(Types.INT, consumer.pyRpcDataOrdinal());
-                    wrapper.write(Types.REMAINING_BYTES, data);
-                    sentFirst = true;
-                } else {
-                    // Create additional packet for subsequent consumers
-                    final PacketWrapper extra = PacketWrapper.create(ClientboundPackets1_21_11.CUSTOM_PAYLOAD, wrapper.user());
-                    extra.write(Types.STRING, consumer.dataChannel());
-                    extra.write(Types.INT, consumer.pyRpcDataOrdinal());
-                    extra.write(Types.REMAINING_BYTES, data);
-                    extra.send(BedrockProtocol.class);
-                }
-            }
-
-            if (!sentFirst) {
-                wrapper.cancel(); // No confirmed consumers
+                final PacketWrapper msg = PacketWrapper.create(ClientboundPackets1_21_11.CUSTOM_PAYLOAD, wrapper.user());
+                msg.write(Types.STRING, consumer.dataChannel());
+                msg.write(Types.INT, consumer.pyRpcDataOrdinal());
+                msg.write(Types.REMAINING_BYTES, data);
+                msg.scheduleSend(BedrockProtocol.class);
             }
         });
     }
