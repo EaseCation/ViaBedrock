@@ -24,7 +24,6 @@ import com.viaversion.viaversion.protocols.v1_21_9to1_21_11.packet.ClientboundPa
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
-import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
@@ -40,28 +39,13 @@ public class ModUIClientInterface {
 
     public static final String CONFIRM_CHANNEL = "moduiclient:confirm";
     public static final String CHANNEL = "moduiclient:data";
+    public static final int PY_RPC_DATA_ORDINAL = PayloadType.PY_RPC_DATA.ordinal();
 
     public static void confirmPresence(final UserConnection user) {
         final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets1_21_11.CUSTOM_PAYLOAD, user);
         pluginMessage.write(Types.STRING, CHANNEL); // Channel
         pluginMessage.write(Types.INT, PayloadType.CONFIRM.ordinal()); // Type
         pluginMessage.send(BedrockProtocol.class);
-    }
-
-    public static void register(final BedrockProtocol protocol) {
-        protocol.registerClientbound(ClientboundBedrockPackets.PY_RPC, ClientboundPackets1_21_11.CUSTOM_PAYLOAD, wrapper -> {
-            final byte[] msgpackData = wrapper.read(BedrockTypes.BYTE_ARRAY); // MsgPack data
-            wrapper.read(BedrockTypes.INT_LE); // msgId (not needed for S2C forwarding)
-
-            if (!wrapper.user().get(ChannelStorage.class).hasChannel(CONFIRM_CHANNEL)) {
-                wrapper.cancel();
-                return;
-            }
-
-            wrapper.write(Types.STRING, CHANNEL); // Channel
-            wrapper.write(Types.INT, PayloadType.PY_RPC_DATA.ordinal()); // Type
-            wrapper.write(Types.REMAINING_BYTES, msgpackData); // Raw MsgPack bytes
-        });
     }
 
     public static void handleC2S(final PacketWrapper wrapper) {

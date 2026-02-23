@@ -66,6 +66,8 @@ public class CameraInterface {
             final Float[] posZs = new Float[count];
             final Float[] rotXs = new Float[count];
             final Float[] rotYs = new Float[count];
+            final Byte[] audioListeners = new Byte[count];
+            final Boolean[] playerEffectsArr = new Boolean[count];
 
             for (int i = 0; i < count; i++) {
                 names[i] = wrapper.read(BedrockTypes.STRING);
@@ -89,8 +91,8 @@ public class CameraInterface {
                 skipOptionalFloat(wrapper); // radius
                 skipOptionalFloat(wrapper); // yaw_limit_min
                 skipOptionalFloat(wrapper); // yaw_limit_max
-                skipOptionalByte(wrapper); // audio_listener
-                skipOptionalBoolean(wrapper); // player_effects
+                audioListeners[i] = wrapper.read(Types.BOOLEAN) ? wrapper.read(Types.BYTE) : null;
+                playerEffectsArr[i] = wrapper.read(Types.BOOLEAN) ? wrapper.read(Types.BOOLEAN) : null;
                 // aim_assist (optional nested)
                 if (wrapper.read(Types.BOOLEAN)) {
                     skipOptionalString(wrapper); // preset_id
@@ -104,7 +106,7 @@ public class CameraInterface {
             if (!wrapper.user().get(ChannelStorage.class).hasChannel(CONFIRM_CHANNEL)) {
                 return;
             }
-            sendCameraPresets(wrapper.user(), count, names, parents, posXs, posYs, posZs, rotXs, rotYs);
+            sendCameraPresets(wrapper.user(), count, names, parents, posXs, posYs, posZs, rotXs, rotYs, audioListeners, playerEffectsArr);
         });
 
         protocol.registerClientbound(ClientboundBedrockPackets.CAMERA_INSTRUCTION, null, wrapper -> {
@@ -217,7 +219,8 @@ public class CameraInterface {
     public static void sendCameraPresets(final UserConnection user, final int count,
                                          final String[] names, final String[] parents,
                                          final Float[] posXs, final Float[] posYs, final Float[] posZs,
-                                         final Float[] rotXs, final Float[] rotYs) {
+                                         final Float[] rotXs, final Float[] rotYs,
+                                         final Byte[] audioListeners, final Boolean[] playerEffects) {
         final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets1_21_11.CUSTOM_PAYLOAD, user);
         pluginMessage.write(Types.STRING, CHANNEL);
         pluginMessage.write(Types.INT, PayloadType.CAMERA_PRESETS.ordinal());
@@ -230,6 +233,8 @@ public class CameraInterface {
             writeOptionalFloat(pluginMessage, posZs[i]);
             writeOptionalFloat(pluginMessage, rotXs[i]);
             writeOptionalFloat(pluginMessage, rotYs[i]);
+            writeOptionalByte(pluginMessage, audioListeners[i]);
+            writeOptionalBoolean(pluginMessage, playerEffects[i]);
         }
         pluginMessage.scheduleSend(BedrockProtocol.class);
     }
@@ -309,6 +314,20 @@ public class CameraInterface {
         wrapper.write(Types.BOOLEAN, value != null);
         if (value != null) {
             wrapper.write(Types.FLOAT, value);
+        }
+    }
+
+    private static void writeOptionalByte(final PacketWrapper wrapper, final Byte value) {
+        wrapper.write(Types.BOOLEAN, value != null);
+        if (value != null) {
+            wrapper.write(Types.BYTE, value);
+        }
+    }
+
+    private static void writeOptionalBoolean(final PacketWrapper wrapper, final Boolean value) {
+        wrapper.write(Types.BOOLEAN, value != null);
+        if (value != null) {
+            wrapper.write(Types.BOOLEAN, value);
         }
     }
 

@@ -21,6 +21,7 @@ import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.experimental.FeatureModule;
+import net.raphimc.viabedrock.experimental.pyrpc.PyRpcDispatcherModule;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 
 import java.util.Set;
@@ -29,7 +30,12 @@ public class ModUIClientModule implements FeatureModule {
 
     @Override
     public void onPacketRegistration(final BedrockProtocol protocol) {
-        ModUIClientInterface.register(protocol);
+        // Register as PY_RPC consumer (PY_RPC handler is owned by PyRpcDispatcherModule)
+        PyRpcDispatcherModule.registerConsumer(
+            ModUIClientInterface.CONFIRM_CHANNEL,
+            ModUIClientInterface.CHANNEL,
+            ModUIClientInterface.PY_RPC_DATA_ORDINAL
+        );
     }
 
     @Override
