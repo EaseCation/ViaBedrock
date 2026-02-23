@@ -38,6 +38,7 @@ import net.raphimc.viabedrock.experimental.model.map.MapDecoration;
 import net.raphimc.viabedrock.experimental.model.map.MapObject;
 import net.raphimc.viabedrock.experimental.model.map.MapTrackedObject;
 import net.raphimc.viabedrock.experimental.block.CustomBlockMappingModule;
+import net.raphimc.viabedrock.experimental.camera.CameraModule;
 import net.raphimc.viabedrock.experimental.dimension.AlternateDimensionModule;
 import net.raphimc.viabedrock.experimental.entity.CustomEntityTypeResolver;
 import net.raphimc.viabedrock.experimental.light.AsyncLightModule;
@@ -194,6 +195,7 @@ public class ExperimentalFeatures {
 
     public static void registerModules() {
         registerModule(new ModUIClientModule());
+        registerModule(new CameraModule());
         registerModule(new AlternateDimensionModule());
         registerModule(new CustomEntityTypeResolver());
         registerModule(new CustomBlockMappingModule());
