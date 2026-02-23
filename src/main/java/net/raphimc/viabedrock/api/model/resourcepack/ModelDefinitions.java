@@ -18,6 +18,7 @@
 package net.raphimc.viabedrock.api.model.resourcepack;
 
 import net.raphimc.viabedrock.ViaBedrock;
+import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.storage.ResourcePacksStorage;
 import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
 import org.cube.converter.parser.bedrock.geometry.BedrockGeometryParser;
@@ -32,6 +33,25 @@ public class ModelDefinitions {
     private final Map<String, BedrockGeometryModel> entityModels = new HashMap<>();
 
     public ModelDefinitions(final ResourcePacksStorage resourcePacksStorage) {
+        // Load vanilla skin pack geometries first (e.g., geometry.humanoid.custom)
+        // These are not in the regular pack stack but are needed by entities referencing vanilla geometries
+        if (BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks() != null) {
+            final ResourcePack skinPack = BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks().get("vanilla_skin_pack");
+            if (skinPack != null) {
+                final String geometryJson = skinPack.content().getString("geometry.json");
+                if (geometryJson != null) {
+                    try {
+                        for (BedrockGeometryModel bedrockGeometry : BedrockGeometryParser.parse(geometryJson)) {
+                            this.entityModels.put(bedrockGeometry.getIdentifier(), bedrockGeometry);
+                        }
+                    } catch (Throwable e) {
+                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to parse vanilla skin pack geometry", e);
+                    }
+                }
+            }
+        }
+
+        // Load from pack stack (custom packs override vanilla)
         for (ResourcePack pack : resourcePacksStorage.getPackStackBottomToTop()) {
             for (String modelPath : pack.content().getFilesDeep("models/", ".json")) {
                 try {

@@ -24,6 +24,7 @@ import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.model.resourcepack.EntityDefinitions;
 import net.raphimc.viabedrock.api.model.resourcepack.ResourcePack;
 import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
+import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomAttachableResourceRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomEntityResourceRewriter;
@@ -162,6 +163,19 @@ public class ResourcePackRewriter {
     private static void initBedrockMotionPackManager(final ResourcePacksStorage resourcePacksStorage) {
         try {
             final List<Content> contents = new ArrayList<>();
+
+            // Include vanilla_skin_pack at lowest priority for vanilla geometries (e.g., geometry.humanoid.custom)
+            if (BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks() != null) {
+                final ResourcePack skinPack = BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks().get("vanilla_skin_pack");
+                if (skinPack != null) {
+                    try {
+                        contents.add(new Content(skinPack.content().toZip()));
+                    } catch (IOException e) {
+                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to convert vanilla skin pack for BedrockMotion", e);
+                    }
+                }
+            }
+
             for (ResourcePack pack : resourcePacksStorage.getPackStackBottomToTop()) {
                 try {
                     contents.add(new Content(pack.content().toZip()));
