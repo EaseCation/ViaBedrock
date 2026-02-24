@@ -119,6 +119,8 @@ public class BedrockMappingData extends MappingDataBase {
     private Map<String, Map<BlockState, JavaItemMapping>> bedrockToJavaBlockItems;
     private Map<String, Map<Integer, JavaItemMapping>> bedrockToJavaMetaItems;
     private Map<ContainerType, Integer> bedrockToJavaContainers;
+    private int javaDoubleChestMenuId;
+    private int javaShulkerBoxMenuId;
 
     // Entities
     private BiMap<String, Integer> bedrockEntities;
@@ -547,6 +549,15 @@ public class BedrockMappingData extends MappingDataBase {
             final List<String> javaMenus = new ArrayList<>(javaMenusJson.size());
             for (JsonElement menuJson : javaMenusJson) {
                 javaMenus.add(Key.namespaced(menuJson.getAsString()));
+            }
+
+            this.javaDoubleChestMenuId = javaMenus.indexOf("minecraft:generic_9x6");
+            if (this.javaDoubleChestMenuId == -1) {
+                throw new IllegalStateException("Unknown java menu: minecraft:generic_9x6");
+            }
+            this.javaShulkerBoxMenuId = javaMenus.indexOf("minecraft:shulker_box");
+            if (this.javaShulkerBoxMenuId == -1) {
+                throw new IllegalStateException("Unknown java menu: minecraft:shulker_box");
             }
 
             final JsonObject bedrockToJavaContainersJson = this.readJson("custom/container_mappings.json");
@@ -1137,6 +1148,14 @@ public class BedrockMappingData extends MappingDataBase {
 
     public Map<ContainerType, Integer> getBedrockToJavaContainers() {
         return this.bedrockToJavaContainers;
+    }
+
+    public int getJavaDoubleChestMenuId() {
+        return this.javaDoubleChestMenuId;
+    }
+
+    public int getJavaShulkerBoxMenuId() {
+        return this.javaShulkerBoxMenuId;
     }
 
     public BiMap<String, Integer> getBedrockEntities() {

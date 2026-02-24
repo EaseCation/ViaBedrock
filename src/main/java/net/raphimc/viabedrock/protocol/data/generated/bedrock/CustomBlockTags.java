@@ -3,6 +3,7 @@ package net.raphimc.viabedrock.protocol.data.generated.bedrock;
 
 public class CustomBlockTags {
 
+    public static final String ANVIL = "anvil";
     public static final String BANNER = "banner";
     public static final String BARREL = "barrel";
     public static final String BEACON = "beacon";

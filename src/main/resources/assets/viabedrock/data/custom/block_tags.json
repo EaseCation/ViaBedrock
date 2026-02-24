@@ -1,4 +1,10 @@
 {
+  "anvil": [
+    "minecraft:anvil",
+    "minecraft:chipped_anvil",
+    "minecraft:damaged_anvil",
+    "minecraft:deprecated_anvil"
+  ],
   "banner": [
     "minecraft:standing_banner",
     "minecraft:wall_banner"

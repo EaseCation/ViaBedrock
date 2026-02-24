@@ -20,7 +20,9 @@ package net.raphimc.viabedrock.protocol.rewriter;
 import com.google.common.collect.BiMap;
 import com.google.common.collect.HashBiMap;
 import com.viaversion.nbt.tag.CompoundTag;
+import com.viaversion.nbt.tag.ListTag;
 import com.viaversion.nbt.tag.LongTag;
+import com.viaversion.nbt.tag.StringTag;
 import com.viaversion.nbt.tag.Tag;
 import com.viaversion.viaversion.api.Via;
 import com.viaversion.viaversion.api.connection.StoredObject;
@@ -57,10 +59,7 @@ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 import net.raphimc.viabedrock.protocol.types.array.ArrayType;
 import net.raphimc.viabedrock.protocol.types.item.BedrockItemType;
 
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.logging.Level;
 
 public class ItemRewriter extends StoredObject {
@@ -205,8 +204,38 @@ public class ItemRewriter extends StoredObject {
         final CompoundTag bedrockTag = bedrockItem.tag();
         if (bedrockTag != null) {
             if (bedrockTag.get("display") instanceof CompoundTag display) {
+                final List<Tag> additionalLore = new ArrayList<>();
+
+                // Handle display.Name (support \n line breaks)
                 if (display.contains("Name")) { // Bedrock client defaults to empty string if the type is wrong
-                    javaItem.dataContainer().set(StructuredDataKey.CUSTOM_NAME, TextUtil.stringToNbt(display.getString("Name", "")));
+                    final String name = display.getString("Name", "");
+                    if (name.contains("\n")) {
+                        final String[] nameLines = name.split("\n", -1);
+                        javaItem.dataContainer().set(StructuredDataKey.CUSTOM_NAME, TextUtil.stringToNbt(nameLines[0]));
+                        for (int i = 1; i < nameLines.length; i++) {
+                            additionalLore.add(TextUtil.stringToNbt(nameLines[i]));
+                        }
+                    } else {
+                        javaItem.dataContainer().set(StructuredDataKey.CUSTOM_NAME, TextUtil.stringToNbt(name));
+                    }
+                }
+
+                // Convert display.Lore (Bedrock Lore is ListTag<StringTag>)
+                if (display.get("Lore") instanceof ListTag<?> bedrockLore) {
+                    for (Tag loreEntry : bedrockLore) {
+                        if (loreEntry instanceof StringTag loreString) {
+                            additionalLore.add(TextUtil.stringToNbt(loreString.getValue()));
+                        }
+                    }
+                }
+
+                // Merge: name overflow lines + Bedrock Lore + existing debug Lore
+                if (!additionalLore.isEmpty()) {
+                    final Tag[] existingLore = javaItem.dataContainer().get(StructuredDataKey.LORE);
+                    if (existingLore != null) {
+                        Collections.addAll(additionalLore, existingLore);
+                    }
+                    javaItem.dataContainer().set(StructuredDataKey.LORE, additionalLore.toArray(new Tag[0]));
                 }
             }
         }

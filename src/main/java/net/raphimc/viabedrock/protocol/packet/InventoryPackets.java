@@ -18,6 +18,7 @@
 package net.raphimc.viabedrock.protocol.packet;
 
 import com.viaversion.nbt.tag.CompoundTag;
+import com.viaversion.nbt.tag.IntTag;
 import com.viaversion.nbt.tag.StringTag;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.minecraft.BlockPosition;
@@ -56,8 +57,7 @@ import net.lenni0451.mcstructs_bedrock.forms.types.ModalForm;
 import net.lenni0451.mcstructs_bedrock.text.utils.BedrockTextUtils;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.chunk.BedrockBlockEntity;
-import net.raphimc.viabedrock.api.model.container.ChestContainer;
-import net.raphimc.viabedrock.api.model.container.Container;
+import net.raphimc.viabedrock.api.model.container.*;
 import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
 import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.api.util.PacketFactory;
@@ -66,6 +66,7 @@ import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
+import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomBlockTags;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.ClickType;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.EquipmentSlot;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
@@ -113,13 +114,36 @@ public class InventoryPackets {
             }
 
             final Container container;
+            int javaMenuId = BedrockProtocol.MAPPINGS.getBedrockToJavaContainers().getOrDefault(type, -1);
             switch (type) {
                 case INVENTORY -> {
                     inventoryTracker.setCurrentContainer(new InventoryContainer(wrapper.user(), containerId, position, inventoryTracker.getInventoryContainer()));
                     wrapper.cancel();
                     return;
                 }
-                case CONTAINER -> container = new ChestContainer(wrapper.user(), containerId, title, position, 27);
+                case CONTAINER -> {
+                    final String blockTag = blockStateRewriter.tag(chunkTracker.getBlockState(position));
+                    if (CustomBlockTags.ENDER_CHEST.equals(blockTag)) {
+                        container = new EnderChestContainer(wrapper.user(), containerId, title, position);
+                    } else if (CustomBlockTags.SHULKER_BOX.equals(blockTag)) {
+                        container = new ShulkerBoxContainer(wrapper.user(), containerId, title, position);
+                        javaMenuId = BedrockProtocol.MAPPINGS.getJavaShulkerBoxMenuId();
+                    } else {
+                        final boolean isDoubleChest = blockEntity != null && blockEntity.tag().get("pairx") instanceof IntTag && blockEntity.tag().get("pairz") instanceof IntTag;
+                        if (isDoubleChest) {
+                            container = new ChestContainer(wrapper.user(), containerId, title, position, 54);
+                            javaMenuId = BedrockProtocol.MAPPINGS.getJavaDoubleChestMenuId();
+                        } else {
+                            container = new ChestContainer(wrapper.user(), containerId, title, position, 27);
+                        }
+                    }
+                }
+                case BREWING_STAND -> {
+                    container = new BrewingStandContainer(wrapper.user(), containerId, title, position);
+                }
+                case ANVIL -> {
+                    container = new AnvilContainer(wrapper.user(), containerId, title, position);
+                }
                 case NONE, CAULDRON, JUKEBOX, ARMOR, HAND, HUD, DECORATED_POT -> { // Bedrock client can't open these containers
                     wrapper.cancel();
                     return;
@@ -135,7 +159,7 @@ public class InventoryPackets {
             inventoryTracker.setCurrentContainer(container);
 
             wrapper.write(Types.VAR_INT, (int) containerId); // container id
-            wrapper.write(Types.VAR_INT, BedrockProtocol.MAPPINGS.getBedrockToJavaContainers().get(type)); // type
+            wrapper.write(Types.VAR_INT, javaMenuId); // type
             wrapper.write(Types.TAG, TextUtil.textComponentToNbt(title)); // title
         });
         protocol.registerClientbound(ClientboundBedrockPackets.CONTAINER_CLOSE, ClientboundPackets1_21_11.CONTAINER_CLOSE, new PacketHandlers() {

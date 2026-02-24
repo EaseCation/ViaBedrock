@@ -40,6 +40,7 @@ import net.raphimc.viabedrock.experimental.model.map.MapTrackedObject;
 import net.raphimc.viabedrock.experimental.block.CustomBlockMappingModule;
 import net.raphimc.viabedrock.experimental.camera.CameraModule;
 import net.raphimc.viabedrock.experimental.eccamera.ECCameraModule;
+import net.raphimc.viabedrock.experimental.inventory.ClientAuthInventoryModule;
 import net.raphimc.viabedrock.experimental.pyrpc.PyRpcDispatcherModule;
 import net.raphimc.viabedrock.experimental.dimension.AlternateDimensionModule;
 import net.raphimc.viabedrock.experimental.entity.CustomEntityTypeResolver;
@@ -206,6 +207,7 @@ public class ExperimentalFeatures {
         registerModule(new ResourcePackModule());
         registerModule(new NpcDialogueModule());
         registerModule(new AsyncLightModule());
+        registerModule(new ClientAuthInventoryModule());
     }
 
     // --- Existing experimental features ---
@@ -306,6 +308,12 @@ public class ExperimentalFeatures {
                 transactionPacket.write(inventoryTransactionRewriter.getInventoryTransactionType(), inventoryTransaction);
 
                 transactionPacket.sendToServer(BedrockProtocol.class);
+
+                // Update mirror optimistically so rapid consecutive drops read the correct count
+                inventoryTracker.getInventoryContainer().setItemSilent(
+                        inventoryTracker.getInventoryContainer().getSelectedHotbarSlot(),
+                        predictedToItem
+                );
 
                 //TODO: I think vanilla client also sends these and im not sure what their purposes are but it works without them
                     /*final PacketWrapper interactPacket = PacketWrapper.create(ServerboundBedrockPackets.INTERACT, wrapper.user());

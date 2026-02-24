@@ -99,6 +99,15 @@ public abstract class Container {
         return true;
     }
 
+    public boolean setItemSilent(final int slot, final BedrockItem item) {
+        if (slot < 0 || slot >= this.items.length) {
+            return false;
+        }
+
+        this.items[slot] = item;
+        return true;
+    }
+
     public boolean setItems(final BedrockItem[] items) {
         if (items.length != this.items.length) {
             ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Tried to set items for " + this.type + ", but items array length was not correct (" + items.length + " != " + this.items.length + ")");
