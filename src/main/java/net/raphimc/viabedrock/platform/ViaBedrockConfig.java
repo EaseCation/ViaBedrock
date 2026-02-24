@@ -88,6 +88,12 @@ public interface ViaBedrockConfig extends Config {
      */
     boolean shouldEnableServerEntityAnimation();
 
+    /**
+     * @return The timeout in milliseconds for fetching Java Edition skin from Mojang API during login.
+     * Set to 0 to disable Java skin fetching (always use Steve).
+     */
+    int getJavaSkinFetchTimeout();
+
     enum BlobCacheMode {
 
         /**

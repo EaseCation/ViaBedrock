@@ -23,6 +23,7 @@ import java.security.KeyPair;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
 public class AuthData implements StorableObject {
 
@@ -36,6 +37,7 @@ public class AuthData implements StorableObject {
     private String skinJwt;
     private String displayName;
     private String xuid;
+    private CompletableFuture<Object> javaSkinFuture;
 
     public AuthData(final String mojangJwt, final String identityJwt, final String multiplayerToken, final KeyPair sessionKeyPair, final UUID deviceId) {
         this.mojangJwt = mojangJwt;
@@ -95,6 +97,14 @@ public class AuthData implements StorableObject {
 
     public void setXuid(final String xuid) {
         this.xuid = xuid;
+    }
+
+    public CompletableFuture<Object> getJavaSkinFuture() {
+        return this.javaSkinFuture;
+    }
+
+    public void setJavaSkinFuture(final CompletableFuture<Object> javaSkinFuture) {
+        this.javaSkinFuture = javaSkinFuture;
     }
 
     public List<String> getCertificateChain() {

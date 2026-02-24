@@ -77,6 +77,15 @@ public class LoginPackets {
             }
             gameSession.setProtocolCompression(protocolCompression);
 
+            // Build skinJwt now (deferred from HELLO handler to allow async Java skin fetch)
+            if (authData.getSkinJwt() == null) {
+                authData.setSkinJwt(Jwts.builder()
+                        .signWith(authData.getSessionKeyPair().getPrivate(), Jwts.SIG.ES384)
+                        .header().add("x5u", Base64.getEncoder().encodeToString(authData.getSessionKeyPair().getPublic().getEncoded())).and()
+                        .claims(Via.getManager().getProviders().get(SkinProvider.class).getClientPlayerSkin(wrapper.user()))
+                        .compact());
+            }
+
             final JsonObject authInfoObj = new JsonObject();
             final List<String> certificateChain = authData.getCertificateChain();
             final boolean fullAuth = authData.getMultiplayerToken() != null || certificateChain.size() == 3;
@@ -204,11 +213,15 @@ public class LoginPackets {
 
         final AuthData authData = user.get(AuthData.class);
         if (authData.getSkinJwt() == null) {
-            authData.setSkinJwt(Jwts.builder()
-                    .signWith(authData.getSessionKeyPair().getPrivate(), Jwts.SIG.ES384)
-                    .header().add("x5u", Base64.getEncoder().encodeToString(authData.getSessionKeyPair().getPublic().getEncoded())).and()
-                    .claims(Via.getManager().getProviders().get(SkinProvider.class).getClientPlayerSkin(user))
-                    .compact());
+            // Start async Java skin fetch if enabled and UUID is online-mode (v4)
+            final int skinFetchTimeout = ViaBedrock.getConfig().getJavaSkinFetchTimeout();
+            final UUID uuid = user.getProtocolInfo().getUuid();
+            if (skinFetchTimeout > 0 && uuid != null && uuid.version() == 4) {
+                authData.setJavaSkinFuture(
+                        Via.getManager().getProviders().get(SkinProvider.class).fetchJavaSkinAsync(uuid));
+            }
+            // skinJwt construction is deferred to NETWORK_SETTINGS handler
+            // to allow the async skin fetch to complete during the network round trip
         }
         if (authData.getMultiplayerToken() != null) {
             final Jwt multiplayerTokenJwt = Jwt.parse(authData.getMultiplayerToken());

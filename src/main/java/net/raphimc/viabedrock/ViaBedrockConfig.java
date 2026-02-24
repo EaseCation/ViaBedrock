@@ -40,6 +40,7 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
     private String language;
     private String viaProxyAuthSecret;
     private boolean enableServerEntityAnimation;
+    private int javaSkinFetchTimeout;
 
     public ViaBedrockConfig(final File configFile, final Logger logger) {
         super(configFile, logger);
@@ -64,6 +65,7 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
         this.language = this.getString("language", "");
         this.viaProxyAuthSecret = this.getString("viaproxy-auth-secret", "");
         this.enableServerEntityAnimation = this.getBoolean("enable-server-entity-animation", true);
+        this.javaSkinFetchTimeout = this.getInt("java-skin-fetch-timeout", 1000);
     }
 
     @Override
@@ -138,6 +140,11 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
     @Override
     public boolean shouldEnableServerEntityAnimation() {
         return this.enableServerEntityAnimation;
+    }
+
+    @Override
+    public int getJavaSkinFetchTimeout() {
+        return this.javaSkinFetchTimeout;
     }
 
 }

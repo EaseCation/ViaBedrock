@@ -19,7 +19,10 @@ package net.raphimc.viabedrock.protocol.provider;
 
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.platform.providers.Provider;
+import com.viaversion.viaversion.libs.gson.JsonArray;
+import com.viaversion.viaversion.libs.gson.JsonElement;
 import com.viaversion.viaversion.libs.gson.JsonObject;
+import com.viaversion.viaversion.libs.gson.JsonParser;
 import net.raphimc.viabedrock.api.model.resourcepack.ResourcePack;
 import net.raphimc.viabedrock.api.modinterface.BedrockSkinUtilityInterface;
 import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
@@ -40,21 +43,128 @@ import net.raphimc.viabedrock.protocol.types.primitive.ImageType;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
-import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.*;
 
 public class SkinProvider implements Provider {
+
+    private static final ExecutorService SKIN_EXECUTOR = Executors.newCachedThreadPool(r -> {
+        final Thread t = new Thread(r, "ViaBedrock-Skin-Fetcher");
+        t.setDaemon(true);
+        return t;
+    });
+
+    public record JavaSkinResult(BufferedImage skin, BufferedImage cape, boolean slim) {}
+
+    /**
+     * Asynchronously fetches a Java Edition player's skin from Mojang API.
+     * Runs on a worker thread to avoid blocking the Netty EventLoop.
+     */
+    public CompletableFuture<Object> fetchJavaSkinAsync(final UUID uuid) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                final String uuidStr = uuid.toString().replace("-", "");
+
+                // 1. Fetch profile from Mojang session server
+                final HttpURLConnection profileConn = (HttpURLConnection) new URL(
+                        "https://sessionserver.mojang.com/session/minecraft/profile/" + uuidStr)
+                        .openConnection();
+                profileConn.setConnectTimeout(5000);
+                profileConn.setReadTimeout(5000);
+                profileConn.setRequestProperty("User-Agent", "ViaBedrock");
+
+                if (profileConn.getResponseCode() != 200) {
+                    ViaBedrock.getPlatform().getLogger().warning(
+                            "Mojang API returned " + profileConn.getResponseCode() + " for " + uuid);
+                    return null;
+                }
+
+                final String profileBody;
+                try (InputStream is = profileConn.getInputStream()) {
+                    profileBody = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+                }
+
+                // 2. Parse textures property
+                final JsonObject profileJson = JsonParser.parseString(profileBody).getAsJsonObject();
+                final JsonArray properties = profileJson.getAsJsonArray("properties");
+                String texturesBase64 = null;
+                for (final JsonElement prop : properties) {
+                    final JsonObject propObj = prop.getAsJsonObject();
+                    if ("textures".equals(propObj.get("name").getAsString())) {
+                        texturesBase64 = propObj.get("value").getAsString();
+                        break;
+                    }
+                }
+                if (texturesBase64 == null) {
+                    return null;
+                }
+
+                final JsonObject texturesJson = JsonParser.parseString(
+                        new String(Base64.getDecoder().decode(texturesBase64), StandardCharsets.UTF_8))
+                        .getAsJsonObject().getAsJsonObject("textures");
+
+                // 3. Download skin image
+                BufferedImage skinImage = null;
+                boolean isSlim = false;
+                if (texturesJson.has("SKIN")) {
+                    final JsonObject skinObj = texturesJson.getAsJsonObject("SKIN");
+                    final String skinUrl = skinObj.get("url").getAsString();
+                    isSlim = skinObj.has("metadata")
+                            && skinObj.getAsJsonObject("metadata").has("model")
+                            && "slim".equals(skinObj.getAsJsonObject("metadata").get("model").getAsString());
+
+                    final HttpURLConnection skinConn = (HttpURLConnection) new URL(skinUrl).openConnection();
+                    skinConn.setConnectTimeout(5000);
+                    skinConn.setReadTimeout(5000);
+                    skinConn.setRequestProperty("User-Agent", "ViaBedrock");
+                    try (InputStream is = skinConn.getInputStream()) {
+                        skinImage = ImageIO.read(is);
+                    }
+                }
+
+                // 4. Download cape image (optional)
+                BufferedImage capeImage = null;
+                if (texturesJson.has("CAPE")) {
+                    try {
+                        final String capeUrl = texturesJson.getAsJsonObject("CAPE").get("url").getAsString();
+                        final HttpURLConnection capeConn = (HttpURLConnection) new URL(capeUrl).openConnection();
+                        capeConn.setConnectTimeout(3000);
+                        capeConn.setReadTimeout(3000);
+                        capeConn.setRequestProperty("User-Agent", "ViaBedrock");
+                        try (InputStream is = capeConn.getInputStream()) {
+                            capeImage = ImageIO.read(is);
+                        }
+                    } catch (Exception e) {
+                        // Cape download failure is non-critical
+                    }
+                }
+
+                if (skinImage != null) {
+                    return new JavaSkinResult(skinImage, capeImage, isSlim);
+                }
+                return null;
+            } catch (Exception e) {
+                ViaBedrock.getPlatform().getLogger().warning(
+                        "Failed to fetch Java skin for " + uuid + ": " + e.getMessage());
+                return null;
+            }
+        }, SKIN_EXECUTOR);
+    }
 
     public Map<String, Object> getClientPlayerSkin(final UserConnection user) {
         final HandshakeStorage handshakeStorage = user.get(HandshakeStorage.class);
         final AuthData authData = user.get(AuthData.class);
         final Map<String, Object> claims = new HashMap<>();
 
-        { // Skin claims
+        { // Skin claims (default Steve)
             final ResourcePack.Content skinPackContent = BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks().get("vanilla_skin_pack").content();
             final BufferedImage skin = skinPackContent.getImage("steve.png").getImage();
             final JsonObject skinGeometry = skinPackContent.getSortedJson("geometry.json");
@@ -77,13 +187,58 @@ public class SkinProvider implements Provider {
             claims.put("PersonaPieces", new ArrayList<>());
             claims.put("PieceTintColors", new ArrayList<>());
         }
-        { // Cape claims
+        { // Cape claims (default empty)
             claims.put("CapeId", "");
             claims.put("CapeData", "");
             claims.put("CapeImageWidth", 0);
             claims.put("CapeImageHeight", 0);
             claims.put("CapeOnClassicSkin", false);
         }
+
+        // Try to apply Java Edition skin from async fetch result
+        if (authData.getJavaSkinFuture() != null) {
+            final int timeout = ViaBedrock.getConfig().getJavaSkinFetchTimeout();
+            JavaSkinResult result = null;
+            try {
+                final Object rawResult = authData.getJavaSkinFuture().get(timeout, TimeUnit.MILLISECONDS);
+                if (rawResult instanceof JavaSkinResult) {
+                    result = (JavaSkinResult) rawResult;
+                }
+            } catch (TimeoutException e) {
+                ViaBedrock.getPlatform().getLogger().warning(
+                        "Java skin fetch timed out after " + timeout + "ms for "
+                                + user.getProtocolInfo().getUsername() + ", using Steve skin");
+                authData.getJavaSkinFuture().cancel(true);
+            } catch (Exception e) {
+                ViaBedrock.getPlatform().getLogger().warning(
+                        "Failed to fetch Java skin for "
+                                + user.getProtocolInfo().getUsername() + ": " + e.getMessage());
+            }
+
+            if (result != null && result.skin() != null) {
+                ViaBedrock.getPlatform().getLogger().info(
+                        "Using Java skin for " + user.getProtocolInfo().getUsername()
+                                + " (" + result.skin().getWidth() + "x" + result.skin().getHeight()
+                                + ", " + (result.slim() ? "slim" : "wide") + ")");
+
+                claims.put("SkinData", Base64.getEncoder().encodeToString(ImageType.getImageData(result.skin())));
+                claims.put("SkinImageWidth", result.skin().getWidth());
+                claims.put("SkinImageHeight", result.skin().getHeight());
+                claims.put("ArmSize", result.slim() ? "slim" : "wide");
+
+                final String geoName = result.slim() ? "geometry.humanoid.customSlim" : "geometry.humanoid.custom";
+                claims.put("SkinResourcePatch", Base64.getEncoder().encodeToString(
+                        ("{\"geometry\":{\"default\":\"" + geoName + "\"}}").getBytes(StandardCharsets.UTF_8)));
+
+                if (result.cape() != null) {
+                    claims.put("CapeData", Base64.getEncoder().encodeToString(ImageType.getImageData(result.cape())));
+                    claims.put("CapeImageWidth", result.cape().getWidth());
+                    claims.put("CapeImageHeight", result.cape().getHeight());
+                    claims.put("CapeId", UUID.randomUUID().toString());
+                }
+            }
+        }
+
         { // Session claims
             claims.put("ServerAddress", handshakeStorage.hostname() + ":" + handshakeStorage.port());
             claims.put("ThirdPartyName", user.getProtocolInfo().getUsername());

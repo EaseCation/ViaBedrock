@@ -27,3 +27,8 @@ viaproxy-auth-secret: ""
 # When disabled, custom entities will only show as invisible interaction boxes (upstream behavior).
 # This setting has no effect when ViaBedrockUtility mod is installed (client-side rendering is always used).
 enable-server-entity-animation: true
+# Timeout (ms) for fetching Java Edition skin from Mojang API during login.
+# Set to 0 to disable Java skin fetching (always use Steve).
+# The fetch runs asynchronously during the Bedrock server handshake, so actual blocking
+# time is typically much shorter than this value.
+java-skin-fetch-timeout: 1000
