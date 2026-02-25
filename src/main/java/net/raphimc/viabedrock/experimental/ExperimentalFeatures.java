@@ -49,6 +49,7 @@ import net.raphimc.viabedrock.experimental.npc.NpcDialogueModule;
 import net.raphimc.viabedrock.experimental.modinterface.ModUIClientModule;
 import net.raphimc.viabedrock.experimental.resourcepack.ResourcePackModule;
 import net.raphimc.viabedrock.experimental.rewriter.InventoryTransactionRewriter;
+import net.raphimc.viabedrock.experimental.storage.BlockPlacementAckTracker;
 import net.raphimc.viabedrock.experimental.storage.MapTracker;
 import net.raphimc.viabedrock.experimental.storage.MultilineNametagTracker;
 import net.raphimc.viabedrock.experimental.util.JavaMapPaletteUtil;
@@ -403,8 +404,12 @@ public class ExperimentalFeatures {
             boolean insideBlock = wrapper.read(Types.BOOLEAN); // inside block
             wrapper.read(Types.BOOLEAN); // world border, this doesn't exist on Bedrock.
 
-            // Send back block changed ack with the sequence, this will help with ghost blocks.
-            PacketFactory.sendJavaBlockChangedAck(wrapper.user(), wrapper.read(Types.VAR_INT));
+            // Defer block changed ack until the server confirms via UPDATE_BLOCK.
+            // Sending ack immediately would clear the Java client's prediction before any BLOCK_UPDATE arrives,
+            // causing the placed block to flicker (disappear then reappear).
+            final int sequence = wrapper.read(Types.VAR_INT);
+            final BlockPosition expectedPos = insideBlock ? position : position.getRelative(face);
+            wrapper.user().get(BlockPlacementAckTracker.class).addPendingAck(expectedPos, sequence);
 
             // The player can only interact using the main hand on Bedrock!
             if (hand != InteractionHand.MAIN_HAND) {
@@ -700,6 +705,7 @@ public class ExperimentalFeatures {
         user.put(new InventoryTransactionRewriter(user));
         user.put(new MapTracker(user));
         user.put(new MultilineNametagTracker(user));
+        user.put(new BlockPlacementAckTracker(user));
 
         // Dispatch to feature modules
         for (final FeatureModule module : MODULES) {

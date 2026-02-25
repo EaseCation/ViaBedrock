@@ -47,6 +47,7 @@ import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
+import net.raphimc.viabedrock.experimental.storage.BlockPlacementAckTracker;
 import net.raphimc.viabedrock.protocol.data.enums.Dimension;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ServerboundLoadingScreenPacketType;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.SpawnPositionType;
@@ -91,10 +92,26 @@ public class WorldPackets {
 
         wrapper.write(Types.VAR_INT, remappedBlock.keyInt()); // block state
 
+        // Send the BLOCK_UPDATE explicitly to ensure it arrives before any deferred BlockChangedAck
+        wrapper.send(BedrockProtocol.class);
+        wrapper.cancel();
+
         if (remappedBlock.value() != null) {
-            wrapper.send(BedrockProtocol.class);
-            wrapper.cancel();
             PacketFactory.sendJavaBlockEntityData(wrapper.user(), position, remappedBlock.value());
+        }
+
+        // Send deferred BlockChangedAck for block placement (experimental feature).
+        // The ack must arrive AFTER the BLOCK_UPDATE so the Java client's prediction is cleared
+        // only after the server-known state has been updated, preventing placement flicker.
+        final BlockPlacementAckTracker tracker = wrapper.user().get(BlockPlacementAckTracker.class);
+        if (tracker != null) {
+            final Integer seq = tracker.consumeAck(position);
+            if (seq != null) {
+                PacketFactory.sendJavaBlockChangedAck(wrapper.user(), seq);
+            }
+            for (final int expiredSeq : tracker.flushExpired()) {
+                PacketFactory.sendJavaBlockChangedAck(wrapper.user(), expiredSeq);
+            }
         }
     };
 
