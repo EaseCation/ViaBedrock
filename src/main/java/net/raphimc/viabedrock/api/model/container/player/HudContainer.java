@@ -18,9 +18,13 @@
 package net.raphimc.viabedrock.api.model.container.player;
 
 import com.viaversion.viaversion.api.connection.UserConnection;
+import net.raphimc.viabedrock.api.model.container.Container;
+import net.raphimc.viabedrock.api.model.container.CraftingTableContainer;
+import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
+import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 
 public class HudContainer extends InventoryRedirectContainer {
 
@@ -31,7 +35,20 @@ public class HudContainer extends InventoryRedirectContainer {
     @Override
     public boolean setItem(final int slot, final BedrockItem item) {
         if (super.setItem(slot, item)) {
-            return slot == 0 || (slot >= 28 && slot <= 31);
+            if (slot == 0) return true; // cursor
+            if (slot >= 28 && slot <= 31) return true; // 2x2 crafting grid
+            if (slot >= 32 && slot <= 40) {
+                // 3x3 crafting grid: can't use SET_SLOT because javaContainerId() returns
+                // the player inventory (0), but these slots belong to the crafting table window (1).
+                // Send a full CONTAINER_SET_CONTENT for the crafting table instead.
+                final InventoryTracker tracker = this.user.get(InventoryTracker.class);
+                final Container current = tracker.getCurrentContainer();
+                if (current instanceof CraftingTableContainer) {
+                    PacketFactory.sendJavaContainerSetContent(this.user, current);
+                }
+                return false;
+            }
+            return false;
         } else {
             return false;
         }
@@ -40,7 +57,11 @@ public class HudContainer extends InventoryRedirectContainer {
     @Override
     public int javaSlot(final int slot) {
         if (slot >= 28 && slot <= 31) {
+            // 2x2 crafting input → Java player inventory slots 1-4
             return slot - 27;
+        } else if (slot >= 32 && slot <= 40) {
+            // 3x3 crafting input → Java crafting table slots 1-9
+            return slot - 31;
         } else {
             return super.javaSlot(slot);
         }

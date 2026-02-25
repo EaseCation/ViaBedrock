@@ -18,6 +18,7 @@
 package net.raphimc.viabedrock.experimental.inventory;
 
 import net.raphimc.viabedrock.api.model.container.Container;
+import net.raphimc.viabedrock.api.model.container.CraftingTableContainer;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
 import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
@@ -32,7 +33,7 @@ public class SlotMapper {
      */
     public static BedrockSlotRef resolvePlayerInventory(int javaSlot, InventoryTracker tracker) {
         if (javaSlot == 0) {
-            // Crafting output slot — not supported in Phase 1
+            // Crafting output slot — handled by CraftingSimulator
             return null;
         } else if (javaSlot >= 1 && javaSlot <= 4) {
             // Crafting input slots → HUD container slots 28-31
@@ -54,8 +55,33 @@ public class SlotMapper {
     }
 
     /**
+     * Resolves a Java slot in the Crafting Table window to its Bedrock equivalent.
+     * Java crafting window: slot 0=output, 1-9=3x3 grid, 10-36=main inv, 37-45=hotbar
+     * Returns null for output slot 0 (handled by CraftingSimulator).
+     */
+    public static BedrockSlotRef resolveCraftingTable(int javaSlot, InventoryTracker tracker) {
+        if (javaSlot == 0) {
+            // Output slot — handled by CraftingSimulator
+            return null;
+        } else if (javaSlot >= 1 && javaSlot <= 9) {
+            // 3x3 grid → HUD container slots 32-40
+            return new BedrockSlotRef(ContainerID.CONTAINER_ID_PLAYER_ONLY_UI.getValue(), 31 + javaSlot, tracker.getHudContainer());
+        } else if (javaSlot >= 10 && javaSlot <= 36) {
+            // Main inventory → Inventory container slots 9-35
+            int inventorySlot = 9 + (javaSlot - 10);
+            return new BedrockSlotRef(ContainerID.CONTAINER_ID_INVENTORY.getValue(), inventorySlot, tracker.getInventoryContainer());
+        } else if (javaSlot >= 37 && javaSlot <= 45) {
+            // Hotbar → Inventory container slots 0-8
+            int hotbarSlot = javaSlot - 37;
+            return new BedrockSlotRef(ContainerID.CONTAINER_ID_INVENTORY.getValue(), hotbarSlot, tracker.getInventoryContainer());
+        }
+        return null;
+    }
+
+    /**
      * Resolves a Java slot to its Bedrock equivalent based on the container context.
      * For containerId=0, delegates to resolvePlayerInventory.
+     * For CraftingTableContainer, delegates to resolveCraftingTable.
      * For other containers, maps based on container size.
      * Returns null for unsupported slots.
      */
@@ -64,11 +90,16 @@ public class SlotMapper {
             return resolvePlayerInventory(javaSlot, tracker);
         }
 
-        // Container window (e.g. chest)
+        // Container window
         final Container currentContainer = tracker.getCurrentContainer();
         if (currentContainer == null) {
             return null;
         }
+
+        if (currentContainer instanceof CraftingTableContainer) {
+            return resolveCraftingTable(javaSlot, tracker);
+        }
+
         final int containerSize = currentContainer.size();
 
         if (javaSlot >= 0 && javaSlot < containerSize) {

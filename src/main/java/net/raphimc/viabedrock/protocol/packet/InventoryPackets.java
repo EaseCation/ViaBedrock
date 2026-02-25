@@ -144,6 +144,9 @@ public class InventoryPackets {
                 case ANVIL -> {
                     container = new AnvilContainer(wrapper.user(), containerId, title, position);
                 }
+                case WORKBENCH -> {
+                    container = new CraftingTableContainer(wrapper.user(), containerId, title, position);
+                }
                 case NONE, CAULDRON, JUKEBOX, ARMOR, HAND, HUD, DECORATED_POT -> { // Bedrock client can't open these containers
                     wrapper.cancel();
                     return;
@@ -182,6 +185,16 @@ public class InventoryPackets {
                         wrapper.cancel();
                         return;
                     }
+
+                    // Clear crafting grid and output slots when closing a crafting table
+                    if (container instanceof CraftingTableContainer) {
+                        final Container hudContainer = inventoryTracker.getHudContainer();
+                        for (int slot = 32; slot <= 40; slot++) {
+                            hudContainer.setItemSilent(slot, BedrockItem.empty());
+                        }
+                        hudContainer.setItemSilent(50, BedrockItem.empty());
+                    }
+
                     inventoryTracker.setCurrentContainerClosed(serverInitiated);
                 });
             }

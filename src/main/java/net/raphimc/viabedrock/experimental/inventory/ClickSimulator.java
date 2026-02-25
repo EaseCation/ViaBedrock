@@ -18,6 +18,7 @@
 package net.raphimc.viabedrock.experimental.inventory;
 
 import net.raphimc.viabedrock.api.model.container.Container;
+import net.raphimc.viabedrock.api.model.container.CraftingTableContainer;
 import net.raphimc.viabedrock.experimental.inventory.SlotMapper.BedrockSlotRef;
 import net.raphimc.viabedrock.experimental.model.inventory.InventoryActionData;
 import net.raphimc.viabedrock.experimental.model.inventory.InventorySource;
@@ -48,6 +49,19 @@ public class ClickSimulator {
             final ClickType action,
             final InventoryTracker tracker,
             final ClientAuthInventoryModule.DragState dragState) {
+
+        // Intercept crafting output slot clicks
+        if (javaSlot == 0) {
+            final boolean is3x3 = javaContainerId != 0 && tracker.getCurrentContainer() instanceof CraftingTableContainer;
+            final boolean is2x2 = javaContainerId == 0;
+            if (is3x3 || is2x2) {
+                return switch (action) {
+                    case PICKUP -> CraftingSimulator.simulateCraftPickup(is3x3, tracker);
+                    case QUICK_MOVE -> CraftingSimulator.simulateCraftQuickMove(is3x3, tracker);
+                    default -> null;
+                };
+            }
+        }
 
         return switch (action) {
             case PICKUP -> simulatePickup(javaContainerId, javaSlot, button, tracker);
@@ -244,8 +258,24 @@ public class ClickSimulator {
 
     private static List<int[]> getQuickMoveTargets(int javaContainerId, int javaSlot, InventoryTracker tracker) {
         if (javaContainerId != 0) {
-            // Container window
             final Container currentContainer = tracker.getCurrentContainer();
+
+            if (currentContainer instanceof CraftingTableContainer) {
+                // Crafting table: slot 0=output, 1-9=grid, 10-36=main inv, 37-45=hotbar
+                if (javaSlot >= 1 && javaSlot <= 9) {
+                    // Grid → main inventory + hotbar
+                    return List.of(new int[]{10, 36}, new int[]{37, 45});
+                } else if (javaSlot >= 37) {
+                    // Hotbar → main inventory
+                    return List.of(new int[]{10, 36});
+                } else if (javaSlot >= 10) {
+                    // Main inventory → hotbar
+                    return List.of(new int[]{37, 45});
+                }
+                return Collections.emptyList();
+            }
+
+            // Generic container window
             final int containerSize = currentContainer != null ? currentContainer.size() : 27;
 
             if (javaSlot < containerSize) {

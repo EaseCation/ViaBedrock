@@ -85,6 +85,9 @@
   "crafter": [
     "minecraft:crafter"
   ],
+  "crafting_table": [
+    "minecraft:crafting_table"
+  ],
   "creaking_heart": [
     "minecraft:creaking_heart"
   ],

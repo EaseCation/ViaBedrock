@@ -24,6 +24,7 @@ import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.protocols.v1_21_5to1_21_6.packet.ServerboundPackets1_21_6;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.model.container.Container;
+import net.raphimc.viabedrock.api.model.container.CraftingTableContainer;
 import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.experimental.FeatureModule;
 import net.raphimc.viabedrock.experimental.model.inventory.BedrockInventoryTransaction;
@@ -38,6 +39,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventorySourceType;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.ClickType;
+import net.raphimc.viabedrock.protocol.model.BedrockItem;
 import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 
 import java.util.ArrayList;
@@ -45,6 +47,8 @@ import java.util.List;
 import java.util.logging.Logger;
 
 public class ClientAuthInventoryModule implements FeatureModule {
+
+    private static final int TODO_USE_INGREDIENT = -5;
 
     private static Logger logger() {
         return ViaBedrock.getPlatform().getLogger();
@@ -87,7 +91,7 @@ public class ClientAuthInventoryModule implements FeatureModule {
                 }
             }
 
-            logger().info("[CLICK] containerId=" + containerId + " slot=" + slot + " button=" + button + " action=" + action
+            logger().fine("[CLICK] containerId=" + containerId + " slot=" + slot + " button=" + button + " action=" + action
                     + " cursor=" + SlotMapper.getCursorItem(inventoryTracker));
 
             final DragState dragState = wrapper.user().get(DragState.class);
@@ -95,7 +99,7 @@ public class ClientAuthInventoryModule implements FeatureModule {
                     containerId, slot, button, action, inventoryTracker, dragState);
 
             if (actions == null) {
-                logger().info("[CLICK] -> unsupported, rollback");
+                logger().fine("[CLICK] -> unsupported, rollback");
                 // Unsupported operation — rollback container contents
                 if (containerId != ContainerID.CONTAINER_ID_INVENTORY.getValue()) {
                     PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getInventoryContainer());
@@ -104,24 +108,24 @@ public class ClientAuthInventoryModule implements FeatureModule {
                 return;
             }
             if (actions.isEmpty()) {
-                logger().info("[CLICK] -> no-op (empty actions)");
+                logger().fine("[CLICK] -> no-op (empty actions)");
                 return; // No-op, no packet needed
             }
 
             // Log actions
             for (InventoryActionData a : actions) {
-                logger().info("[CLICK]   action: src=" + a.source().type() + " cid=" + a.source().containerId()
+                logger().fine("[CLICK]   action: src=" + a.source().type() + " cid=" + a.source().containerId()
                         + " slot=" + a.slot() + " from=" + a.fromItem() + " to=" + a.toItem());
             }
+
+            // Check if this is a crafting operation (has SOURCE_TODO actions)
+            final boolean isCraftingAction = hasCraftingActions(actions);
 
             // Apply mirror updates (optimistic) — client-authoritative: assume server will accept
             applyMirrorUpdates(actions, inventoryTracker);
 
-            // For QUICK_MOVE, the Java client predicts the target slot locally based on its own state.
-            // Since we cancel the original handler (which would send SET_CONTAINER_CONTENT to correct the
-            // prediction), we must resync the client to match our mirror state. Otherwise the client may
-            // display items in the wrong slot, causing subsequent operations to fail.
-            if (action == ClickType.QUICK_MOVE) {
+            // Resync client for operations where Java client predicts differently
+            if (action == ClickType.QUICK_MOVE || isCraftingAction) {
                 if (containerId != ContainerID.CONTAINER_ID_INVENTORY.getValue()) {
                     PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getInventoryContainer());
                 }
@@ -145,6 +149,15 @@ public class ClientAuthInventoryModule implements FeatureModule {
         });
     }
 
+    private static boolean hasCraftingActions(final List<InventoryActionData> actions) {
+        for (final InventoryActionData action : actions) {
+            if (action.source().type() == InventorySourceType.NonImplementedFeatureTODO) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Applies the expected inventory state changes to the container mirror.
      * In client-authoritative mode, the client applies changes optimistically.
@@ -152,12 +165,51 @@ public class ClientAuthInventoryModule implements FeatureModule {
      */
     private static void applyMirrorUpdates(final List<InventoryActionData> actions, final InventoryTracker tracker) {
         for (final InventoryActionData action : actions) {
-            if (action.source().type() != InventorySourceType.ContainerInventory) {
-                continue; // Skip world interaction (drops) and creative inventory actions
+            if (action.source().type() == InventorySourceType.ContainerInventory) {
+                final Container container = resolveContainerById(action.source().containerId(), tracker);
+                if (container != null) {
+                    container.setItemSilent(action.slot(), action.toItem());
+                }
+            } else if (action.source().type() == InventorySourceType.NonImplementedFeatureTODO) {
+                // Handle SOURCE_TODO crafting actions
+                final int todoType = action.source().containerId();
+                if (todoType == TODO_USE_INGREDIENT) {
+                    // USE_INGREDIENT: toItem is the ingredient consumed; find matching grid slots and decrement
+                    applyIngredientConsumption(action.toItem(), tracker);
+                }
+                // CRAFTING_RESULT(-4): no mirror update needed (the result is handled by cursor action)
             }
-            final Container container = resolveContainerById(action.source().containerId(), tracker);
-            if (container != null) {
-                container.setItemSilent(action.slot(), action.toItem());
+            // Skip WorldInteraction (drops) and CreativeInventory actions
+        }
+    }
+
+    /**
+     * Decrements grid slot items to simulate ingredient consumption.
+     * Each consumed ingredient reduces matching grid items by 1 count.
+     */
+    private static void applyIngredientConsumption(final BedrockItem ingredient, final InventoryTracker tracker) {
+        final Container hudContainer = tracker.getHudContainer();
+        int toConsume = ingredient.amount();
+
+        // Choose grid range based on whether a crafting table is open
+        final boolean is3x3 = tracker.getCurrentContainer() instanceof CraftingTableContainer;
+        final int[][] gridRanges = is3x3 ? new int[][]{{32, 40}} : new int[][]{{28, 31}};
+        for (int[] range : gridRanges) {
+            for (int slot = range[0]; slot <= range[1] && toConsume > 0; slot++) {
+                final BedrockItem gridItem = hudContainer.getItem(slot);
+                if (gridItem.isEmpty()) continue;
+                if (gridItem.identifier() != ingredient.identifier()) continue;
+                if (gridItem.data() != ingredient.data()) continue;
+
+                if (gridItem.amount() <= toConsume) {
+                    toConsume -= gridItem.amount();
+                    hudContainer.setItemSilent(slot, BedrockItem.empty());
+                } else {
+                    BedrockItem newItem = gridItem.copy();
+                    newItem.setAmount(gridItem.amount() - toConsume);
+                    hudContainer.setItemSilent(slot, newItem);
+                    toConsume = 0;
+                }
             }
         }
     }

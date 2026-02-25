@@ -40,6 +40,7 @@ import net.raphimc.viabedrock.experimental.model.map.MapTrackedObject;
 import net.raphimc.viabedrock.experimental.block.CustomBlockMappingModule;
 import net.raphimc.viabedrock.experimental.camera.CameraModule;
 import net.raphimc.viabedrock.experimental.eccamera.ECCameraModule;
+import net.raphimc.viabedrock.experimental.inventory.CraftingDataModule;
 import net.raphimc.viabedrock.experimental.inventory.ClientAuthInventoryModule;
 import net.raphimc.viabedrock.experimental.pyrpc.PyRpcDispatcherModule;
 import net.raphimc.viabedrock.experimental.dimension.AlternateDimensionModule;
@@ -208,6 +209,7 @@ public class ExperimentalFeatures {
         registerModule(new ResourcePackModule());
         registerModule(new NpcDialogueModule());
         registerModule(new AsyncLightModule());
+        registerModule(new CraftingDataModule());
         registerModule(new ClientAuthInventoryModule());
     }
 

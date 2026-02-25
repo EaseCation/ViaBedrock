@@ -23,6 +23,7 @@ public class CustomBlockTags {
     public static final String CONDUIT = "conduit";
     public static final String COPPER_GOLEM_STATUE = "copper_golem_statue";
     public static final String CRAFTER = "crafter";
+    public static final String CRAFTING_TABLE = "crafting_table";
     public static final String CREAKING_HEART = "creaking_heart";
     public static final String DAYLIGHT_DETECTOR = "daylight_detector";
     public static final String DECORATED_POT = "decorated_pot";
