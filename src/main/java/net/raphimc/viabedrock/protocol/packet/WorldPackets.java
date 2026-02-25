@@ -59,6 +59,7 @@ import net.raphimc.viabedrock.protocol.model.BlockChangeEntry;
 import net.raphimc.viabedrock.protocol.model.Position3f;
 import net.raphimc.viabedrock.protocol.rewriter.BlockEntityRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
+import net.raphimc.viabedrock.protocol.rewriter.StairShapeResolver;
 import net.raphimc.viabedrock.protocol.rewriter.blockentity.SignBlockEntityRewriter;
 import net.raphimc.viabedrock.protocol.storage.*;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
@@ -90,7 +91,9 @@ public class WorldPackets {
             return;
         }
 
-        wrapper.write(Types.VAR_INT, remappedBlock.keyInt()); // block state
+        // Fix stair shape based on neighboring blocks
+        final int finalBlockState = StairShapeResolver.fixSingleStairShape(chunkTracker, position, remappedBlock.keyInt());
+        wrapper.write(Types.VAR_INT, finalBlockState); // block state
 
         // Send the BLOCK_UPDATE explicitly to ensure it arrives before any deferred BlockChangedAck
         wrapper.send(BedrockProtocol.class);
@@ -99,6 +102,9 @@ public class WorldPackets {
         if (remappedBlock.value() != null) {
             PacketFactory.sendJavaBlockEntityData(wrapper.user(), position, remappedBlock.value());
         }
+
+        // Update neighboring stairs that may need shape changes due to this block update
+        StairShapeResolver.updateNeighborStairShapes(wrapper.user(), chunkTracker, position);
 
         // Send deferred BlockChangedAck for block placement (experimental feature).
         // The ack must arrive AFTER the BLOCK_UPDATE so the Java client's prediction is cleared
@@ -434,6 +440,7 @@ public class WorldPackets {
 
             final Map<BlockPosition, List<BlockChangeRecord>> blockChanges = new HashMap<>();
             final Map<BlockPosition, BlockEntity> blockEntities = new HashMap<>();
+            final List<BlockPosition> changedPositions = new ArrayList<>();
             for (int layer = 0; layer < blockUpdatesArray.length; layer++) {
                 for (BlockChangeEntry entry : blockUpdatesArray[layer]) {
                     final IntObjectPair<BlockEntity> remappedBlock = chunkTracker.handleBlockChange(entry.position(), layer, entry.blockState());
@@ -444,9 +451,13 @@ public class WorldPackets {
                         blockEntities.put(entry.position(), remappedBlock.value());
                     }
 
+                    // Fix stair shape
+                    final int finalBlockState = StairShapeResolver.fixSingleStairShape(chunkTracker, entry.position(), remappedBlock.keyInt());
+                    changedPositions.add(entry.position());
+
                     final BlockPosition chunkPosition = new BlockPosition(entry.position().x() >> 4, entry.position().y() >> 4, entry.position().z() >> 4);
                     final BlockPosition relative = new BlockPosition(entry.position().x() & 0xF, entry.position().y() & 0xF, entry.position().z() & 0xF);
-                    blockChanges.computeIfAbsent(chunkPosition, k -> new ArrayList<>()).add(new BlockChangeRecord1_16_2(relative.x(), relative.y(), relative.z(), remappedBlock.keyInt()));
+                    blockChanges.computeIfAbsent(chunkPosition, k -> new ArrayList<>()).add(new BlockChangeRecord1_16_2(relative.x(), relative.y(), relative.z(), finalBlockState));
                 }
             }
 
@@ -462,6 +473,10 @@ public class WorldPackets {
             }
             for (Map.Entry<BlockPosition, BlockEntity> entry : blockEntities.entrySet()) {
                 PacketFactory.sendJavaBlockEntityData(wrapper.user(), entry.getKey(), entry.getValue());
+            }
+            // Update neighboring stairs for all changed positions
+            for (BlockPosition changedPos : changedPositions) {
+                StairShapeResolver.updateNeighborStairShapes(wrapper.user(), chunkTracker, changedPos);
             }
         });
         protocol.registerClientbound(ClientboundBedrockPackets.BLOCK_ENTITY_DATA, ClientboundPackets1_21_11.BLOCK_ENTITY_DATA, new PacketHandlers() {
