@@ -57,6 +57,7 @@ import net.raphimc.viabedrock.protocol.data.enums.java.Relative;
 import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomBlockTags;
 import net.raphimc.viabedrock.protocol.model.BlockChangeEntry;
 import net.raphimc.viabedrock.protocol.model.Position3f;
+import net.raphimc.viabedrock.protocol.rewriter.BlockConnectionResolver;
 import net.raphimc.viabedrock.protocol.rewriter.BlockEntityRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.StairShapeResolver;
@@ -92,7 +93,9 @@ public class WorldPackets {
         }
 
         // Fix stair shape based on neighboring blocks
-        final int finalBlockState = StairShapeResolver.fixSingleStairShape(chunkTracker, position, remappedBlock.keyInt());
+        int finalBlockState = StairShapeResolver.fixSingleStairShape(chunkTracker, position, remappedBlock.keyInt());
+        // Fix block connections (fences, glass panes, iron bars)
+        finalBlockState = BlockConnectionResolver.fixSingleBlockConnection(chunkTracker, position, finalBlockState);
         wrapper.write(Types.VAR_INT, finalBlockState); // block state
 
         // Send the BLOCK_UPDATE explicitly to ensure it arrives before any deferred BlockChangedAck
@@ -105,6 +108,8 @@ public class WorldPackets {
 
         // Update neighboring stairs that may need shape changes due to this block update
         StairShapeResolver.updateNeighborStairShapes(wrapper.user(), chunkTracker, position);
+        // Update neighboring block connections
+        BlockConnectionResolver.updateNeighborConnections(wrapper.user(), chunkTracker, position);
 
         // Send deferred BlockChangedAck for block placement (experimental feature).
         // The ack must arrive AFTER the BLOCK_UPDATE so the Java client's prediction is cleared
@@ -452,7 +457,9 @@ public class WorldPackets {
                     }
 
                     // Fix stair shape
-                    final int finalBlockState = StairShapeResolver.fixSingleStairShape(chunkTracker, entry.position(), remappedBlock.keyInt());
+                    int finalBlockState = StairShapeResolver.fixSingleStairShape(chunkTracker, entry.position(), remappedBlock.keyInt());
+                    // Fix block connections
+                    finalBlockState = BlockConnectionResolver.fixSingleBlockConnection(chunkTracker, entry.position(), finalBlockState);
                     changedPositions.add(entry.position());
 
                     final BlockPosition chunkPosition = new BlockPosition(entry.position().x() >> 4, entry.position().y() >> 4, entry.position().z() >> 4);
@@ -477,6 +484,7 @@ public class WorldPackets {
             // Update neighboring stairs for all changed positions
             for (BlockPosition changedPos : changedPositions) {
                 StairShapeResolver.updateNeighborStairShapes(wrapper.user(), chunkTracker, changedPos);
+                BlockConnectionResolver.updateNeighborConnections(wrapper.user(), chunkTracker, changedPos);
             }
         });
         protocol.registerClientbound(ClientboundBedrockPackets.BLOCK_ENTITY_DATA, ClientboundPackets1_21_11.BLOCK_ENTITY_DATA, new PacketHandlers() {

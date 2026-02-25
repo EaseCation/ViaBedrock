@@ -219,6 +219,7 @@ public class BedrockMappingData extends MappingDataBase {
             }
             this.vanillaBlockStateCount = this.javaBlockStates.size();
             net.raphimc.viabedrock.protocol.rewriter.StairShapeResolver.init(this.javaBlockStates);
+            net.raphimc.viabedrock.protocol.rewriter.BlockConnectionResolver.init(this.javaBlockStates);
             final ListTag<CompoundTag> bedrockBlockStatesTag = this.readNBT("bedrock/block_palette.nbt").getListTag("blocks", CompoundTag.class);
             this.bedrockBlockStates = new LinkedHashSet<>(bedrockBlockStatesTag.size());
             bedrockBlockStatesByIdentifier = HashMultimap.create(bedrockBlockStatesTag.size(), 32);
