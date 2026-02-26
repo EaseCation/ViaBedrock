@@ -23,6 +23,7 @@ import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.minecraft.BlockPosition;
 import com.viaversion.viaversion.api.minecraft.Holder;
 import com.viaversion.viaversion.api.minecraft.Particle;
+import com.viaversion.viaversion.api.minecraft.SoundEvent;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
@@ -52,13 +53,16 @@ import net.raphimc.viabedrock.protocol.model.BedrockItem;
 import net.raphimc.viabedrock.protocol.model.Position3f;
 import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
+import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomSoundResourceRewriter;
 import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
 import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
+import net.raphimc.viabedrock.protocol.storage.ResourcePacksStorage;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
 
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.logging.Level;
 
@@ -77,8 +81,22 @@ public class WorldEffectPackets {
 
             final BedrockMappingData.JavaSound javaSound = BedrockProtocol.MAPPINGS.getBedrockToJavaSounds().get(name);
             if (javaSound == null) {
-                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown bedrock sound: " + name);
-                wrapper.cancel();
+                // Try custom sound from resource pack
+                final Holder<SoundEvent> customHolder = tryResolveCustomSound(wrapper.user(), name);
+                if (customHolder == null) {
+                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown bedrock sound: " + name);
+                    wrapper.cancel();
+                    return;
+                }
+                final SoundSource category = getCustomSoundCategory(wrapper.user(), name);
+                wrapper.write(Types.SOUND_EVENT, customHolder); // sound event
+                wrapper.write(Types.VAR_INT, category.ordinal()); // category
+                wrapper.write(Types.INT, position.x()); // x
+                wrapper.write(Types.INT, position.y()); // y
+                wrapper.write(Types.INT, position.z()); // z
+                wrapper.write(Types.FLOAT, volume); // volume
+                wrapper.write(Types.FLOAT, pitch); // pitch
+                wrapper.write(Types.LONG, ThreadLocalRandom.current().nextLong()); // seed
                 return;
             }
 
@@ -101,8 +119,15 @@ public class WorldEffectPackets {
             } else {
                 final BedrockMappingData.JavaSound javaSound = BedrockProtocol.MAPPINGS.getBedrockToJavaSounds().get(name);
                 if (javaSound == null) {
-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown bedrock sound: " + name);
-                    wrapper.cancel();
+                    // Try custom sound from resource pack
+                    final Holder<SoundEvent> customHolder = tryResolveCustomSound(wrapper.user(), name);
+                    if (customHolder == null) {
+                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown bedrock sound: " + name);
+                        wrapper.cancel();
+                        return;
+                    }
+                    wrapper.write(Types.BYTE, (byte) 2); // flags
+                    wrapper.write(Types.STRING, "bedrock:" + name); // sound identifier
                     return;
                 }
 
@@ -203,8 +228,22 @@ public class WorldEffectPackets {
             }
             final BedrockMappingData.JavaSound javaSound = BedrockProtocol.MAPPINGS.getBedrockToJavaSounds().get(configuredSound.sound());
             if (javaSound == null) {
-                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown bedrock sound: " + configuredSound.sound());
-                wrapper.cancel();
+                // Try custom sound from resource pack
+                final Holder<SoundEvent> customHolder = tryResolveCustomSound(wrapper.user(), configuredSound.sound());
+                if (customHolder == null) {
+                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown bedrock sound: " + configuredSound.sound());
+                    wrapper.cancel();
+                    return;
+                }
+                final SoundSource category = getCustomSoundCategory(wrapper.user(), configuredSound.sound());
+                wrapper.write(Types.SOUND_EVENT, customHolder); // sound event
+                wrapper.write(Types.VAR_INT, category.ordinal()); // category
+                wrapper.write(Types.INT, (int) (position.x() * 8F)); // x
+                wrapper.write(Types.INT, (int) (position.y() * 8F)); // y
+                wrapper.write(Types.INT, (int) (position.z() * 8F)); // z
+                wrapper.write(Types.FLOAT, globalSound ? Integer.MAX_VALUE : MathUtil.randomFloatInclusive(configuredSound.minVolume(), configuredSound.maxVolume())); // volume
+                wrapper.write(Types.FLOAT, MathUtil.randomFloatInclusive(configuredSound.minPitch(), configuredSound.maxPitch())); // pitch
+                wrapper.write(Types.LONG, ThreadLocalRandom.current().nextLong()); // seed
                 return;
             }
 
@@ -680,6 +719,37 @@ public class WorldEffectPackets {
             configuredSound = soundEvents.get(null); // generic sound
         }
         return configuredSound;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Holder<SoundEvent> tryResolveCustomSound(final UserConnection user, final String bedrockSoundName) {
+        final ResourcePacksStorage resourcePacksStorage = user.get(ResourcePacksStorage.class);
+        if (resourcePacksStorage == null) return null;
+        final Set<String> customSounds = (Set<String>) resourcePacksStorage.getConverterData().get(CustomSoundResourceRewriter.CUSTOM_SOUNDS_KEY);
+        if (customSounds == null || !customSounds.contains(bedrockSoundName)) return null;
+        return Holder.of(new SoundEvent("bedrock:" + bedrockSoundName, null));
+    }
+
+    private static SoundSource getCustomSoundCategory(final UserConnection user, final String bedrockSoundName) {
+        final ResourcePacksStorage resourcePacksStorage = user.get(ResourcePacksStorage.class);
+        if (resourcePacksStorage != null && resourcePacksStorage.getSounds() != null) {
+            final SoundDefinitions.SoundDefinition def = resourcePacksStorage.getSounds().soundDefinitions().get(bedrockSoundName);
+            if (def != null && def.category() != null) {
+                return switch (def.category()) {
+                    case "ambient" -> SoundSource.AMBIENT;
+                    case "block" -> SoundSource.BLOCKS;
+                    case "hostile" -> SoundSource.HOSTILE;
+                    case "music" -> SoundSource.MUSIC;
+                    case "neutral", "bottle" -> SoundSource.NEUTRAL;
+                    case "player" -> SoundSource.PLAYERS;
+                    case "record" -> SoundSource.RECORDS;
+                    case "ui" -> SoundSource.UI;
+                    case "weather" -> SoundSource.WEATHER;
+                    default -> SoundSource.MASTER;
+                };
+            }
+        }
+        return SoundSource.MASTER;
     }
 
 }

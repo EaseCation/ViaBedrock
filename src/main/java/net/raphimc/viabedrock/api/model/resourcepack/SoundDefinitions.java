@@ -25,9 +25,7 @@ import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.util.JsonUtil;
 import net.raphimc.viabedrock.protocol.storage.ResourcePacksStorage;
 
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 import java.util.logging.Level;
 
 // https://wiki.bedrock.dev/concepts/sounds.html
@@ -46,12 +44,24 @@ public class SoundDefinitions {
                     soundDefinitions = soundDefinitions.has("sound_definitions") ? soundDefinitions.getAsJsonObject("sound_definitions") : soundDefinitions;
                     for (Map.Entry<String, JsonElement> entry : soundDefinitions.entrySet()) {
                         if (!entry.getValue().isJsonObject()) {
-                            this.soundDefinitions.put(entry.getKey(), new SoundDefinition(entry.getKey(), null));
+                            final List<SoundFile> soundFiles;
+                            if (entry.getValue().isJsonArray()) {
+                                soundFiles = SoundFile.fromSoundsArray(entry.getValue().getAsJsonArray());
+                            } else {
+                                soundFiles = Collections.emptyList();
+                            }
+                            this.soundDefinitions.put(entry.getKey(), new SoundDefinition(entry.getKey(), null, soundFiles));
                             continue;
                         }
                         final JsonObject entryData = entry.getValue().getAsJsonObject();
                         final String category = entryData.has("category") ? entryData.get("category").getAsString() : null;
-                        final SoundDefinition soundDefinition = new SoundDefinition(entry.getKey(), category);
+                        final List<SoundFile> soundFiles;
+                        if (entryData.has("sounds") && entryData.get("sounds").isJsonArray()) {
+                            soundFiles = SoundFile.fromSoundsArray(entryData.getAsJsonArray("sounds"));
+                        } else {
+                            soundFiles = Collections.emptyList();
+                        }
+                        final SoundDefinition soundDefinition = new SoundDefinition(entry.getKey(), category, soundFiles);
                         this.soundDefinitions.put(entry.getKey(), soundDefinition);
                     }
                 } catch (Throwable e) {
@@ -180,7 +190,27 @@ public class SoundDefinitions {
         return Collections.unmodifiableMap(this.blockSounds);
     }
 
-    public record SoundDefinition(String name, String category) {
+    public record SoundDefinition(String name, String category, List<SoundFile> soundFiles) {
+    }
+
+    public record SoundFile(String path, float volume, float pitch) {
+
+        public static List<SoundFile> fromSoundsArray(final JsonArray sounds) {
+            final List<SoundFile> files = new ArrayList<>();
+            for (JsonElement element : sounds) {
+                if (element.isJsonPrimitive()) {
+                    files.add(new SoundFile(element.getAsString(), 1F, 1F));
+                } else if (element.isJsonObject()) {
+                    final JsonObject obj = element.getAsJsonObject();
+                    final String name = obj.has("name") ? obj.get("name").getAsString() : null;
+                    if (name == null) continue;
+                    final float volume = obj.has("volume") ? obj.get("volume").getAsFloat() : 1F;
+                    final float pitch = obj.has("pitch") ? obj.get("pitch").getAsFloat() : 1F;
+                    files.add(new SoundFile(name, volume, pitch));
+                }
+            }
+            return files;
+        }
     }
 
     public record ConfiguredSound(String sound, float minVolume, float maxVolume, float minPitch, float maxPitch) {
