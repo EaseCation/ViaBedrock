@@ -190,13 +190,28 @@ public class ViaBedrockUtilityInterface {
     }
 
     private static void writeString(final PacketWrapper wrapper, final String s) {
-        wrapper.write(Types.INT, s.length());
-        wrapper.write(Types.REMAINING_BYTES, s.getBytes(StandardCharsets.UTF_8));
+        final byte[] bytes = s.getBytes(StandardCharsets.UTF_8);
+        wrapper.write(Types.INT, bytes.length);
+        wrapper.write(Types.REMAINING_BYTES, bytes);
     }
 
     private enum PayloadType {
         CONFIRM, MODEL_REQUEST, ANIMATE,
         CAPE, SKIN_INFORMATION, SKIN_DATA,
-        SKIN_ANIMATION_INFO, SKIN_ANIMATION_DATA
+        SKIN_ANIMATION_INFO, SKIN_ANIMATION_DATA,
+        SPAWN_PARTICLE
+    }
+
+    public static void spawnParticle(final UserConnection user, final String identifier, final float x, final float y, final float z) {
+        java.util.logging.Logger.getLogger("ViaBedrock").log(java.util.logging.Level.INFO, "[Particle:L2] Sending SPAWN_PARTICLE payload: " + identifier + " at (" + x + ", " + y + ", " + z + ")");
+        final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets1_21_11.CUSTOM_PAYLOAD, user);
+        pluginMessage.write(Types.STRING, CHANNEL);
+        pluginMessage.write(Types.INT, PayloadType.SPAWN_PARTICLE.ordinal());
+        writeString(pluginMessage, identifier);
+        pluginMessage.write(Types.FLOAT, x);
+        pluginMessage.write(Types.FLOAT, y);
+        pluginMessage.write(Types.FLOAT, z);
+        pluginMessage.write(Types.BOOLEAN, false); // no molang vars
+        pluginMessage.scheduleSend(BedrockProtocol.class);
     }
 }
