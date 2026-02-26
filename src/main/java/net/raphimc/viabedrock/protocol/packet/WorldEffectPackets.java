@@ -144,11 +144,14 @@ public class WorldEffectPackets {
             wrapper.read(BedrockTypes.VAR_LONG); // entity unique id
             final Position3f position = wrapper.read(BedrockTypes.POSITION_3F); // position
             final String effectIdentifier = wrapper.read(BedrockTypes.STRING); // effect name
+            final String molangVarsJson;
             if (wrapper.read(Types.BOOLEAN)) { // has molang variables
-                wrapper.read(BedrockTypes.STRING); // molang variables json
+                molangVarsJson = wrapper.read(BedrockTypes.STRING); // molang variables json
+            } else {
+                molangVarsJson = null;
             }
 
-            ViaBedrock.getPlatform().getLogger().log(Level.INFO, "[Particle:L1] SpawnParticleEffect received: " + effectIdentifier + " at (" + position.x() + ", " + position.y() + ", " + position.z() + ")");
+            ViaBedrock.getPlatform().getLogger().log(Level.INFO, "[Particle:L1] SpawnParticleEffect received: " + effectIdentifier + " at (" + position.x() + ", " + position.y() + ", " + position.z() + ") molang=" + (molangVarsJson != null));
 
             final BedrockMappingData.JavaParticle javaParticle = BedrockProtocol.MAPPINGS.getBedrockToJavaParticles().get(effectIdentifier);
             if (javaParticle == null) {
@@ -156,7 +159,7 @@ public class WorldEffectPackets {
                 final ChannelStorage channelStorage = wrapper.user().get(ChannelStorage.class);
                 if (channelStorage != null && channelStorage.hasChannel(ViaBedrockUtilityInterface.CONFIRM_CHANNEL)) {
                     ViaBedrock.getPlatform().getLogger().log(Level.INFO, "[Particle:L1] No Java mapping, forwarding to VBU: " + effectIdentifier);
-                    ViaBedrockUtilityInterface.spawnParticle(wrapper.user(), effectIdentifier, position.x(), position.y(), position.z());
+                    ViaBedrockUtilityInterface.spawnParticle(wrapper.user(), effectIdentifier, position.x(), position.y(), position.z(), molangVarsJson);
                 } else {
                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "[Particle:L1] No Java mapping AND VBU channel not registered: " + effectIdentifier);
                 }

@@ -202,8 +202,8 @@ public class ViaBedrockUtilityInterface {
         SPAWN_PARTICLE
     }
 
-    public static void spawnParticle(final UserConnection user, final String identifier, final float x, final float y, final float z) {
-        java.util.logging.Logger.getLogger("ViaBedrock").log(java.util.logging.Level.INFO, "[Particle:L2] Sending SPAWN_PARTICLE payload: " + identifier + " at (" + x + ", " + y + ", " + z + ")");
+    public static void spawnParticle(final UserConnection user, final String identifier, final float x, final float y, final float z, final String molangVarsJson) {
+        java.util.logging.Logger.getLogger("ViaBedrock").log(java.util.logging.Level.INFO, "[Particle:L2] Sending SPAWN_PARTICLE payload: " + identifier + " at (" + x + ", " + y + ", " + z + ") molang=" + (molangVarsJson != null));
         final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets1_21_11.CUSTOM_PAYLOAD, user);
         pluginMessage.write(Types.STRING, CHANNEL);
         pluginMessage.write(Types.INT, PayloadType.SPAWN_PARTICLE.ordinal());
@@ -211,7 +211,12 @@ public class ViaBedrockUtilityInterface {
         pluginMessage.write(Types.FLOAT, x);
         pluginMessage.write(Types.FLOAT, y);
         pluginMessage.write(Types.FLOAT, z);
-        pluginMessage.write(Types.BOOLEAN, false); // no molang vars
+        if (molangVarsJson != null && !molangVarsJson.isEmpty()) {
+            pluginMessage.write(Types.BOOLEAN, true);
+            writeString(pluginMessage, molangVarsJson);
+        } else {
+            pluginMessage.write(Types.BOOLEAN, false);
+        }
         pluginMessage.scheduleSend(BedrockProtocol.class);
     }
 }
