@@ -45,6 +45,10 @@ public class SoundDefinitions {
                     JsonObject soundDefinitions = pack.content().getJson("sounds/sound_definitions.json");
                     soundDefinitions = soundDefinitions.has("sound_definitions") ? soundDefinitions.getAsJsonObject("sound_definitions") : soundDefinitions;
                     for (Map.Entry<String, JsonElement> entry : soundDefinitions.entrySet()) {
+                        if (!entry.getValue().isJsonObject()) {
+                            this.soundDefinitions.put(entry.getKey(), new SoundDefinition(entry.getKey(), null));
+                            continue;
+                        }
                         final JsonObject entryData = entry.getValue().getAsJsonObject();
                         final String category = entryData.has("category") ? entryData.get("category").getAsString() : null;
                         final SoundDefinition soundDefinition = new SoundDefinition(entry.getKey(), category);
