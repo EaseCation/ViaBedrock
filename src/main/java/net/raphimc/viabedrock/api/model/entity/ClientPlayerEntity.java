@@ -78,6 +78,7 @@ public class ClientPlayerEntity extends PlayerEntity {
     private GameMode javaGameMode;
     private boolean cancelNextSwingPacket;
     private BlockBreakingInfo blockBreakingInfo;
+    private boolean usingItem;
 
     public ClientPlayerEntity(final UserConnection user, final long runtimeId, final UUID javaUuid, final PlayerAbilities abilities) {
         super(user, runtimeId, 0, javaUuid, abilities);
@@ -420,6 +421,14 @@ public class ClientPlayerEntity extends PlayerEntity {
 
     public void setBlockBreakingInfo(final BlockBreakingInfo blockBreakingInfo) {
         this.blockBreakingInfo = blockBreakingInfo;
+    }
+
+    public boolean isUsingItem() {
+        return this.usingItem;
+    }
+
+    public void setUsingItem(final boolean usingItem) {
+        this.usingItem = usingItem;
     }
 
     @Override

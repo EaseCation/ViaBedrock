@@ -240,6 +240,8 @@ public class ExperimentalFeatures {
 
             if (action == PlayerActionAction.RELEASE_USE_ITEM) {
                 final InventoryContainer inventoryContainer = inventoryTracker.getInventoryContainer();
+                final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
+                entityTracker.getClientPlayer().setUsingItem(false);
 
                 wrapper.clearPacket();
                 wrapper.setPacketType(ServerboundBedrockPackets.INVENTORY_TRANSACTION);
@@ -359,6 +361,11 @@ public class ExperimentalFeatures {
                 return;
             }
 
+            // Mark as using item and send StartUsingItem flag in the current tick's PlayerAuthInput
+            final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
+            clientPlayer.setUsingItem(true);
+            clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StartUsingItem);
+
             BedrockInventoryTransaction inventoryTransaction = new BedrockInventoryTransaction(
                     0, // legacy request id
                     null,
@@ -378,6 +385,12 @@ public class ExperimentalFeatures {
                     )
             );
             wrapper.write(inventoryTransactionRewriter.getInventoryTransactionType(), inventoryTransaction);
+        });
+
+        // Handle COMPLETED_USING_ITEM from server (sent when item use completes, e.g. eating)
+        protocol.registerClientbound(ClientboundBedrockPackets.COMPLETED_USING_ITEM, null, wrapper -> {
+            wrapper.cancel();
+            wrapper.user().get(EntityTracker.class).getClientPlayer().setUsingItem(false);
         });
 
         protocol.registerServerbound(ServerboundPackets1_21_6.USE_ITEM_ON, null, wrapper -> {
