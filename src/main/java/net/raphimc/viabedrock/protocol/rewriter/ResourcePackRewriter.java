@@ -86,8 +86,11 @@ public class ResourcePackRewriter {
     private static JsonObject createPackManifest() {
         final JsonObject pack = new JsonObject();
         pack.addProperty("description", "ViaBedrock Resource Pack");
-        pack.addProperty("min_format", ProtocolConstants.JAVA_PACK_VERSION);
-        pack.addProperty("max_format", ProtocolConstants.JAVA_PACK_VERSION);
+        pack.addProperty("pack_format", ProtocolConstants.JAVA_PACK_VERSION);
+        final JsonObject supportedFormats = new JsonObject();
+        supportedFormats.addProperty("min_inclusive", 64);
+        supportedFormats.addProperty("max_inclusive", ProtocolConstants.JAVA_PACK_VERSION);
+        pack.add("supported_formats", supportedFormats);
         final JsonObject root = new JsonObject();
         root.add("pack", pack);
         return root;

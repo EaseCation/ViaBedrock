@@ -21,6 +21,7 @@ import com.viaversion.viaversion.api.Via;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.protocol.packet.State;
 import com.viaversion.viaversion.api.protocol.remapper.PacketHandler;
+import com.viaversion.viaversion.api.protocol.version.ProtocolVersion;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.protocols.v1_21_7to1_21_9.packet.ClientboundConfigurationPackets1_21_9;
 import com.viaversion.viaversion.protocols.v1_21_7to1_21_9.packet.ServerboundConfigurationPackets1_21_9;
@@ -75,7 +76,7 @@ public class ResourcePackPackets {
                 resourcePacksStorage.addPack(resourcePack);
             }
 
-            if (ViaBedrock.getConfig().shouldTranslateResourcePacks() && wrapper.user().getProtocolInfo().protocolVersion().newerThanOrEqualTo(ProtocolConstants.JAVA_VERSION)) {
+            if (ViaBedrock.getConfig().shouldTranslateResourcePacks() && wrapper.user().getProtocolInfo().protocolVersion().newerThanOrEqualTo(ProtocolVersion.v1_21_7)) {
                 final CompletableFuture<Void> httpFuture = resourcePacksStorage.runHttpTask(resourcePacksStorage.getPacks(), pack -> {
                     final BedrockPackDownloader downloader = new BedrockPackDownloader(pack.cdnUrl());
                     final int contentLength = downloader.getContentLength();
