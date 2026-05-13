@@ -17,41 +17,14 @@
  */
 package net.raphimc.viabedrock.experimental.eccamera;
 
-import com.viaversion.viaversion.api.connection.UserConnection;
-import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
-import com.viaversion.viaversion.api.type.Types;
-import com.viaversion.viaversion.protocols.v1_21_9to1_21_11.packet.ClientboundPackets1_21_11;
 import net.raphimc.viabedrock.experimental.FeatureModule;
-import net.raphimc.viabedrock.experimental.pyrpc.PyRpcDispatcherModule;
-import net.raphimc.viabedrock.protocol.BedrockProtocol;
-
-import java.util.Set;
 
 /**
- * ECCamera module for forwarding PY_RPC camera path events to the ECCameraClient mod.
+ * ECCamera declares only its capability channel. PY_RPC transport is owned by
+ * PyRpcDispatcherModule through floodgate:netease.
  */
 public class ECCameraModule implements FeatureModule {
 
     public static final String CONFIRM_CHANNEL = "eccamera:confirm";
-    public static final String CHANNEL = "eccamera:data";
-
-    // ECCameraClient PayloadType ordinals: CONFIRM=0, PY_RPC_DATA=1
-    private static final int PY_RPC_DATA_ORDINAL = 1;
-    private static final int CONFIRM_ORDINAL = 0;
-
-    @Override
-    public void onPacketRegistration(final BedrockProtocol protocol) {
-        PyRpcDispatcherModule.registerConsumer(CONFIRM_CHANNEL, CHANNEL, PY_RPC_DATA_ORDINAL);
-    }
-
-    @Override
-    public void onChannelRegistered(final UserConnection user, final Set<String> channels) {
-        if (channels.contains(CONFIRM_CHANNEL)) {
-            final PacketWrapper msg = PacketWrapper.create(ClientboundPackets1_21_11.CUSTOM_PAYLOAD, user);
-            msg.write(Types.STRING, CHANNEL);
-            msg.write(Types.INT, CONFIRM_ORDINAL);
-            msg.send(BedrockProtocol.class);
-        }
-    }
 
 }

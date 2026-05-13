@@ -18,25 +18,12 @@
 package net.raphimc.viabedrock.experimental.modinterface;
 
 import com.viaversion.viaversion.api.connection.UserConnection;
-import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.experimental.FeatureModule;
-import net.raphimc.viabedrock.experimental.pyrpc.PyRpcDispatcherModule;
-import net.raphimc.viabedrock.protocol.BedrockProtocol;
 
 import java.util.Set;
 
 public class ModUIClientModule implements FeatureModule {
-
-    @Override
-    public void onPacketRegistration(final BedrockProtocol protocol) {
-        // Register as PY_RPC consumer (PY_RPC handler is owned by PyRpcDispatcherModule)
-        PyRpcDispatcherModule.registerConsumer(
-            ModUIClientInterface.CONFIRM_CHANNEL,
-            ModUIClientInterface.CHANNEL,
-            ModUIClientInterface.PY_RPC_DATA_ORDINAL
-        );
-    }
 
     @Override
     public void onEntityAdded(final UserConnection user, final Entity entity) {
@@ -50,19 +37,10 @@ public class ModUIClientModule implements FeatureModule {
 
     @Override
     public void onChannelRegistered(final UserConnection user, final Set<String> channels) {
-        if (channels.contains(ModUIClientInterface.CONFIRM_CHANNEL)) {
-            ModUIClientInterface.confirmPresence(user);
+        if (channels.contains(ModUIClientInterface.CONFIRM_CHANNEL)
+                || channels.contains(ModUIClientInterface.ENTITY_MAPPING_CHANNEL)) {
             ModUIClientInterface.sendEntityMappingSync(user);
         }
-    }
-
-    @Override
-    public boolean handleCustomPayload(final String channel, final PacketWrapper wrapper) {
-        if (channel.equals(ModUIClientInterface.CHANNEL)) {
-            ModUIClientInterface.handleC2S(wrapper);
-            return true;
-        }
-        return false;
     }
 
 }

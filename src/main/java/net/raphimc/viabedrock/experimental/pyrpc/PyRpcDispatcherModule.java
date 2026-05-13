@@ -20,34 +20,25 @@ package net.raphimc.viabedrock.experimental.pyrpc;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.protocols.v1_21_9to1_21_11.packet.ClientboundPackets1_21_11;
+import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.experimental.FeatureModule;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
+import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Shared PY_RPC packet dispatcher. Owns the PY_RPC clientbound handler and
- * broadcasts raw MsgPack bytes to all confirmed consumer channels.
- * <p>
- * Consumers register via {@link #registerConsumer} before packet registration occurs.
+ * Shared JE PY_RPC transport. Bedrock PY_RPC bytes are forwarded unchanged
+ * through floodgate:netease; JE C2S bytes are wrapped back into PY_RPC.
  */
 public class PyRpcDispatcherModule implements FeatureModule {
 
-    public record PyRpcConsumer(String confirmChannel, String dataChannel, int pyRpcDataOrdinal) {}
+    public static final String CHANNEL = "floodgate:netease";
 
-    private static final List<PyRpcConsumer> consumers = new ArrayList<>();
-
-    /**
-     * Register a PY_RPC consumer. Must be called during module onPacketRegistration
-     * (after this module is registered but before the first PY_RPC packet arrives).
-     */
-    public static void registerConsumer(final String confirmChannel, final String dataChannel, final int pyRpcDataOrdinal) {
-        consumers.add(new PyRpcConsumer(confirmChannel, dataChannel, pyRpcDataOrdinal));
-    }
+    private static final AtomicInteger MSG_ID_COUNTER = new AtomicInteger(1);
 
     @Override
     public void onPacketRegistration(final BedrockProtocol protocol) {
@@ -57,17 +48,33 @@ public class PyRpcDispatcherModule implements FeatureModule {
             wrapper.read(BedrockTypes.INT_LE); // msgId (not needed for S2C forwarding)
 
             final ChannelStorage channels = wrapper.user().get(ChannelStorage.class);
-
-            for (final PyRpcConsumer consumer : consumers) {
-                if (!channels.hasChannel(consumer.confirmChannel())) continue;
-
-                final PacketWrapper msg = PacketWrapper.create(ClientboundPackets1_21_11.CUSTOM_PAYLOAD, wrapper.user());
-                msg.write(Types.STRING, consumer.dataChannel());
-                msg.write(Types.INT, consumer.pyRpcDataOrdinal());
-                msg.write(Types.REMAINING_BYTES, data);
-                msg.scheduleSend(BedrockProtocol.class);
+            if (!channels.hasChannel(CHANNEL)) {
+                return;
             }
+
+            final PacketWrapper msg = PacketWrapper.create(ClientboundPackets1_21_11.CUSTOM_PAYLOAD, wrapper.user());
+            msg.write(Types.STRING, CHANNEL);
+            msg.write(Types.REMAINING_BYTES, data);
+            msg.scheduleSend(BedrockProtocol.class);
         });
+    }
+
+    @Override
+    public boolean handleCustomPayload(final String channel, final PacketWrapper wrapper) {
+        if (!channel.equals(CHANNEL)) {
+            return false;
+        }
+
+        try {
+            final byte[] msgpackData = wrapper.read(Types.REMAINING_BYTES);
+            final PacketWrapper pyRpc = PacketWrapper.create(ServerboundBedrockPackets.PY_RPC, wrapper.user());
+            pyRpc.write(BedrockTypes.BYTE_ARRAY, msgpackData);
+            pyRpc.write(BedrockTypes.INT_LE, MSG_ID_COUNTER.getAndIncrement());
+            pyRpc.sendToServer(BedrockProtocol.class);
+        } catch (final Exception e) {
+            ViaBedrock.getPlatform().getLogger().severe("[PY_RPC] Failed to forward JE C2S payload: " + e.getMessage());
+        }
+        return true;
     }
 
 }

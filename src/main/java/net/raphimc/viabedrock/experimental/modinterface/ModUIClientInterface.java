@@ -24,51 +24,16 @@ import com.viaversion.viaversion.protocols.v1_21_9to1_21_11.packet.ClientboundPa
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
-import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
-import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.nio.ByteBuffer;
 import java.util.Collection;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public class ModUIClientInterface {
 
-    private static final AtomicInteger MSG_ID_COUNTER = new AtomicInteger(1);
-
     public static final String CONFIRM_CHANNEL = "moduiclient:confirm";
-    public static final String CHANNEL = "moduiclient:data";
-    public static final int PY_RPC_DATA_ORDINAL = PayloadType.PY_RPC_DATA.ordinal();
-
-    public static void confirmPresence(final UserConnection user) {
-        final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets1_21_11.CUSTOM_PAYLOAD, user);
-        pluginMessage.write(Types.STRING, CHANNEL); // Channel
-        pluginMessage.write(Types.INT, PayloadType.CONFIRM.ordinal()); // Type
-        pluginMessage.send(BedrockProtocol.class);
-    }
-
-    public static void handleC2S(final PacketWrapper wrapper) {
-        final int type = wrapper.read(Types.INT);
-        if (type == PayloadType.PY_RPC_DATA.ordinal()) {
-            final byte[] msgpackData = wrapper.read(Types.REMAINING_BYTES);
-            final StringBuilder hex = new StringBuilder();
-            for (int i = 0; i < Math.min(msgpackData.length, 200); i++) {
-                hex.append(String.format("%02x ", msgpackData[i] & 0xFF));
-            }
-            ViaBedrock.getPlatform().getLogger().info("[ModUIClient C2S] Forwarding PY_RPC, " + msgpackData.length + " bytes: " + hex.toString().trim());
-            try {
-                final PacketWrapper pyRpc = PacketWrapper.create(ServerboundBedrockPackets.PY_RPC, wrapper.user());
-                pyRpc.write(BedrockTypes.BYTE_ARRAY, msgpackData); // MsgPack data
-                pyRpc.write(BedrockTypes.INT_LE, MSG_ID_COUNTER.getAndIncrement()); // msgId (must be unique per packet)
-                pyRpc.sendToServer(BedrockProtocol.class);
-            } catch (final Exception e) {
-                ViaBedrock.getPlatform().getLogger().severe("[ModUIClient C2S] Failed to forward PY_RPC: " + e.getMessage());
-            }
-        } else {
-            ViaBedrock.getPlatform().getLogger().warning("[ModUIClient C2S] Unknown payload type: " + type);
-        }
-    }
+    public static final String ENTITY_MAPPING_CHANNEL = "netease_bridge:entity_mapping";
 
     // --- Entity ID Mapping ---
 
@@ -77,19 +42,19 @@ public class ModUIClientInterface {
     private static final byte OP_SYNC = 2;
 
     public static void sendEntityMappingAdd(final UserConnection user, final long runtimeId, final int javaId) {
-        if (!user.get(ChannelStorage.class).hasChannel(CONFIRM_CHANNEL)) return;
+        if (!canSendEntityMappings(user)) return;
         final byte[] data = ByteBuffer.allocate(1 + 8 + 4).put(OP_ADD).putLong(runtimeId).putInt(javaId).array();
         sendEntityMappingPayload(user, data);
     }
 
     public static void sendEntityMappingRemove(final UserConnection user, final long runtimeId) {
-        if (!user.get(ChannelStorage.class).hasChannel(CONFIRM_CHANNEL)) return;
+        if (!canSendEntityMappings(user)) return;
         final byte[] data = ByteBuffer.allocate(1 + 8).put(OP_REMOVE).putLong(runtimeId).array();
         sendEntityMappingPayload(user, data);
     }
 
     public static void sendEntityMappingSync(final UserConnection user) {
-        if (!user.get(ChannelStorage.class).hasChannel(CONFIRM_CHANNEL)) return;
+        if (!canSendEntityMappings(user)) return;
         if (!user.has(EntityTracker.class)) return;
         final Collection<Entity> entities = user.get(EntityTracker.class).getEntities();
         final ByteBuffer buf = ByteBuffer.allocate(1 + 4 + entities.size() * (8 + 4));
@@ -102,20 +67,20 @@ public class ModUIClientInterface {
         sendEntityMappingPayload(user, buf.array());
     }
 
+    private static boolean canSendEntityMappings(final UserConnection user) {
+        final ChannelStorage channels = user.get(ChannelStorage.class);
+        return channels.hasChannel(CONFIRM_CHANNEL) && channels.hasChannel(ENTITY_MAPPING_CHANNEL);
+    }
+
     private static void sendEntityMappingPayload(final UserConnection user, final byte[] data) {
         try {
             final PacketWrapper pw = PacketWrapper.create(ClientboundPackets1_21_11.CUSTOM_PAYLOAD, user);
-            pw.write(Types.STRING, CHANNEL);
-            pw.write(Types.INT, PayloadType.ENTITY_MAPPING.ordinal());
+            pw.write(Types.STRING, ENTITY_MAPPING_CHANNEL);
             pw.write(Types.REMAINING_BYTES, data);
             pw.scheduleSend(BedrockProtocol.class);
         } catch (final Exception e) {
             ViaBedrock.getPlatform().getLogger().warning("[ModUIClient] Failed to send entity mapping: " + e.getMessage());
         }
-    }
-
-    private enum PayloadType {
-        CONFIRM, PY_RPC_DATA, ENTITY_MAPPING
     }
 
 }
