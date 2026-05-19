@@ -18,6 +18,7 @@
 package net.raphimc.viabedrock.experimental.block;
 
 import com.viaversion.viaversion.api.connection.UserConnection;
+import com.viaversion.viaversion.api.protocol.storage.CustomRegistryStorage;
 import com.viaversion.viaversion.libs.fastutil.ints.Int2IntMap;
 import com.viaversion.viaversion.libs.fastutil.ints.Int2IntOpenHashMap;
 import com.viaversion.viaversion.libs.gson.Gson;
@@ -28,6 +29,7 @@ import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.model.BlockState;
 import net.raphimc.viabedrock.experimental.FeatureModule;
 import net.raphimc.viabedrock.experimental.MappingLoadPhase;
+import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.data.BedrockMappingData;
 import net.raphimc.viabedrock.protocol.rewriter.BlockEntityRewriter;
 import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
@@ -57,6 +59,40 @@ public class CustomBlockMappingModule implements FeatureModule {
     public void onChannelRegistered(final UserConnection user, final Set<String> channels) {
         if (channels.contains("fabricrock:confirm")) {
             user.get(GameSessionStorage.class).setHasFabricRock(true);
+            installCustomBlockEntityTypeOverlay(user);
+        }
+    }
+
+    private void installCustomBlockEntityTypeOverlay(final UserConnection user) {
+        CustomRegistryStorage storage = user.get(CustomRegistryStorage.class);
+        if (storage == null) {
+            storage = new CustomRegistryStorage();
+            user.put(storage);
+        }
+        final boolean hasRegistry = storage.hasRegistry(CustomRegistryStorage.BLOCK_ENTITY_TYPE);
+
+        int installed = 0;
+        int vanillaRange = 0;
+        final int vanillaBlockEntityCount = BedrockProtocol.MAPPINGS.getVanillaBlockEntityCount();
+        for (Map.Entry<String, Integer> entry : BedrockProtocol.MAPPINGS.getCustomBlockEntityTypeIds().entrySet()) {
+            final int javaTypeId = entry.getValue();
+            storage.put(CustomRegistryStorage.BLOCK_ENTITY_TYPE, javaTypeId, javaTypeId, entry.getKey());
+            installed++;
+            if (javaTypeId < vanillaBlockEntityCount) {
+                vanillaRange++;
+            }
+        }
+
+        if (!hasRegistry) {
+            ViaBedrock.getPlatform().getLogger().info(
+                "Installed " + installed + " custom block entity type identity registry mappings for FabricRock/BedrockLoader client"
+            );
+            if (vanillaRange > 0) {
+                ViaBedrock.getPlatform().getLogger().warning(
+                    vanillaRange + " custom block entity type registry mappings are within the vanilla id range; " +
+                        "they will only apply if ViaVersion's vanilla mapping misses the id"
+                );
+            }
         }
     }
 
@@ -167,9 +203,6 @@ public class CustomBlockMappingModule implements FeatureModule {
                     final int javaTypeId = mapping.get("java_type_id").getAsInt();
                     final String customTag = "mod_block:" + blockIdentifier;
 
-                    // Store the mapping
-                    data.getCustomBlockEntityTypeIds().put(blockIdentifier, javaTypeId);
-
                     // Register to javaBlockEntities: tag -> java type id (BiMap requires unique keys and values)
                     if (!data.getJavaBlockEntities().containsKey(customTag) && !data.getJavaBlockEntities().containsValue(javaTypeId)) {
                         data.getJavaBlockEntities().put(customTag, javaTypeId);
@@ -179,6 +212,9 @@ public class CustomBlockMappingModule implements FeatureModule {
                                         " (tag=" + customTag + ", typeId=" + javaTypeId + "), skipping");
                         continue;
                     }
+
+                    // Store the mapping after conflict checks so registry installation only allows registered custom types.
+                    data.getCustomBlockEntityTypeIds().put(blockIdentifier, javaTypeId);
 
                     // Register to bedrockCustomBlockTags: block identifier -> tag
                     // (bypasses block_tags.json validation since custom blocks are not in bedrockBlockStatesByIdentifier)
