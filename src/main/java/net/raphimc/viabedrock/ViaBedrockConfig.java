@@ -18,6 +18,7 @@
 package net.raphimc.viabedrock;
 
 import com.viaversion.viaversion.util.Config;
+import com.viaversion.viaversion.util.ConfigSection;
 
 import java.io.File;
 import java.net.URL;
@@ -41,6 +42,17 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
     private String viaProxyAuthSecret;
     private boolean enableServerEntityAnimation;
     private int javaSkinFetchTimeout;
+    private boolean customMappingSyncEnabled;
+    private int customMappingSyncTimeoutMs;
+    private int customMappingSyncMaxSnapshotBytes;
+    private int customMappingSyncMaxPayloadBytes;
+    private int customMappingSyncMaxCustomBlockStates;
+    private int customMappingSyncMaxCustomBlockEntityTypes;
+    private int customMappingSyncMaxJavaBlockStateId;
+    private CustomMappingSyncFailureMode customMappingSyncFailureMode;
+    private String customMappingSyncDefaultFallbackBlock;
+    private boolean customMappingSyncEnableChunks;
+    private boolean customMappingSyncSendSyncResult;
 
     public ViaBedrockConfig(final File configFile, final Logger logger) {
         super(configFile, logger);
@@ -66,6 +78,30 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
         this.viaProxyAuthSecret = this.getString("viaproxy-auth-secret", "");
         this.enableServerEntityAnimation = this.getBoolean("enable-server-entity-animation", true);
         this.javaSkinFetchTimeout = this.getInt("java-skin-fetch-timeout", 1000);
+        final ConfigSection customMappingSync = this.getSection("customMappingSync");
+        this.customMappingSyncEnabled = getBoolean(customMappingSync, "enabled", true);
+        this.customMappingSyncTimeoutMs = getInt(customMappingSync, "timeoutMs", 10000);
+        this.customMappingSyncMaxSnapshotBytes = getInt(customMappingSync, "maxSnapshotBytes", 16 * 1024 * 1024);
+        this.customMappingSyncMaxPayloadBytes = getInt(customMappingSync, "maxPayloadBytes", 28672);
+        this.customMappingSyncMaxCustomBlockStates = getInt(customMappingSync, "maxCustomBlockStates", 65536);
+        this.customMappingSyncMaxCustomBlockEntityTypes = getInt(customMappingSync, "maxCustomBlockEntityTypes", 4096);
+        this.customMappingSyncMaxJavaBlockStateId = getInt(customMappingSync, "maxJavaBlockStateId", 1048575);
+        this.customMappingSyncFailureMode = CustomMappingSyncFailureMode.byName(getString(customMappingSync, "failureMode", "SAFE_FALLBACK"));
+        this.customMappingSyncDefaultFallbackBlock = getString(customMappingSync, "defaultFallbackBlock", "minecraft:stone");
+        this.customMappingSyncEnableChunks = getBoolean(customMappingSync, "enableChunks", true);
+        this.customMappingSyncSendSyncResult = getBoolean(customMappingSync, "sendSyncResult", false);
+    }
+
+    private static boolean getBoolean(final ConfigSection section, final String key, final boolean def) {
+        return section != null ? section.getBoolean(key, def) : def;
+    }
+
+    private static int getInt(final ConfigSection section, final String key, final int def) {
+        return section != null ? section.getInt(key, def) : def;
+    }
+
+    private static String getString(final ConfigSection section, final String key, final String def) {
+        return section != null ? section.getString(key, def) : def;
     }
 
     @Override
@@ -145,6 +181,61 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
     @Override
     public int getJavaSkinFetchTimeout() {
         return this.javaSkinFetchTimeout;
+    }
+
+    @Override
+    public boolean isCustomMappingSyncEnabled() {
+        return this.customMappingSyncEnabled;
+    }
+
+    @Override
+    public int getCustomMappingSyncTimeoutMs() {
+        return this.customMappingSyncTimeoutMs;
+    }
+
+    @Override
+    public int getCustomMappingSyncMaxSnapshotBytes() {
+        return this.customMappingSyncMaxSnapshotBytes;
+    }
+
+    @Override
+    public int getCustomMappingSyncMaxPayloadBytes() {
+        return this.customMappingSyncMaxPayloadBytes;
+    }
+
+    @Override
+    public int getCustomMappingSyncMaxCustomBlockStates() {
+        return this.customMappingSyncMaxCustomBlockStates;
+    }
+
+    @Override
+    public int getCustomMappingSyncMaxCustomBlockEntityTypes() {
+        return this.customMappingSyncMaxCustomBlockEntityTypes;
+    }
+
+    @Override
+    public int getCustomMappingSyncMaxJavaBlockStateId() {
+        return this.customMappingSyncMaxJavaBlockStateId;
+    }
+
+    @Override
+    public CustomMappingSyncFailureMode getCustomMappingSyncFailureMode() {
+        return this.customMappingSyncFailureMode;
+    }
+
+    @Override
+    public String getCustomMappingSyncDefaultFallbackBlock() {
+        return this.customMappingSyncDefaultFallbackBlock;
+    }
+
+    @Override
+    public boolean isCustomMappingSyncChunksEnabled() {
+        return this.customMappingSyncEnableChunks;
+    }
+
+    @Override
+    public boolean shouldSendCustomMappingSyncResult() {
+        return this.customMappingSyncSendSyncResult;
     }
 
 }

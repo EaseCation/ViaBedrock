@@ -36,6 +36,8 @@ import net.raphimc.viabedrock.api.model.resourcepack.SoundDefinitions;
 import net.raphimc.viabedrock.api.util.EnumUtil;
 import net.raphimc.viabedrock.api.util.MathUtil;
 import net.raphimc.viabedrock.api.util.PacketFactory;
+import net.raphimc.viabedrock.experimental.custommapping.CustomMappingAccess;
+import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.BedrockMappingData;
@@ -286,10 +288,10 @@ public class WorldEffectPackets {
                             yield javaParticle.withParticle(particle);
                         }
                         case Terrain, BrushDust -> {
-                            final int javaBlockState = wrapper.user().get(BlockStateRewriter.class).javaId(data);
-                            if (javaBlockState != -1) {
+                            final CustomMappingAccess.JavaBlockStateResolution resolution = resolveJavaBlockState(wrapper.user(), data, "level event particle");
+                            if (resolution.reason() != CustomMappingAccess.FallbackReason.UNKNOWN_RUNTIME_FALLBACK) {
                                 final Particle particle = new Particle(javaParticle.particle().id());
-                                particle.add(Types.VAR_INT, javaBlockState); // block state
+                                particle.add(Types.VAR_INT, resolution.javaBlockStateId()); // block state
                                 yield javaParticle.withParticle(particle);
                             } else {
                                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing block state: " + data);
@@ -393,9 +395,9 @@ public class WorldEffectPackets {
                                 default /* 1, 2 */ -> Direction.NORTH.ordinal();
                             };
                             case ParticlesDestroyBlock, ParticlesDestroyBlockNoSound -> {
-                                final int javaBlockState = wrapper.user().get(BlockStateRewriter.class).javaId(data);
-                                if (javaBlockState != -1) {
-                                    yield javaBlockState;
+                                final CustomMappingAccess.JavaBlockStateResolution resolution = resolveJavaBlockState(wrapper.user(), data, "destroy block level event");
+                                if (resolution.reason() != CustomMappingAccess.FallbackReason.UNKNOWN_RUNTIME_FALLBACK) {
+                                    yield resolution.javaBlockStateId();
                                 } else {
                                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing block state: " + data);
                                     wrapper.cancel();
@@ -434,10 +436,10 @@ public class WorldEffectPackets {
                             case ParticlesCrit -> javaParticle.withCount(data);
                             case ParticlesCrackBlock, ParticlesCrackBlockDown, ParticlesCrackBlockUp, ParticlesCrackBlockNorth,
                                  ParticlesCrackBlockSouth, ParticlesCrackBlockWest, ParticlesCrackBlockEast -> {
-                                final int javaBlockState = wrapper.user().get(BlockStateRewriter.class).javaId(data);
-                                if (javaBlockState != -1) {
+                                final CustomMappingAccess.JavaBlockStateResolution resolution = resolveJavaBlockState(wrapper.user(), data, "crack block particle");
+                                if (resolution.reason() != CustomMappingAccess.FallbackReason.UNKNOWN_RUNTIME_FALLBACK) {
                                     final Particle particle = new Particle(javaParticle.particle().id());
-                                    particle.add(Types.VAR_INT, javaBlockState); // block state
+                                    particle.add(Types.VAR_INT, resolution.javaBlockStateId()); // block state
                                     yield javaParticle.withParticle(particle);
                                 } else {
                                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing block state: " + data);
@@ -679,8 +681,21 @@ public class WorldEffectPackets {
                     return;
                 }
             }
-            wrapper.write(Types.VAR_INT, BedrockProtocol.MAPPINGS.getJavaBlocks().get(BedrockProtocol.MAPPINGS.getJavaBlockStates().inverse().get(blockStateRewriter.javaId(blockState)).namespacedIdentifier())); // block
+            final CustomMappingAccess customAccess = wrapper.user().get(CustomMappingSyncStorage.class).access();
+            int javaBlockState = resolveJavaBlockState(wrapper.user(), blockState, "block event block id").javaBlockStateId();
+            BlockState javaBlock = BedrockProtocol.MAPPINGS.getJavaBlockStates().inverse().get(javaBlockState);
+            if (javaBlock == null) {
+                javaBlockState = customAccess.fallbackJavaBlockState(javaBlockState, "block event block id");
+                javaBlock = BedrockProtocol.MAPPINGS.getJavaBlockStates().inverse().get(javaBlockState);
+            }
+            wrapper.write(Types.VAR_INT, BedrockProtocol.MAPPINGS.getJavaBlocks().get(javaBlock.namespacedIdentifier())); // block
         });
+    }
+
+    private static CustomMappingAccess.JavaBlockStateResolution resolveJavaBlockState(final UserConnection user, final int bedrockRuntimeId, final String context) {
+        final BlockStateRewriter blockStateRewriter = user.get(BlockStateRewriter.class);
+        final CustomMappingAccess customAccess = user.get(CustomMappingSyncStorage.class).access();
+        return customAccess.resolveBedrockRuntimeId(bedrockRuntimeId, blockStateRewriter.javaId(bedrockRuntimeId), context);
     }
 
     private static SoundDefinitions.ConfiguredSound tryFindSound(final UserConnection user, final SharedTypes_Legacy_LevelSoundEvent soundEvent, final int data, final String entityIdentifier, final boolean isBabyMob) {

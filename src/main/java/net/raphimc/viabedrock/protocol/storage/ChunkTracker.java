@@ -23,7 +23,6 @@ import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.minecraft.BlockPosition;
 import com.viaversion.viaversion.api.minecraft.ChunkPosition;
 import com.viaversion.viaversion.api.minecraft.blockentity.BlockEntity;
-import com.viaversion.viaversion.api.minecraft.blockentity.BlockEntityImpl;
 import com.viaversion.viaversion.api.minecraft.chunks.*;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Type;
@@ -60,6 +59,8 @@ import java.util.logging.Level;
 import java.util.stream.Collectors;
 
 import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
+import net.raphimc.viabedrock.experimental.custommapping.CustomMappingAccess;
+import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
 import net.raphimc.viabedrock.experimental.light.ChunkLightProvider;
 
 // TODO: Feature: Block connections
@@ -69,7 +70,7 @@ public class ChunkTracker extends StoredObject {
     private final String dimensionKey;
     private final int minY;
     private final int worldHeight;
-    private final Type<Chunk> chunkType;
+    private final int biomePaletteBits;
 
     private final Map<Long, BedrockChunk> chunks = new HashMap<>();
     private final Set<Long> dirtyChunks = new HashSet<>();
@@ -99,7 +100,7 @@ public class ChunkTracker extends StoredObject {
         final CompoundTag dimensionTag = dimensionRegistry.getCompoundTag(this.dimension.getKey());
         this.minY = dimensionTag.getNumberTag("min_y").asInt();
         this.worldHeight = dimensionTag.getNumberTag("height").asInt();
-        this.chunkType = new ChunkType1_21_5(this.worldHeight >> 4, MathUtil.ceilLog2(BedrockProtocol.MAPPINGS.getJavaBlockStates().size()), MathUtil.ceilLog2(biomeRegistry.size()));
+        this.biomePaletteBits = MathUtil.ceilLog2(biomeRegistry.size());
 
         final ChunkTracker oldChunkTracker = user.get(ChunkTracker.class);
         this.radius = oldChunkTracker != null ? oldChunkTracker.radius : user.get(ClientSettingsStorage.class).viewDistance();
@@ -202,23 +203,25 @@ public class ChunkTracker extends StoredObject {
 
     public int getJavaBlockState(final BedrockChunkSection section, final int sectionX, final int sectionY, final int sectionZ) {
         final BlockStateRewriter blockStateRewriter = this.user().get(BlockStateRewriter.class);
+        final CustomMappingAccess customAccess = this.user().get(CustomMappingSyncStorage.class).access();
         final List<DataPalette> blockPalettes = section.palettes(PaletteType.BLOCKS);
 
         final int layer0BlockState = blockPalettes.get(0).idAt(sectionX, sectionY, sectionZ);
-        int remappedBlockState = blockStateRewriter.javaId(layer0BlockState);
-        if (remappedBlockState == -1) {
+        final CustomMappingAccess.JavaBlockStateResolution layer0Resolution = customAccess.resolveBedrockRuntimeId(layer0BlockState, blockStateRewriter.javaId(layer0BlockState), "chunk block lookup");
+        int remappedBlockState = layer0Resolution.javaBlockStateId();
+        if (layer0Resolution.reason() == CustomMappingAccess.FallbackReason.UNKNOWN_RUNTIME_FALLBACK) {
             ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing block state: " + layer0BlockState);
-            remappedBlockState = 0;
         }
 
         if (blockPalettes.size() > 1) {
             final int layer1BlockState = blockPalettes.get(1).idAt(sectionX, sectionY, sectionZ);
             if (CustomBlockTags.WATER.equals(blockStateRewriter.tag(layer1BlockState))) { // Waterlogging
                 final int prevBlockState = remappedBlockState;
-                remappedBlockState = blockStateRewriter.waterlog(remappedBlockState);
-                if (remappedBlockState == -1) {
+                final int waterloggedBlockState = blockStateRewriter.waterlog(remappedBlockState);
+                final CustomMappingAccess.JavaBlockStateResolution waterloggedResolution = customAccess.resolveWaterloggedJavaBlockState(prevBlockState, waterloggedBlockState, "chunk waterlog lookup");
+                remappedBlockState = waterloggedResolution.javaBlockStateId();
+                if (waterloggedBlockState == -1 && waterloggedResolution.reason() == CustomMappingAccess.FallbackReason.VANILLA) {
                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing waterlogged block state: " + prevBlockState);
-                    remappedBlockState = prevBlockState;
                 }
             }
         }
@@ -333,7 +336,8 @@ public class ChunkTracker extends StoredObject {
 
         final BlockStateRewriter blockStateRewriter = this.user().get(BlockStateRewriter.class);
         final EntityTracker entityTracker = this.user().get(EntityTracker.class);
-        final boolean hasFabricRock = this.user().get(GameSessionStorage.class).hasFabricRock();
+        final CustomMappingAccess customAccess = this.user().get(CustomMappingSyncStorage.class).access();
+        final boolean hasCustomMapping = customAccess.hasCustomMappings();
         final int sectionX = blockPosition.x() & 15;
         final int sectionY = blockPosition.y() & 15;
         final int sectionZ = blockPosition.z() & 15;
@@ -362,27 +366,17 @@ public class ChunkTracker extends StoredObject {
         }
 
         if (prevBlockState != blockState) {
-            if (BlockEntityRewriter.isJavaBlockEntity(tag)) {
+            if (BlockEntityRewriter.isJavaBlockEntity(this.user(), blockState)) {
                 final BedrockBlockEntity bedrockBlockEntity = this.getBlockEntity(blockPosition);
-                BlockEntity javaBlockEntity = null;
-                if (bedrockBlockEntity != null) {
-                    javaBlockEntity = BlockEntityRewriter.toJava(this.user(), blockState, bedrockBlockEntity);
-                    if (javaBlockEntity instanceof BlockEntityWithBlockState blockEntityWithBlockState) {
-                        remappedBlockState = blockEntityWithBlockState.blockState();
-                    }
-                } else if (BedrockProtocol.MAPPINGS.getJavaBlockEntities().containsKey(tag)) {
-                    final int javaType = BedrockProtocol.MAPPINGS.getJavaBlockEntities().get(tag);
-                    javaBlockEntity = new BlockEntityImpl(BlockEntity.pack(sectionX, sectionZ), (short) blockPosition.y(), javaType, new CompoundTag());
+                final BlockEntity javaBlockEntity = BlockEntityRewriter.toJavaOrCreate(this.user(), blockState, bedrockBlockEntity, BlockEntity.pack(sectionX, sectionZ), (short) blockPosition.y());
+                if (javaBlockEntity instanceof BlockEntityWithBlockState blockEntityWithBlockState) {
+                    remappedBlockState = blockEntityWithBlockState.blockState();
                 }
 
                 if (javaBlockEntity != null && javaBlockEntity.tag() != null) {
-                    if (!hasFabricRock) {
-                        final int vanillaBlockStateCount = BedrockProtocol.MAPPINGS.getVanillaBlockStateCount();
-                        final int vanillaBlockEntityCount = BedrockProtocol.MAPPINGS.getVanillaBlockEntityCount();
-                        if (remappedBlockState >= vanillaBlockStateCount) {
-                            remappedBlockState = BedrockProtocol.MAPPINGS.getCustomBlockFallback(remappedBlockState);
-                        }
-                        if (javaBlockEntity.typeId() >= vanillaBlockEntityCount || javaBlockEntity.typeId() < 0) {
+                    if (!hasCustomMapping) {
+                        remappedBlockState = customAccess.resolveJavaBlockState(remappedBlockState, "single block entity update").javaBlockStateId();
+                        if (customAccess.resolveBlockEntityType(javaBlockEntity.typeId(), "single block entity update").javaBlockEntityTypeId() == -1) {
                             return new IntObjectImmutablePair<>(remappedBlockState, null);
                         }
                     }
@@ -393,8 +387,8 @@ public class ChunkTracker extends StoredObject {
             }
         }
 
-        if (!hasFabricRock && remappedBlockState >= BedrockProtocol.MAPPINGS.getVanillaBlockStateCount()) {
-            remappedBlockState = BedrockProtocol.MAPPINGS.getCustomBlockFallback(remappedBlockState);
+        if (!hasCustomMapping && remappedBlockState >= BedrockProtocol.MAPPINGS.getVanillaBlockStateCount()) {
+            remappedBlockState = customAccess.fallbackJavaBlockState(remappedBlockState, "single block update without custom mappings");
         }
 
         return new IntObjectImmutablePair<>(remappedBlockState, null);
@@ -423,10 +417,8 @@ public class ChunkTracker extends StoredObject {
             return;
         }
 
-        // Default: strip custom blocks and send with full-bright sky light
-        if (!this.user().get(GameSessionStorage.class).hasFabricRock()) {
-            this.stripCustomBlockData(remappedChunk);
-        }
+        // Keep allowed connection-local custom data and safely fallback anything unknown.
+        this.stripCustomBlockData(remappedChunk);
 
         final int lightSectionCount = remappedChunk.getSections().length + 2;
         final byte[][] skyLight = generatePlaceholderSkyLight(lightSectionCount);
@@ -457,7 +449,7 @@ public class ChunkTracker extends StoredObject {
         }
 
         final PacketWrapper levelChunkWithLight = PacketWrapper.create(ClientboundPackets1_21_11.LEVEL_CHUNK_WITH_LIGHT, this.user());
-        levelChunkWithLight.write(this.chunkType, remappedChunk); // chunk
+        levelChunkWithLight.write(this.currentChunkType(), remappedChunk); // chunk
         levelChunkWithLight.write(Types.LONG_ARRAY_PRIMITIVE, skyLightMask.toLongArray()); // sky light mask
         levelChunkWithLight.write(Types.LONG_ARRAY_PRIMITIVE, blockLightMask.toLongArray()); // block light mask
         levelChunkWithLight.write(Types.LONG_ARRAY_PRIMITIVE, emptySkyLightMask.toLongArray()); // empty sky light mask
@@ -482,25 +474,26 @@ public class ChunkTracker extends StoredObject {
         return skyLight;
     }
 
-    public void stripCustomBlockData(final Chunk chunk) {
-        final int vanillaBlockStateCount = BedrockProtocol.MAPPINGS.getVanillaBlockStateCount();
-        final int vanillaBlockEntityCount = BedrockProtocol.MAPPINGS.getVanillaBlockEntityCount();
+    private Type<Chunk> currentChunkType() {
+        final int blockPaletteBits = MathUtil.ceilLog2(this.user().get(CustomMappingSyncStorage.class).access().globalPaletteBlockBits());
+        return new ChunkType1_21_5(this.worldHeight >> 4, blockPaletteBits, this.biomePaletteBits);
+    }
 
-        // Replace custom block state IDs (>= vanillaBlockStateCount) with their fallback blocks
+    public void stripCustomBlockData(final Chunk chunk) {
+        final CustomMappingAccess access = this.user().get(CustomMappingSyncStorage.class).access();
+
+        // Replace block state IDs that are not allowed for this connection with their fallback blocks.
         for (final ChunkSection section : chunk.getSections()) {
             if (section == null) continue;
             final DataPalette blockPalette = section.palette(PaletteType.BLOCKS);
             if (blockPalette == null) continue;
             for (int i = 0; i < blockPalette.size(); i++) {
                 final int stateId = blockPalette.idByIndex(i);
-                if (stateId >= vanillaBlockStateCount) {
-                    blockPalette.setIdByIndex(i, BedrockProtocol.MAPPINGS.getCustomBlockFallback(stateId));
-                }
+                blockPalette.setIdByIndex(i, access.resolveJavaBlockState(stateId, "chunk palette strip").javaBlockStateId());
             }
         }
 
-        // Remove custom block entities (typeId >= vanillaBlockEntityCount or typeId < 0)
-        chunk.blockEntities().removeIf(be -> be.typeId() >= vanillaBlockEntityCount || be.typeId() < 0);
+        chunk.blockEntities().removeIf(be -> access.resolveBlockEntityType(be.typeId(), "chunk block entity strip").javaBlockEntityTypeId() == -1);
     }
 
     public Dimension getDimension() {
@@ -578,6 +571,7 @@ public class ChunkTracker extends StoredObject {
 
     private Chunk remapChunk(final BedrockChunk chunk) {
         final BlockStateRewriter blockStateRewriter = this.user().get(BlockStateRewriter.class);
+        final CustomMappingAccess customAccess = this.user().get(CustomMappingSyncStorage.class).access();
         final int airId = this.airId();
 
         final Chunk remappedChunk = new Chunk1_21_5(chunk.getX(), chunk.getZ(), new ChunkSection[chunk.getSections().length], new Heightmap[2], new ArrayList<>());
@@ -601,10 +595,10 @@ public class ChunkTracker extends StoredObject {
                 final String[] paletteIndexBlockStateTags = new String[remappedBlockPalette.size()];
                 for (int i = 0; i < remappedBlockPalette.size(); i++) {
                     final int bedrockBlockState = remappedBlockPalette.idByIndex(i);
-                    int javaBlockState = blockStateRewriter.javaId(bedrockBlockState);
-                    if (javaBlockState == -1) {
+                    final CustomMappingAccess.JavaBlockStateResolution resolution = customAccess.resolveBedrockRuntimeId(bedrockBlockState, blockStateRewriter.javaId(bedrockBlockState), "chunk palette remap");
+                    int javaBlockState = resolution.javaBlockStateId();
+                    if (resolution.reason() == CustomMappingAccess.FallbackReason.UNKNOWN_RUNTIME_FALLBACK) {
                         ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing block state: " + bedrockBlockState);
-                        javaBlockState = 0;
                     }
                     remappedBlockPalette.setIdByIndex(i, javaBlockState);
 
@@ -626,19 +620,13 @@ public class ChunkTracker extends StoredObject {
 
                             final int absY = this.minY + idx * 16 + y;
                             final BlockPosition position = new BlockPosition(chunk.getX() * 16 + x, absY, chunk.getZ() * 16 + z);
-                            if (BlockEntityRewriter.isJavaBlockEntity(tag)) {
-                                final BedrockBlockEntity bedrockBlockEntity = chunk.getBlockEntityAt(position);
-                                if (bedrockBlockEntity != null) {
-                                    final BlockEntity javaBlockEntity = BlockEntityRewriter.toJava(this.user(), layer0.idAt(x, y, z), bedrockBlockEntity);
-                                    if (javaBlockEntity instanceof BlockEntityWithBlockState blockEntityWithBlockState) {
-                                        remappedBlockPalette.setIdAt(x, y, z, blockEntityWithBlockState.blockState());
-                                    }
-                                    if (javaBlockEntity != null && javaBlockEntity.tag() != null) {
-                                        remappedChunk.blockEntities().add(javaBlockEntity);
-                                    }
-                                } else if (BedrockProtocol.MAPPINGS.getJavaBlockEntities().containsKey(tag)) {
-                                    final int javaType = BedrockProtocol.MAPPINGS.getJavaBlockEntities().get(tag);
-                                    final BlockEntity javaBlockEntity = new BlockEntityImpl(BlockEntity.pack(x, z), (short) absY, javaType, new CompoundTag());
+                            final int bedrockRuntimeId = layer0.idAt(x, y, z);
+                            if (BlockEntityRewriter.isJavaBlockEntity(this.user(), bedrockRuntimeId)) {
+                                final BlockEntity javaBlockEntity = BlockEntityRewriter.toJavaOrCreate(this.user(), bedrockRuntimeId, chunk.getBlockEntityAt(position), BlockEntity.pack(x, z), (short) absY);
+                                if (javaBlockEntity instanceof BlockEntityWithBlockState blockEntityWithBlockState) {
+                                    remappedBlockPalette.setIdAt(x, y, z, blockEntityWithBlockState.blockState());
+                                }
+                                if (javaBlockEntity != null && javaBlockEntity.tag() != null) {
                                     remappedChunk.blockEntities().add(javaBlockEntity);
                                 }
                             } else if (CustomBlockTags.ITEM_FRAME.equals(tag)) {
@@ -662,11 +650,12 @@ public class ChunkTracker extends StoredObject {
                                     final int javaBlockState = remappedBlockPalette.idAt(x, y, z);
 
                                     if (CustomBlockTags.WATER.equals(blockStateRewriter.tag(blockState))) { // Waterlogging
-                                        final int remappedBlockState = blockStateRewriter.waterlog(javaBlockState);
-                                        if (remappedBlockState == -1) {
+                                        final int waterloggedBlockState = blockStateRewriter.waterlog(javaBlockState);
+                                        final CustomMappingAccess.JavaBlockStateResolution waterloggedResolution = customAccess.resolveWaterloggedJavaBlockState(javaBlockState, waterloggedBlockState, "chunk palette waterlog");
+                                        if (waterloggedBlockState == -1 && waterloggedResolution.reason() == CustomMappingAccess.FallbackReason.VANILLA) {
                                             ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing waterlogged block state: " + prevBlockState);
                                         } else {
-                                            remappedBlockPalette.setIdAt(x, y, z, remappedBlockState);
+                                            remappedBlockPalette.setIdAt(x, y, z, waterloggedResolution.javaBlockStateId());
                                         }
                                     } else {
                                         ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Invalid layer 2 block state. L1: " + prevBlockState + ", L2: " + blockState);

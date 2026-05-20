@@ -94,6 +94,42 @@ public interface ViaBedrockConfig extends Config {
      */
     int getJavaSkinFetchTimeout();
 
+    boolean isCustomMappingSyncEnabled();
+
+    int getCustomMappingSyncTimeoutMs();
+
+    int getCustomMappingSyncMaxSnapshotBytes();
+
+    int getCustomMappingSyncMaxPayloadBytes();
+
+    int getCustomMappingSyncMaxCustomBlockStates();
+
+    int getCustomMappingSyncMaxCustomBlockEntityTypes();
+
+    int getCustomMappingSyncMaxJavaBlockStateId();
+
+    CustomMappingSyncFailureMode getCustomMappingSyncFailureMode();
+
+    String getCustomMappingSyncDefaultFallbackBlock();
+
+    boolean isCustomMappingSyncChunksEnabled();
+
+    boolean shouldSendCustomMappingSyncResult();
+
+    enum CustomMappingSyncFailureMode {
+        SAFE_FALLBACK,
+        KICK;
+
+        public static CustomMappingSyncFailureMode byName(final String name) {
+            for (CustomMappingSyncFailureMode mode : values()) {
+                if (mode.name().equalsIgnoreCase(name)) {
+                    return mode;
+                }
+            }
+            return SAFE_FALLBACK;
+        }
+    }
+
     enum BlobCacheMode {
 
         /**

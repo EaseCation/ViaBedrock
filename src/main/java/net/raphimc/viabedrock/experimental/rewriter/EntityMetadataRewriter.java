@@ -26,6 +26,7 @@ import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
 import com.viaversion.viaversion.protocols.v1_21_9to1_21_11.packet.ClientboundPackets1_21_11;
 import net.raphimc.viabedrock.ViaBedrock;
+import net.raphimc.viabedrock.api.model.entity.CustomEntity;
 import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.api.model.entity.LivingEntity;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
@@ -302,7 +303,7 @@ public class EntityMetadataRewriter {
                         javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.VARIANT), VersionedTypes.V1_21_11.entityDataTypes().varIntType, javaVariant));
                     }
                     default -> {
-                        if (variant != 0) { // For some reason bedrock seems to send variant 0 for many entities that don't have variants
+                        if (variant != 0 && !(entity instanceof CustomEntity)) { // Custom entity variants are consumed by the custom renderer.
                             ViaBedrock.getPlatform().getLogger().warning("Received non-zero VARIANT " + variant + " for unsupported entity " + entity.type());
                         }
                     }
@@ -322,7 +323,7 @@ public class EntityMetadataRewriter {
                         javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.WOOL), VersionedTypes.V1_21_11.entityDataTypes().byteType, sheepBitMask));
                     }
                     default -> {
-                        if (javaColorIndex != 0) { // For some reason bedrock seems to send color index 0 for many entities that don't have colors
+                        if (javaColorIndex != 0 && !(entity instanceof CustomEntity)) { // Custom entity colors are consumed by the custom renderer.
                             ViaBedrock.getPlatform().getLogger().warning("Received non-zero COLOR_INDEX " + javaColorIndex + " for unsupported entity " + entity.type());
                         }
                     }

@@ -21,18 +21,19 @@ import com.google.common.collect.BiMap;
 import com.google.common.collect.HashBiMap;
 import com.viaversion.nbt.tag.*;
 import com.viaversion.viaversion.api.connection.StorableObject;
+import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.libs.fastutil.ints.*;
 import com.viaversion.viaversion.libs.fastutil.objects.Object2ObjectMap;
 import com.viaversion.viaversion.libs.fastutil.objects.Object2ObjectOpenHashMap;
-import com.viaversion.viaversion.util.Key;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.chunk.blockstate.BlockStateSanitizer;
 import net.raphimc.viabedrock.api.model.BedrockBlockState;
 import net.raphimc.viabedrock.api.model.BlockState;
-import net.raphimc.viabedrock.api.util.BlockStateHasher;
-import net.raphimc.viabedrock.api.util.CombinationUtil;
 import net.raphimc.viabedrock.api.util.HashedPaletteComparator;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
+import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
+import net.raphimc.viabedrock.experimental.custommapping.RuntimeProjection;
+import net.raphimc.viabedrock.experimental.custommapping.RuntimeProjectionBuilder;
 import net.raphimc.viabedrock.protocol.model.BlockProperties;
 
 import java.util.*;
@@ -48,7 +49,7 @@ public class BlockStateRewriter implements StorableObject {
     private final Int2ObjectMap<String> blockStateTags = new Int2ObjectOpenHashMap<>(); // Bedrock
     private final BlockStateSanitizer blockStateSanitizer;
 
-    public BlockStateRewriter(final BlockProperties[] blockProperties, final boolean hashedRuntimeBlockIds) {
+    public BlockStateRewriter(final UserConnection user, final BlockProperties[] blockProperties, final boolean hashedRuntimeBlockIds) {
         this.blockStateIdMappings.defaultReturnValue(-1);
         this.legacyBlockStateIdMappings.defaultReturnValue(-1);
 
@@ -57,107 +58,23 @@ public class BlockStateRewriter implements StorableObject {
         final Map<BlockState, BlockState> bedrockToJavaBlockStates = BedrockProtocol.MAPPINGS.getBedrockToJavaBlockStates();
         final Map<String, String> blockTags = BedrockProtocol.MAPPINGS.getBedrockCustomBlockTags();
         final Set<String> bedrockBlockIdentifiers = bedrockBlockStates.stream().map(BedrockBlockState::namespacedIdentifier).collect(Collectors.toSet());
-        final List<BedrockBlockState> customBlockStates = new ArrayList<>();
+        final CustomMappingSyncStorage customMappingSync = user.get(CustomMappingSyncStorage.class);
+        RuntimeProjectionBuilder runtimeProjectionBuilder = customMappingSync != null ? customMappingSync.runtimeProjectionBuilder(blockProperties, hashedRuntimeBlockIds) : null;
+        Set<BedrockBlockState> customRuntimeStates = Set.of();
+        Map<String, CompoundTag> customRuntimeBlockProperties = Map.of();
 
-        final Map<String, CompoundTag> effectiveBlockProperties = new HashMap<>();
-        for (BlockProperties blockProperty : blockProperties) {
-            final String identifier = blockProperty.name().toLowerCase(Locale.ROOT);
-            if (bedrockBlockIdentifiers.contains(identifier)) {
-                continue; // Bedrock client does not allow overriding vanilla block states
-            }
-
-            if (!effectiveBlockProperties.containsKey(identifier)) {
-                effectiveBlockProperties.put(identifier, blockProperty.properties());
-            }
-        }
-
-        for (Map.Entry<String, CompoundTag> blockProperty : effectiveBlockProperties.entrySet()) {
-            if (!(blockProperty.getValue().get("vanilla_block_data") instanceof CompoundTag)) { // Bedrock client ignores blocks without this tag
-                continue;
-            }
-            if (!(blockProperty.getValue().get("menu_category") instanceof CompoundTag)) { // Bedrock client crashes if this tag is missing
-                throw new IllegalStateException("Missing menu_category tag for " + blockProperty.getKey());
-            }
-
-            final Map<String, Set<Tag>> propertiesMap = new LinkedHashMap<>();
-            final ListTag<CompoundTag> properties = blockProperty.getValue().getListTag("properties", CompoundTag.class);
-            if (properties != null) { // https://wiki.bedrock.dev/blocks/block-states.html
-                for (CompoundTag property : properties) {
-                    if (property.get("name") instanceof StringTag nameTag) {
-                        final String name = nameTag.getValue();
-                        if (property.get("enum") instanceof ListTag<?> enumTag) {
-                            final Set<Tag> values = new LinkedHashSet<>();
-                            for (Tag tag : enumTag) {
-                                values.add(tag);
-                            }
-                            propertiesMap.put(name, values);
-                        }
-                    }
-                }
-            }
-            final ListTag<CompoundTag> traits = blockProperty.getValue().getListTag("traits", CompoundTag.class);
-            if (traits != null) { // https://wiki.bedrock.dev/blocks/block-traits.html
-                for (CompoundTag trait : traits) {
-                    if (trait.get("name") instanceof StringTag nameTag) {
-                        final String name = Key.namespaced(nameTag.getValue());
-                        final Map<String, Map<String, Set<String>>> traitStateProperties = BedrockProtocol.MAPPINGS.getBedrockBlockTraits().get(name);
-                        if (traitStateProperties == null) {
-                            throw new RuntimeException("Missing block trait state properties for " + name);
-                        }
-
-                        if (trait.get("enabled_states") instanceof CompoundTag enabledStatesTag) {
-                            if (enabledStatesTag.size() != traitStateProperties.size()) {
-                                throw new RuntimeException("Invalid enabled_states tag for trait " + name + " (size mismatch)");
-                            }
-
-                            for (Map.Entry<String, Tag> tag : enabledStatesTag) {
-                                final String key = Key.namespaced(tag.getKey());
-                                final boolean enabled = tag.getValue() instanceof ByteTag && ((ByteTag) tag.getValue()).asByte() != 0;
-                                if (enabled) {
-                                    if (traitStateProperties.containsKey(key)) {
-                                        for (Map.Entry<String, Set<String>> propertiesEntry : traitStateProperties.get(key).entrySet()) {
-                                            final Set<Tag> values = new LinkedHashSet<>();
-                                            for (String value : propertiesEntry.getValue()) {
-                                                values.add(new StringTag(value));
-                                            }
-                                            propertiesMap.put(propertiesEntry.getKey(), values);
-                                        }
-                                    } else {
-                                        throw new RuntimeException("Missing block trait state properties for trait " + name + " and enabled state " + key);
-                                    }
-                                }
-                            }
-                        } else {
-                            throw new RuntimeException("Missing enabled_states tag for trait " + name);
-                        }
-                    }
-                }
-            }
-
-            final List<CompoundTag> combinations = CombinationUtil.generateCombinations(propertiesMap).stream()
-                    .map(stringTagMap -> {
-                        final CompoundTag combination = new CompoundTag();
-                        for (Map.Entry<String, Tag> entry : stringTagMap.entrySet()) {
-                            combination.put(entry.getKey(), entry.getValue().copy());
-                        }
-                        return combination;
-                    }).collect(Collectors.toList());
-            if (combinations.isEmpty()) {
-                combinations.add(new CompoundTag());
-            }
-
-            for (CompoundTag combination : combinations) {
-                final CompoundTag blockStateTag = new CompoundTag();
-                blockStateTag.putString("name", blockProperty.getKey());
-                blockStateTag.put("states", combination);
-                blockStateTag.putInt("network_id", BlockStateHasher.hash(blockStateTag));
-
-                customBlockStates.add(BedrockBlockState.fromNbt(blockStateTag));
+        if (runtimeProjectionBuilder != null) {
+            try {
+                customRuntimeBlockProperties = RuntimeProjectionBuilder.collectEffectiveCustomBlockProperties(blockProperties, bedrockBlockIdentifiers);
+                customRuntimeStates = new HashSet<>(RuntimeProjectionBuilder.buildCustomRuntimeStates(blockProperties, bedrockBlockIdentifiers));
+                bedrockBlockStates.addAll(customRuntimeStates);
+            } catch (Throwable e) {
+                customMappingSync.failProjection("Failed to build custom block runtime projection states", e);
+                runtimeProjectionBuilder = null;
             }
         }
-
-        bedrockBlockStates.addAll(customBlockStates);
         bedrockBlockStates.sort((a, b) -> HashedPaletteComparator.INSTANCE.compare(a.namespacedIdentifier(), b.namespacedIdentifier()));
+        final Set<String> reportedMissingCustomRuntimeProperties = new HashSet<>();
 
         for (int i = 0; i < bedrockBlockStates.size(); i++) {
             final BedrockBlockState bedrockBlockState = bedrockBlockStates.get(i);
@@ -173,13 +90,49 @@ public class BlockStateRewriter implements StorableObject {
                 this.blockStateTags.put(bedrockId, blockTags.get(bedrockBlockState.namespacedIdentifier()));
             }
 
-            if (bedrockToJavaBlockStates.containsKey(bedrockBlockState)) {
+            final boolean customRuntimeState = customRuntimeStates.contains(bedrockBlockState);
+            boolean projectedCustomRuntimeState = false;
+            if (runtimeProjectionBuilder != null && customRuntimeState) {
+                try {
+                    projectedCustomRuntimeState = runtimeProjectionBuilder.projectRuntime(bedrockId, bedrockBlockState) != -1;
+                } catch (Throwable e) {
+                    customMappingSync.failProjection("Failed to project custom block runtime state " + bedrockBlockState.toBlockStateString(), e);
+                    runtimeProjectionBuilder = null;
+                }
+            }
+
+            if (projectedCustomRuntimeState) {
+                // Installed after all runtime ids are known; avoid logging a vanilla mapping miss for valid custom states.
+                final int javaId = javaBlockStates.get(bedrockToJavaBlockStates.get(BedrockBlockState.INFO_UPDATE));
+                this.blockStateIdMappings.put(bedrockId, javaId);
+            } else if (bedrockToJavaBlockStates.containsKey(bedrockBlockState)) {
                 final int javaId = javaBlockStates.get(bedrockToJavaBlockStates.get(bedrockBlockState));
                 this.blockStateIdMappings.put(bedrockId, javaId);
             } else {
-                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing bedrock -> java block state mapping: " + bedrockBlockState.toBlockStateString());
+                if (customRuntimeState) {
+                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing custom mapping snapshot entry for runtime block state: " + bedrockBlockState.toBlockStateString());
+                    if (reportedMissingCustomRuntimeProperties.add(bedrockBlockState.namespacedIdentifier())) {
+                        final CompoundTag properties = customRuntimeBlockProperties.get(bedrockBlockState.namespacedIdentifier());
+                        final String diagnostics = properties != null ? RuntimeProjectionBuilder.describeBlockProperties(properties) : "<missing START_GAME block properties>";
+                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing custom mapping START_GAME block properties for " + bedrockBlockState.namespacedIdentifier() + ": " + diagnostics);
+                    }
+                } else {
+                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing bedrock -> java block state mapping: " + bedrockBlockState.toBlockStateString());
+                }
                 final int javaId = javaBlockStates.get(bedrockToJavaBlockStates.get(BedrockBlockState.INFO_UPDATE));
                 this.blockStateIdMappings.put(bedrockId, javaId);
+            }
+        }
+        if (runtimeProjectionBuilder != null) {
+            try {
+                final RuntimeProjection projection = runtimeProjectionBuilder.build();
+                customMappingSync.installProjection(projection);
+                for (RuntimeProjection.ProjectedBlockState state : projection.blockStates()) {
+                    this.blockStateIdMappings.put(state.runtimeId(), state.sourceJavaRawId());
+                    this.blockStateTags.put(state.runtimeId(), "mod_block:" + state.bedrockIdentifier());
+                }
+            } catch (Throwable e) {
+                customMappingSync.failProjection("Failed to install custom block runtime projection", e);
             }
         }
 

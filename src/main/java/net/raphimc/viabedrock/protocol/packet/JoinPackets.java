@@ -43,6 +43,7 @@ import net.raphimc.viabedrock.api.util.BitSets;
 import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.api.util.StringUtil;
 import net.raphimc.viabedrock.api.util.TextUtil;
+import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
 import net.raphimc.viabedrock.platform.ViaBedrockConfig;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
@@ -352,34 +353,22 @@ public class JoinPackets {
                     clientPlayer.setGameType(playerGameType);
                     clientPlayer.setName(wrapper.user().getProtocolInfo().getUsername());
 
-                    wrapper.user().put(new JoinGameStorage(levelName, difficulty, rainLevel, lightningLevel, currentTime, chunkTickRange));
-                    wrapper.user().put(new GameRulesStorage(wrapper.user(), gameRules));
-                    wrapper.user().put(new BlockStateRewriter(blockProperties, hashedRuntimeBlockIds));
-                    wrapper.user().put(new ItemRewriter(wrapper.user(), new ItemEntry[0]));
-                    wrapper.user().put(new ChunkTracker(wrapper.user(), dimension));
-                    final EntityTracker entityTracker = new EntityTracker(wrapper.user());
-                    entityTracker.addEntity(clientPlayer, false);
-                    wrapper.user().put(entityTracker);
-
-                    final PacketWrapper brandCustomPayload = PacketWrapper.create(ClientboundConfigurationPackets1_21_9.CUSTOM_PAYLOAD, wrapper.user());
-                    brandCustomPayload.write(Types.STRING, "minecraft:brand"); // channel
-                    brandCustomPayload.write(Types.STRING, "Bedrock" + (!serverEngine.isEmpty() ? " @" + serverEngine : "") + " v: " + vanillaVersion); // content
-                    brandCustomPayload.send(BedrockProtocol.class);
-
-                    if (!enabledFeatures.isEmpty()) {
-                        enabledFeatures.add("minecraft:vanilla");
-                        final PacketWrapper updateEnabledFeatures = PacketWrapper.create(ClientboundConfigurationPackets1_21_9.UPDATE_ENABLED_FEATURES, wrapper.user());
-                        updateEnabledFeatures.write(Types.STRING_ARRAY, enabledFeatures.toArray(new String[0])); // enabled features
-                        updateEnabledFeatures.send(BedrockProtocol.class);
-                    }
-
-                    handleJavaClientGameJoin(wrapper.user());
-
-                    final PacketWrapper requestChunkRadius = PacketWrapper.create(ServerboundBedrockPackets.REQUEST_CHUNK_RADIUS, wrapper.user());
-                    requestChunkRadius.write(BedrockTypes.VAR_INT, wrapper.user().get(ClientSettingsStorage.class).viewDistance()); // radius
-                    requestChunkRadius.write(Types.BYTE, ProtocolConstants.BEDROCK_REQUEST_CHUNK_RADIUS_MAX_RADIUS); // max radius
-                    requestChunkRadius.sendToServer(BedrockProtocol.class);
-                    PacketFactory.sendBedrockLoadingScreen(wrapper.user(), ServerboundLoadingScreenPacketType.StartLoadingScreen, null);
+                    wrapper.user().get(CustomMappingSyncStorage.class).onStartGame(new PendingStartGame(
+                            levelName,
+                            difficulty,
+                            rainLevel,
+                            lightningLevel,
+                            currentTime,
+                            chunkTickRange,
+                            gameRules,
+                            blockProperties,
+                            hashedRuntimeBlockIds,
+                            dimension,
+                            clientPlayer,
+                            serverEngine,
+                            vanillaVersion,
+                            enabledFeatures
+                    ));
                 }, State.PLAY, (PacketHandler) PacketWrapper::cancel // Bedrock client ignores multiple start game packets
         );
         protocol.registerClientboundTransition(ClientboundBedrockPackets.BIOME_DEFINITION_LIST,
@@ -449,6 +438,63 @@ public class JoinPackets {
                     }
                 }
         );
+    }
+
+    public record PendingStartGame(
+            String levelName,
+            Difficulty difficulty,
+            float rainLevel,
+            float lightningLevel,
+            int currentTime,
+            int chunkTickRange,
+            GameRule[] gameRules,
+            BlockProperties[] blockProperties,
+            boolean hashedRuntimeBlockIds,
+            Dimension dimension,
+            ClientPlayerEntity clientPlayer,
+            String serverEngine,
+            String vanillaVersion,
+            List<String> enabledFeatures
+    ) {
+    }
+
+    public static void finishCustomMappingStartGame(final UserConnection user, final PendingStartGame pending) {
+        user.put(new JoinGameStorage(pending.levelName(), pending.difficulty(), pending.rainLevel(), pending.lightningLevel(), pending.currentTime(), pending.chunkTickRange()));
+        user.put(new GameRulesStorage(user, pending.gameRules()));
+        user.put(new BlockStateRewriter(user, pending.blockProperties(), pending.hashedRuntimeBlockIds()));
+        user.put(new ItemRewriter(user, new ItemEntry[0]));
+        user.put(new ChunkTracker(user, pending.dimension()));
+        final EntityTracker entityTracker = new EntityTracker(user);
+        entityTracker.addEntity(pending.clientPlayer(), false);
+        user.put(entityTracker);
+
+        sendBrandCustomPayload(user, "Bedrock" + (!pending.serverEngine().isEmpty() ? " @" + pending.serverEngine() : "") + " v: " + pending.vanillaVersion());
+
+        if (!pending.enabledFeatures().isEmpty()) {
+            final List<String> enabledFeatures = new ArrayList<>(pending.enabledFeatures());
+            enabledFeatures.add("minecraft:vanilla");
+            final PacketWrapper updateEnabledFeatures = PacketWrapper.create(ClientboundConfigurationPackets1_21_9.UPDATE_ENABLED_FEATURES, user);
+            updateEnabledFeatures.write(Types.STRING_ARRAY, enabledFeatures.toArray(new String[0])); // enabled features
+            updateEnabledFeatures.send(BedrockProtocol.class);
+        }
+
+        handleJavaClientGameJoin(user);
+
+        final PacketWrapper requestChunkRadius = PacketWrapper.create(ServerboundBedrockPackets.REQUEST_CHUNK_RADIUS, user);
+        requestChunkRadius.write(BedrockTypes.VAR_INT, user.get(ClientSettingsStorage.class).viewDistance()); // radius
+        requestChunkRadius.write(Types.BYTE, ProtocolConstants.BEDROCK_REQUEST_CHUNK_RADIUS_MAX_RADIUS); // max radius
+        requestChunkRadius.sendToServer(BedrockProtocol.class);
+        PacketFactory.sendBedrockLoadingScreen(user, ServerboundLoadingScreenPacketType.StartLoadingScreen, null);
+    }
+
+    public static void sendBrandCustomPayload(final UserConnection user, final String brand) {
+        final PacketWrapper brandCustomPayload = PacketWrapper.create(ClientboundConfigurationPackets1_21_9.CUSTOM_PAYLOAD, user);
+        brandCustomPayload.write(Types.STRING, "minecraft:brand"); // channel
+        brandCustomPayload.write(Types.STRING, brand); // content
+        brandCustomPayload.send(BedrockProtocol.class);
+        if (user.getChannel() != null) {
+            user.getChannel().flush();
+        }
     }
 
     private static void sendClientCacheStatus(final UserConnection user) {

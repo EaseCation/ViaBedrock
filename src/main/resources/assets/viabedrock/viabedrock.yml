@@ -32,3 +32,29 @@ enable-server-entity-animation: true
 # The fetch runs asynchronously during the Bedrock server handshake, so actual blocking
 # time is typically much shorter than this value.
 java-skin-fetch-timeout: 1000
+
+# BedrockLoader custom block mapping sync options.
+# Requires enable-experimental-features: true; the experimental feature switch is the top-level gate.
+customMappingSync:
+  # If false, ViaBedrock will not request BedrockLoader mappings and will use vanilla-safe fallbacks.
+  enabled: true
+  # Maximum time to wait for a mapping snapshot.
+  timeoutMs: 10000
+  # Maximum uncompressed snapshot size accepted from BedrockLoader.
+  maxSnapshotBytes: 16777216
+  # Maximum custom payload size requested from BedrockLoader.
+  maxPayloadBytes: 28672
+  # Maximum number of custom block states accepted in a snapshot.
+  maxCustomBlockStates: 65536
+  # Maximum number of custom block entity types accepted in a snapshot.
+  maxCustomBlockEntityTypes: 4096
+  # Maximum Java block state id accepted for projected custom states.
+  maxJavaBlockStateId: 1048575
+  # Valid options: "SAFE_FALLBACK", "KICK"
+  failureMode: "SAFE_FALLBACK"
+  # Vanilla fallback used by local-degradation/profile building.
+  defaultFallbackBlock: "minecraft:stone"
+  # If false, chunked BedrockLoader mapping snapshots are rejected.
+  enableChunks: true
+  # If true, send BedrockLoader diagnostic result payloads.
+  sendSyncResult: false

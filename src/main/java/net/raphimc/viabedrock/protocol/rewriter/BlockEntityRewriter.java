@@ -25,6 +25,9 @@ import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.minecraft.blockentity.BlockEntity;
 import com.viaversion.viaversion.api.minecraft.blockentity.BlockEntityImpl;
 import net.raphimc.viabedrock.ViaBedrock;
+import net.raphimc.viabedrock.experimental.block.ModBlockBlockEntityRewriter;
+import net.raphimc.viabedrock.experimental.custommapping.CustomMappingAccess;
+import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
 import net.raphimc.viabedrock.api.chunk.BedrockBlockEntity;
 import net.raphimc.viabedrock.api.model.BedrockBlockState;
 import net.raphimc.viabedrock.api.util.TextUtil;
@@ -43,6 +46,7 @@ public class BlockEntityRewriter {
 
     private static final Rewriter NULL_REWRITER = (user, bedrockBlockEntity) -> null;
     private static final Rewriter NOOP_REWRITER = (user, bedrockBlockEntity) -> new BlockEntityImpl(bedrockBlockEntity.packedXZ(), bedrockBlockEntity.y(), -1, new CompoundTag());
+    private static final Rewriter MOD_BLOCK_REWRITER = new ModBlockBlockEntityRewriter();
 
     static {
         // TODO: Enhancement: Add missing block entities
@@ -114,6 +118,16 @@ public class BlockEntityRewriter {
             return null;
         }
 
+        final CustomMappingAccess customAccess = user.get(CustomMappingSyncStorage.class).access();
+        if (customAccess.isAllowedBedrockRuntimeId(bedrockBlockStateId)) {
+            final CustomMappingAccess.BlockEntityRule rule = customAccess.blockEntityRuleByBedrockRuntimeId(bedrockBlockStateId);
+            if (rule == CustomMappingAccess.BlockEntityRule.DROP || rule == CustomMappingAccess.BlockEntityRule.NONE) return null;
+            final int typeId = customAccess.blockEntityTypeIdByBedrockRuntimeId(bedrockBlockStateId);
+            if (customAccess.resolveBlockEntityType(typeId, "custom block entity rewrite").javaBlockEntityTypeId() == -1) return null;
+            final BlockEntity javaBlockEntity = (rule == CustomMappingAccess.BlockEntityRule.NOOP ? NOOP_REWRITER : MOD_BLOCK_REWRITER).toJava(user, bedrockBlockEntity);
+            return javaBlockEntity == null ? null : javaBlockEntity.withTypeId(typeId);
+        }
+
         final String tag = blockStateRewriter.tag(bedrockBlockStateId);
         if (BLOCK_ENTITY_REWRITERS.containsKey(tag)) {
             final BlockEntity javaBlockEntity = BLOCK_ENTITY_REWRITERS.get(tag).toJava(user, bedrockBlockEntity);
@@ -134,7 +148,39 @@ public class BlockEntityRewriter {
         return null;
     }
 
+    public static BlockEntity toJavaOrCreate(final UserConnection user, final int bedrockBlockStateId, final BedrockBlockEntity bedrockBlockEntity, final byte packedXZ, final short y) {
+        if (bedrockBlockEntity != null) {
+            return toJava(user, bedrockBlockStateId, bedrockBlockEntity);
+        }
+
+        final CustomMappingAccess customAccess = user.get(CustomMappingSyncStorage.class).access();
+        if (customAccess.isAllowedBedrockRuntimeId(bedrockBlockStateId)) {
+            final CustomMappingAccess.BlockEntityRule rule = customAccess.blockEntityRuleByBedrockRuntimeId(bedrockBlockStateId);
+            if (rule == CustomMappingAccess.BlockEntityRule.DROP || rule == CustomMappingAccess.BlockEntityRule.NONE) return null;
+            final int typeId = customAccess.blockEntityTypeIdByBedrockRuntimeId(bedrockBlockStateId);
+            if (customAccess.resolveBlockEntityType(typeId, "missing custom block entity tag").javaBlockEntityTypeId() == -1) return null;
+            return new BlockEntityImpl(packedXZ, y, typeId, new CompoundTag());
+        }
+
+        final String tag = user.get(BlockStateRewriter.class).tag(bedrockBlockStateId);
+        if (tag != null && BedrockProtocol.MAPPINGS.getJavaBlockEntities().containsKey(tag) && isJavaBlockEntity(tag)) {
+            return new BlockEntityImpl(packedXZ, y, BedrockProtocol.MAPPINGS.getJavaBlockEntities().get(tag), new CompoundTag());
+        }
+        return null;
+    }
+
+    public static boolean isJavaBlockEntity(final UserConnection user, final int bedrockBlockStateId) {
+        final CustomMappingAccess customAccess = user.get(CustomMappingSyncStorage.class).access();
+        if (customAccess.isAllowedBedrockRuntimeId(bedrockBlockStateId)) {
+            final CustomMappingAccess.BlockEntityRule rule = customAccess.blockEntityRuleByBedrockRuntimeId(bedrockBlockStateId);
+            if (rule == CustomMappingAccess.BlockEntityRule.DROP || rule == CustomMappingAccess.BlockEntityRule.NONE) return false;
+            return customAccess.resolveBlockEntityType(customAccess.blockEntityTypeIdByBedrockRuntimeId(bedrockBlockStateId), "custom block entity check").javaBlockEntityTypeId() != -1;
+        }
+        return isJavaBlockEntity(user.get(BlockStateRewriter.class).tag(bedrockBlockStateId));
+    }
+
     public static boolean isJavaBlockEntity(final String tag) {
+        if (tag != null && tag.startsWith("mod_block:")) return true;
         return !NULL_REWRITER.equals(BLOCK_ENTITY_REWRITERS.get(tag));
     }
 

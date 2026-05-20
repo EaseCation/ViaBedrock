@@ -22,6 +22,7 @@ import com.viaversion.viaversion.api.protocol.packet.State;
 import com.viaversion.viaversion.api.protocol.remapper.PacketHandlers;
 import com.viaversion.viaversion.protocols.v1_21_5to1_21_6.packet.ServerboundPackets1_21_6;
 import com.viaversion.viaversion.protocols.v1_21_7to1_21_9.packet.ServerboundConfigurationPackets1_21_9;
+import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 
 public class ConfigurationPackets {
@@ -32,6 +33,7 @@ public class ConfigurationPackets {
             protected void register() {
                 handler(MultiStatePackets.CLIENT_SETTINGS_HANDLER);
                 handler(PacketWrapper::cancel);
+                handler(wrapper -> wrapper.user().get(CustomMappingSyncStorage.class).probeChannelIfNeeded());
             }
         });
         protocol.registerServerboundTransition(ServerboundConfigurationPackets1_21_9.CUSTOM_PAYLOAD, null, MultiStatePackets.CUSTOM_PAYLOAD_HANDLER);
@@ -42,6 +44,7 @@ public class ConfigurationPackets {
         protocol.registerServerbound(ServerboundPackets1_21_6.CONFIGURATION_ACKNOWLEDGED, null, wrapper -> {
             wrapper.cancel();
             wrapper.user().getProtocolInfo().setClientState(State.CONFIGURATION);
+            wrapper.user().get(CustomMappingSyncStorage.class).probeChannelIfNeeded();
         });
     }
 
