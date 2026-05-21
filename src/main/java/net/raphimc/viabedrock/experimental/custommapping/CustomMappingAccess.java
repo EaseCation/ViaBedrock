@@ -66,7 +66,7 @@ public final class CustomMappingAccess {
 
     public boolean shouldFailClosed(final JavaBlockStateResolution resolution) {
         return this.hasCustomMappings() && switch (resolution.reason()) {
-            case UNKNOWN_RUNTIME_FALLBACK, UNKNOWN_CUSTOM_FALLBACK, INVALID_FALLBACK -> true;
+            case UNKNOWN_CUSTOM_FALLBACK, INVALID_FALLBACK -> true;
             default -> false;
         };
     }

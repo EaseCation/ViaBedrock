@@ -289,7 +289,7 @@ public class WorldEffectPackets {
                         }
                         case Terrain, BrushDust -> {
                             final CustomMappingAccess.JavaBlockStateResolution resolution = resolveJavaBlockState(wrapper.user(), data, "level event particle");
-                            if (!shouldFailClosed(wrapper.user(), resolution) && resolution.reason() != CustomMappingAccess.FallbackReason.UNKNOWN_RUNTIME_FALLBACK) {
+                            if (!shouldFailClosed(wrapper.user(), resolution)) {
                                 final Particle particle = new Particle(javaParticle.particle().id());
                                 particle.add(Types.VAR_INT, resolution.javaBlockStateId()); // block state
                                 yield javaParticle.withParticle(particle);
@@ -396,7 +396,7 @@ public class WorldEffectPackets {
                             };
                             case ParticlesDestroyBlock, ParticlesDestroyBlockNoSound -> {
                                 final CustomMappingAccess.JavaBlockStateResolution resolution = resolveJavaBlockState(wrapper.user(), data, "destroy block level event");
-                                if (!shouldFailClosed(wrapper.user(), resolution) && resolution.reason() != CustomMappingAccess.FallbackReason.UNKNOWN_RUNTIME_FALLBACK) {
+                                if (!shouldFailClosed(wrapper.user(), resolution)) {
                                     yield resolution.javaBlockStateId();
                                 } else {
                                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing block state: " + data);
@@ -437,7 +437,7 @@ public class WorldEffectPackets {
                             case ParticlesCrackBlock, ParticlesCrackBlockDown, ParticlesCrackBlockUp, ParticlesCrackBlockNorth,
                                  ParticlesCrackBlockSouth, ParticlesCrackBlockWest, ParticlesCrackBlockEast -> {
                                 final CustomMappingAccess.JavaBlockStateResolution resolution = resolveJavaBlockState(wrapper.user(), data, "crack block particle");
-                                if (!shouldFailClosed(wrapper.user(), resolution) && resolution.reason() != CustomMappingAccess.FallbackReason.UNKNOWN_RUNTIME_FALLBACK) {
+                                if (!shouldFailClosed(wrapper.user(), resolution)) {
                                     final Particle particle = new Particle(javaParticle.particle().id());
                                     particle.add(Types.VAR_INT, resolution.javaBlockStateId()); // block state
                                     yield javaParticle.withParticle(particle);

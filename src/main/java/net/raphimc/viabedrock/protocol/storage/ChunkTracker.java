@@ -213,9 +213,6 @@ public class ChunkTracker extends StoredObject {
         final int layer0BlockState = blockPalettes.get(0).idAt(sectionX, sectionY, sectionZ);
         CustomMappingAccess.JavaBlockStateResolution layer0Resolution = customAccess.resolveBedrockRuntimeId(layer0BlockState, blockStateRewriter.javaId(layer0BlockState), context);
         int remappedBlockState = layer0Resolution.javaBlockStateId();
-        if (layer0Resolution.reason() == CustomMappingAccess.FallbackReason.UNKNOWN_RUNTIME_FALLBACK) {
-            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing block state: " + layer0BlockState);
-        }
         if (customAccess.shouldFailClosed(layer0Resolution)) {
             return layer0Resolution;
         }
@@ -625,9 +622,6 @@ public class ChunkTracker extends StoredObject {
                         return null;
                     }
                     int javaBlockState = resolution.javaBlockStateId();
-                    if (resolution.reason() == CustomMappingAccess.FallbackReason.UNKNOWN_RUNTIME_FALLBACK) {
-                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing block state: " + bedrockBlockState);
-                    }
                     remappedBlockPalette.setIdByIndex(i, javaBlockState);
 
                     paletteIndexBlockStateTags[i] = blockStateRewriter.tag(bedrockBlockState);
