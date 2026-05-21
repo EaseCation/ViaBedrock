@@ -289,7 +289,7 @@ public class WorldEffectPackets {
                         }
                         case Terrain, BrushDust -> {
                             final CustomMappingAccess.JavaBlockStateResolution resolution = resolveJavaBlockState(wrapper.user(), data, "level event particle");
-                            if (resolution.reason() != CustomMappingAccess.FallbackReason.UNKNOWN_RUNTIME_FALLBACK) {
+                            if (!shouldFailClosed(wrapper.user(), resolution) && resolution.reason() != CustomMappingAccess.FallbackReason.UNKNOWN_RUNTIME_FALLBACK) {
                                 final Particle particle = new Particle(javaParticle.particle().id());
                                 particle.add(Types.VAR_INT, resolution.javaBlockStateId()); // block state
                                 yield javaParticle.withParticle(particle);
@@ -396,7 +396,7 @@ public class WorldEffectPackets {
                             };
                             case ParticlesDestroyBlock, ParticlesDestroyBlockNoSound -> {
                                 final CustomMappingAccess.JavaBlockStateResolution resolution = resolveJavaBlockState(wrapper.user(), data, "destroy block level event");
-                                if (resolution.reason() != CustomMappingAccess.FallbackReason.UNKNOWN_RUNTIME_FALLBACK) {
+                                if (!shouldFailClosed(wrapper.user(), resolution) && resolution.reason() != CustomMappingAccess.FallbackReason.UNKNOWN_RUNTIME_FALLBACK) {
                                     yield resolution.javaBlockStateId();
                                 } else {
                                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing block state: " + data);
@@ -437,7 +437,7 @@ public class WorldEffectPackets {
                             case ParticlesCrackBlock, ParticlesCrackBlockDown, ParticlesCrackBlockUp, ParticlesCrackBlockNorth,
                                  ParticlesCrackBlockSouth, ParticlesCrackBlockWest, ParticlesCrackBlockEast -> {
                                 final CustomMappingAccess.JavaBlockStateResolution resolution = resolveJavaBlockState(wrapper.user(), data, "crack block particle");
-                                if (resolution.reason() != CustomMappingAccess.FallbackReason.UNKNOWN_RUNTIME_FALLBACK) {
+                                if (!shouldFailClosed(wrapper.user(), resolution) && resolution.reason() != CustomMappingAccess.FallbackReason.UNKNOWN_RUNTIME_FALLBACK) {
                                     final Particle particle = new Particle(javaParticle.particle().id());
                                     particle.add(Types.VAR_INT, resolution.javaBlockStateId()); // block state
                                     yield javaParticle.withParticle(particle);
@@ -682,7 +682,12 @@ public class WorldEffectPackets {
                 }
             }
             final CustomMappingAccess customAccess = wrapper.user().get(CustomMappingSyncStorage.class).access();
-            int javaBlockState = resolveJavaBlockState(wrapper.user(), blockState, "block event block id").javaBlockStateId();
+            final CustomMappingAccess.JavaBlockStateResolution resolution = resolveJavaBlockState(wrapper.user(), blockState, "block event block id");
+            if (customAccess.shouldFailClosed(resolution)) {
+                wrapper.cancel();
+                return;
+            }
+            int javaBlockState = resolution.javaBlockStateId();
             BlockState javaBlock = BedrockProtocol.MAPPINGS.getJavaBlockStates().inverse().get(javaBlockState);
             if (javaBlock == null) {
                 javaBlockState = customAccess.fallbackJavaBlockState(javaBlockState, "block event block id");
@@ -696,6 +701,10 @@ public class WorldEffectPackets {
         final BlockStateRewriter blockStateRewriter = user.get(BlockStateRewriter.class);
         final CustomMappingAccess customAccess = user.get(CustomMappingSyncStorage.class).access();
         return customAccess.resolveBedrockRuntimeId(bedrockRuntimeId, blockStateRewriter.javaId(bedrockRuntimeId), context);
+    }
+
+    private static boolean shouldFailClosed(final UserConnection user, final CustomMappingAccess.JavaBlockStateResolution resolution) {
+        return user.get(CustomMappingSyncStorage.class).access().shouldFailClosed(resolution);
     }
 
     private static SoundDefinitions.ConfiguredSound tryFindSound(final UserConnection user, final SharedTypes_Legacy_LevelSoundEvent soundEvent, final int data, final String entityIdentifier, final boolean isBabyMob) {

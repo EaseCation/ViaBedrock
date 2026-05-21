@@ -10,6 +10,7 @@ import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectOpenHashMap;
 import com.viaversion.viaversion.libs.fastutil.ints.IntOpenHashSet;
 import com.viaversion.viaversion.libs.fastutil.ints.IntSet;
 import net.raphimc.viabedrock.ViaBedrock;
+import net.raphimc.viabedrock.api.model.BedrockBlockState;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 
 import java.util.HashMap;
@@ -63,11 +64,11 @@ public final class CustomMappingAccess {
         return SAFE;
     }
 
-    public int javaBlockStateOrFallback(final int bedrockRuntimeId) {
-        final int javaId = this.runtimeToJava.get(bedrockRuntimeId);
-        if (javaId != -1) return javaId;
-        final int fallback = this.runtimeToFallback.get(bedrockRuntimeId);
-        return fallback != -1 ? fallback : 1;
+    public boolean shouldFailClosed(final JavaBlockStateResolution resolution) {
+        return this.hasCustomMappings() && switch (resolution.reason()) {
+            case UNKNOWN_RUNTIME_FALLBACK, UNKNOWN_CUSTOM_FALLBACK, INVALID_FALLBACK -> true;
+            default -> false;
+        };
     }
 
     public JavaBlockStateResolution resolveBedrockRuntimeId(final int bedrockRuntimeId, final int mappedJavaBlockStateId, final String context) {
@@ -79,7 +80,7 @@ public final class CustomMappingAccess {
             return new JavaBlockStateResolution(javaId, FallbackReason.ALLOWED_CUSTOM);
         }
         this.warnUnknownBedrockRuntimeId(bedrockRuntimeId, context);
-        return new JavaBlockStateResolution(0, FallbackReason.UNKNOWN_RUNTIME_FALLBACK);
+        return new JavaBlockStateResolution(infoUpdateJavaBlockStateId(), FallbackReason.UNKNOWN_RUNTIME_FALLBACK);
     }
 
     public JavaBlockStateResolution resolveJavaBlockState(final int javaBlockStateId, final String context) {
@@ -217,7 +218,12 @@ public final class CustomMappingAccess {
         synchronized (this.warnedUnknownBedrockRuntimeIds) {
             if (!this.warnedUnknownBedrockRuntimeIds.add(bedrockRuntimeId)) return;
         }
-        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown Bedrock runtime block state " + bedrockRuntimeId + " in " + context + "; using air fallback");
+        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown Bedrock runtime block state " + bedrockRuntimeId + " in " + context + "; using info_update fallback");
+    }
+
+    private static int infoUpdateJavaBlockStateId() {
+        final Integer javaId = BedrockProtocol.MAPPINGS.getJavaBlockStates().get(BedrockProtocol.MAPPINGS.getBedrockToJavaBlockStates().get(BedrockBlockState.INFO_UPDATE));
+        return javaId != null ? javaId : 0;
     }
 
     private void warnDisallowedBlockEntityType(final int javaBlockEntityTypeId, final String context) {
@@ -250,17 +256,17 @@ public final class CustomMappingAccess {
             this.javaFilter.defaultReturnValue(-1);
         }
 
-        public void addBlockState(final int runtimeId, final String bedrockIdentifier, final int javaRawId, final int fallbackJavaRawId, final int emit, final int filter, final BlockEntityRule rule) {
-            this.runtimeToJava.put(runtimeId, javaRawId);
-            this.runtimeToFallback.put(runtimeId, fallbackJavaRawId);
-            this.javaToFallback.put(javaRawId, fallbackJavaRawId);
-            this.javaEmit.put(javaRawId, emit);
-            this.javaFilter.put(javaRawId, filter);
-            this.allowedJavaBlockStates.add(javaRawId);
+        public void addBlockState(final int runtimeId, final String bedrockIdentifier, final int sourceJavaRawId, final int fallbackSourceJavaRawId, final int emit, final int filter, final BlockEntityRule rule) {
+            this.runtimeToJava.put(runtimeId, sourceJavaRawId);
+            this.runtimeToFallback.put(runtimeId, fallbackSourceJavaRawId);
+            this.javaToFallback.put(sourceJavaRawId, fallbackSourceJavaRawId);
+            this.javaEmit.put(sourceJavaRawId, emit);
+            this.javaFilter.put(sourceJavaRawId, filter);
+            this.allowedJavaBlockStates.add(sourceJavaRawId);
             this.runtimeBlockEntityRules.put(runtimeId, rule);
             this.runtimeIdentifiers.put(runtimeId, bedrockIdentifier);
-            this.maxJavaBlockStateId = Math.max(this.maxJavaBlockStateId, javaRawId);
-            this.lightProfileKey = fnv1a(fnv1a(fnv1a(fnv1a(this.lightProfileKey, runtimeId), javaRawId), emit), filter);
+            this.maxJavaBlockStateId = Math.max(this.maxJavaBlockStateId, sourceJavaRawId);
+            this.lightProfileKey = fnv1a(fnv1a(fnv1a(fnv1a(this.lightProfileKey, runtimeId), sourceJavaRawId), emit), filter);
         }
 
         public void addBlockEntityType(final String bedrockIdentifier, final String javaIdentifier, final int rawId, final BlockEntityRule rule) {

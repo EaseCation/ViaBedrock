@@ -11,7 +11,7 @@ import java.util.function.Supplier;
 public final class CustomMappingProfileCache {
     public static final long EMPTY_KEY = 0x9ae16a3b2f90404fL;
     public static final long UNKNOWN_KEY = 0L;
-    public static final String SYNC_MAPPING_VERSION = "viabedrock-custom-mapping-v1";
+    public static final String SYNC_MAPPING_VERSION = "viabedrock-custom-mapping-v2";
     private static final int KEY_SCHEMA_VERSION = 2;
     private static final String PROFILE_ALGORITHM_VERSION = "snapshot-profile-v1";
     private static final String LIGHT_SEMANTIC_ALGORITHM_VERSION = "block-light-semantics-v1";

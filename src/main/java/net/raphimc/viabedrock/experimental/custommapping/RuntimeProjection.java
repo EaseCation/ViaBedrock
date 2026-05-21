@@ -15,12 +15,16 @@ public record RuntimeProjection(
     }
 
     public CustomMappingAccess toAccess() {
+        return toAccess(false, false);
+    }
+
+    public CustomMappingAccess toAccess(final boolean blockStatesAreFinalOutput, final boolean blockEntityTypesAreFinalOutput) {
         final CustomMappingAccess.Builder builder = new CustomMappingAccess.Builder();
         for (SnapshotProfile.BlockEntityTypeMapping type : this.blockEntityTypes) {
-            builder.addBlockEntityType(type.bedrockIdentifier(), type.javaIdentifier(), type.javaRawId(), type.rule());
+            builder.addBlockEntityType(type.bedrockIdentifier(), type.javaIdentifier(), blockEntityTypesAreFinalOutput ? type.targetJavaRawId() : type.sourceJavaRawId(), type.rule());
         }
         for (ProjectedBlockState state : this.blockStates) {
-            builder.addBlockState(state.runtimeId(), state.bedrockIdentifier(), state.sourceJavaRawId(), state.fallbackJavaRawId(), state.emit(), state.filter(), state.rule());
+            builder.addBlockState(state.runtimeId(), state.bedrockIdentifier(), blockStatesAreFinalOutput ? state.targetJavaRawId() : state.sourceJavaRawId(), state.fallbackSourceJavaRawId(), state.emit(), state.filter(), state.rule());
         }
         return builder.build();
     }
@@ -34,7 +38,7 @@ public record RuntimeProjection(
             String bedrockIdentifier,
             int sourceJavaRawId,
             int targetJavaRawId,
-            int fallbackJavaRawId,
+            int fallbackSourceJavaRawId,
             int emit,
             int filter,
             CustomMappingAccess.BlockEntityRule rule) {

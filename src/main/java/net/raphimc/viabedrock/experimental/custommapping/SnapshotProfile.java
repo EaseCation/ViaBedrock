@@ -37,24 +37,24 @@ public final class SnapshotProfile {
     }
 
     public static SnapshotProfile fromSnapshot(final CustomMappingSnapshot snapshot, final long cacheKey) {
-        final int defaultFallbackRawId = defaultFallbackRawId(snapshot.vanillaBlockStateCount());
         final List<String> diagnostics = new ArrayList<>();
         final List<BlockEntityTypeMapping> entityTypes = new ArrayList<>();
         final Map<String, BlockEntityTypeMapping> entityTypesByBedrockIdentifier = new HashMap<>();
+        int nextBlockEntitySourceId = BedrockProtocol.MAPPINGS.getVanillaBlockEntityCount();
         for (CustomMappingSnapshot.BlockEntityTypeEntry type : snapshot.blockEntityTypes()) {
             final CustomMappingAccess.BlockEntityRule rule = type.rule() == CustomMappingAccess.BlockEntityRule.NONE
                     ? CustomMappingAccess.BlockEntityRule.DROP : type.rule();
-            final BlockEntityTypeMapping mapping = new BlockEntityTypeMapping(type.bedrockIdentifier(), type.javaIdentifier(), type.javaRawId(), rule);
+            final BlockEntityTypeMapping mapping = new BlockEntityTypeMapping(type.bedrockIdentifier(), type.javaIdentifier(), nextBlockEntitySourceId++, type.targetJavaRawId(), rule);
             entityTypes.add(mapping);
             entityTypesByBedrockIdentifier.put(type.bedrockIdentifier(), mapping);
         }
 
         final Map<CustomMappingSnapshot.TypedBedrockState, BlockStateMapping> states = new HashMap<>();
         for (CustomMappingSnapshot.BlockStateEntry state : snapshot.blockStates()) {
-            int fallbackJavaRawId = state.fallbackJavaRawId();
-            if (fallbackJavaRawId < 0 || fallbackJavaRawId >= snapshot.vanillaBlockStateCount()) {
-                diagnostics.add("Degraded invalid fallback for " + state.bedrockState().toUntypedBlockStateString() + ": " + fallbackJavaRawId);
-                fallbackJavaRawId = defaultFallbackRawId;
+            final int fallbackSourceJavaRawId = rawIdFor(state.fallbackJavaState());
+            if (fallbackSourceJavaRawId < 0 || fallbackSourceJavaRawId >= BedrockProtocol.MAPPINGS.getVanillaBlockStateCount()) {
+                diagnostics.add("Skipped " + state.bedrockState().toUntypedBlockStateString() + " because fallbackJavaState is not a source vanilla block state: " + state.fallbackJavaState());
+                continue;
             }
 
             int emit = state.emit();
@@ -65,7 +65,7 @@ public final class SnapshotProfile {
             }
             if (filter < 0 || filter > 15) {
                 diagnostics.add("Degraded invalid filter light for " + state.bedrockState().toUntypedBlockStateString() + ": " + filter);
-                filter = BedrockProtocol.MAPPINGS.getFilterLight(fallbackJavaRawId);
+                filter = BedrockProtocol.MAPPINGS.getFilterLight(fallbackSourceJavaRawId);
             }
 
             CustomMappingAccess.BlockEntityRule rule = state.blockEntityRule();
@@ -74,7 +74,7 @@ public final class SnapshotProfile {
                 rule = CustomMappingAccess.BlockEntityRule.DROP;
             }
 
-            states.put(state.bedrockState(), new BlockStateMapping(state.javaRawId(), fallbackJavaRawId, emit, filter, rule));
+            states.put(state.bedrockState(), new BlockStateMapping(state.targetJavaRawId(), fallbackSourceJavaRawId, emit, filter, rule));
         }
 
         if (!diagnostics.isEmpty()) {
@@ -91,6 +91,30 @@ public final class SnapshotProfile {
         return this.blockEntityTypes;
     }
 
+    public int blockStateCount() {
+        return this.blockStatesByState.size();
+    }
+
+    public int blockEntityTypeCount() {
+        return this.blockEntityTypes.size();
+    }
+
+    public int maxTargetJavaRawId() {
+        int max = -1;
+        for (BlockStateMapping mapping : this.blockStatesByState.values()) {
+            max = Math.max(max, mapping.targetJavaRawId());
+        }
+        return max;
+    }
+
+    public int maxTargetBlockEntityRawId() {
+        int max = -1;
+        for (BlockEntityTypeMapping mapping : this.blockEntityTypes) {
+            max = Math.max(max, mapping.targetJavaRawId());
+        }
+        return max;
+    }
+
     public List<String> diagnostics() {
         return this.diagnostics;
     }
@@ -99,19 +123,10 @@ public final class SnapshotProfile {
         return this.cacheKey;
     }
 
-    public record BlockStateMapping(int javaRawId, int fallbackJavaRawId, int emit, int filter, CustomMappingAccess.BlockEntityRule rule) {
+    public record BlockStateMapping(int targetJavaRawId, int fallbackSourceJavaRawId, int emit, int filter, CustomMappingAccess.BlockEntityRule rule) {
     }
 
-    public record BlockEntityTypeMapping(String bedrockIdentifier, String javaIdentifier, int javaRawId, CustomMappingAccess.BlockEntityRule rule) {
-    }
-
-    private static int defaultFallbackRawId(final int vanillaBlockStateCount) {
-        final String configured = ViaBedrock.getConfig().getCustomMappingSyncDefaultFallbackBlock();
-        int fallback = rawIdFor(configured);
-        if (fallback >= 0 && fallback < vanillaBlockStateCount) return fallback;
-        fallback = rawIdFor("minecraft:stone");
-        if (fallback >= 0 && fallback < vanillaBlockStateCount) return fallback;
-        return 0;
+    public record BlockEntityTypeMapping(String bedrockIdentifier, String javaIdentifier, int sourceJavaRawId, int targetJavaRawId, CustomMappingAccess.BlockEntityRule rule) {
     }
 
     private static int rawIdFor(final String blockStateString) {

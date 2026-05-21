@@ -64,7 +64,9 @@ public class AsyncLightEngine implements ChunkLightProvider {
         final long chunkKey = ChunkPosition.chunkKey(chunkX, chunkZ);
 
         // Strip disallowed custom data BEFORE hash while keeping connection-local allowed custom states.
-        tracker.stripCustomBlockData(chunk);
+        if (!tracker.stripCustomBlockData(chunk)) {
+            return true;
+        }
 
         // Sending the chunk runs it through ViaVersion, which mutates palette ids in-place.
         // Keep an immutable-to-us snapshot with ViaBedrock/source ids for async light calculations.

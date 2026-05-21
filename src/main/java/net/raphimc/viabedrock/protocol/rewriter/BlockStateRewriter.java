@@ -102,9 +102,7 @@ public class BlockStateRewriter implements StorableObject {
             }
 
             if (projectedCustomRuntimeState) {
-                // Installed after all runtime ids are known; avoid logging a vanilla mapping miss for valid custom states.
-                final int javaId = javaBlockStates.get(bedrockToJavaBlockStates.get(BedrockBlockState.INFO_UPDATE));
-                this.blockStateIdMappings.put(bedrockId, javaId);
+                // Installed after all runtime ids are known; leave unmapped until the source id is available.
             } else if (bedrockToJavaBlockStates.containsKey(bedrockBlockState)) {
                 final int javaId = javaBlockStates.get(bedrockToJavaBlockStates.get(bedrockBlockState));
                 this.blockStateIdMappings.put(bedrockId, javaId);
@@ -118,9 +116,9 @@ public class BlockStateRewriter implements StorableObject {
                     }
                 } else {
                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing bedrock -> java block state mapping: " + bedrockBlockState.toBlockStateString());
+                    final int javaId = javaBlockStates.get(bedrockToJavaBlockStates.get(BedrockBlockState.INFO_UPDATE));
+                    this.blockStateIdMappings.put(bedrockId, javaId);
                 }
-                final int javaId = javaBlockStates.get(bedrockToJavaBlockStates.get(BedrockBlockState.INFO_UPDATE));
-                this.blockStateIdMappings.put(bedrockId, javaId);
             }
         }
         if (runtimeProjectionBuilder != null) {
@@ -128,7 +126,7 @@ public class BlockStateRewriter implements StorableObject {
                 final RuntimeProjection projection = runtimeProjectionBuilder.build();
                 customMappingSync.installProjection(projection);
                 for (RuntimeProjection.ProjectedBlockState state : projection.blockStates()) {
-                    this.blockStateIdMappings.put(state.runtimeId(), state.sourceJavaRawId());
+                    this.blockStateIdMappings.put(state.runtimeId(), customMappingSync.packetBlockStateId(state));
                     this.blockStateTags.put(state.runtimeId(), "mod_block:" + state.bedrockIdentifier());
                 }
             } catch (Throwable e) {
@@ -181,7 +179,11 @@ public class BlockStateRewriter implements StorableObject {
             return javaBlockStateId;
         }
 
-        final BlockState waterlogged = BedrockProtocol.MAPPINGS.getJavaBlockStates().inverse().get(javaBlockStateId).withProperty("waterlogged", "true");
+        final BlockState blockState = BedrockProtocol.MAPPINGS.getJavaBlockStates().inverse().get(javaBlockStateId);
+        if (blockState == null) {
+            return -1;
+        }
+        final BlockState waterlogged = blockState.withProperty("waterlogged", "true");
         return BedrockProtocol.MAPPINGS.getJavaBlockStates().getOrDefault(waterlogged, -1);
     }
 

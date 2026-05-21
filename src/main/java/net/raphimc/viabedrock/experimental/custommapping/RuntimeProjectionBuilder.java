@@ -25,23 +25,19 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 public final class RuntimeProjectionBuilder {
-    private static final int SYNTHETIC_BLOCK_STATE_BASE = BedrockProtocol.MAPPINGS.getVanillaBlockStateCount();
-
     private final SnapshotProfile profile;
     private final RuntimeProjectionCache.Key cacheKey;
     private final RuntimeProjection cachedProjection;
     private final Map<Integer, RuntimeProjection.ProjectedBlockState> cachedBlockStatesByRuntimeId;
-    private final boolean useSyntheticSourceIds;
     private final List<RuntimeProjection.ProjectedBlockState> blockStates = new ArrayList<>();
+    private final int blockStateSourceBase;
+    private final int blockEntitySourceBase;
 
-    public RuntimeProjectionBuilder(final SnapshotProfile profile) {
-        this(profile, null, false);
-    }
-
-    public RuntimeProjectionBuilder(final SnapshotProfile profile, final RuntimeProjectionCache.Key cacheKey, final boolean useSyntheticSourceIds) {
+    public RuntimeProjectionBuilder(final SnapshotProfile profile, final RuntimeProjectionCache.Key cacheKey, final int blockStateSourceBase, final int blockEntitySourceBase) {
         this.profile = profile;
         this.cacheKey = cacheKey;
-        this.useSyntheticSourceIds = useSyntheticSourceIds;
+        this.blockStateSourceBase = blockStateSourceBase;
+        this.blockEntitySourceBase = blockEntitySourceBase;
         this.cachedProjection = cacheKey != null ? RuntimeProjectionCache.getInstance().get(cacheKey) : null;
         if (this.cachedProjection != null) {
             this.cachedBlockStatesByRuntimeId = this.cachedProjection.blockStates().stream()
@@ -61,13 +57,13 @@ public final class RuntimeProjectionBuilder {
             return -1;
         }
 
-        final int sourceJavaRawId = this.useSyntheticSourceIds ? SYNTHETIC_BLOCK_STATE_BASE + this.blockStates.size() : mapping.javaRawId();
+        final int sourceJavaRawId = this.blockStateSourceBase + this.blockStates.size();
         this.blockStates.add(new RuntimeProjection.ProjectedBlockState(
                 runtimeId,
                 bedrockBlockState.namespacedIdentifier(),
                 sourceJavaRawId,
-                mapping.javaRawId(),
-                mapping.fallbackJavaRawId(),
+                mapping.targetJavaRawId(),
+                mapping.fallbackSourceJavaRawId(),
                 mapping.emit(),
                 mapping.filter(),
                 mapping.rule()));
@@ -78,7 +74,12 @@ public final class RuntimeProjectionBuilder {
         if (this.cachedProjection != null) {
             return this.cachedProjection;
         }
-        final RuntimeProjection projection = new RuntimeProjection(this.blockStates, this.profile.blockEntityTypes());
+        final List<SnapshotProfile.BlockEntityTypeMapping> blockEntityTypes = new ArrayList<>(this.profile.blockEntityTypes().size());
+        int nextBlockEntitySourceId = this.blockEntitySourceBase;
+        for (SnapshotProfile.BlockEntityTypeMapping type : this.profile.blockEntityTypes()) {
+            blockEntityTypes.add(new SnapshotProfile.BlockEntityTypeMapping(type.bedrockIdentifier(), type.javaIdentifier(), nextBlockEntitySourceId++, type.targetJavaRawId(), type.rule()));
+        }
+        final RuntimeProjection projection = new RuntimeProjection(this.blockStates, blockEntityTypes);
         if (this.cacheKey != null) {
             RuntimeProjectionCache.getInstance().put(this.cacheKey, projection);
         }

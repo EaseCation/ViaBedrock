@@ -17,9 +17,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 public record CustomMappingSnapshot(
+        int schemaVersion,
         int javaProtocolVersion,
-        int vanillaBlockStateCount,
-        int vanillaBlockEntityTypeCount,
         int flags,
         List<BlockStateEntry> blockStates,
         List<BlockEntityTypeEntry> blockEntityTypes) {
@@ -151,8 +150,8 @@ public record CustomMappingSnapshot(
 
     public record BlockStateEntry(
             TypedBedrockState bedrockState,
-            int javaRawId,
-            int fallbackJavaRawId,
+            int targetJavaRawId,
+            String fallbackJavaState,
             int emit,
             int filter,
             CustomMappingAccess.BlockEntityRule blockEntityRule) {
@@ -161,7 +160,7 @@ public record CustomMappingSnapshot(
     public record BlockEntityTypeEntry(
             String bedrockIdentifier,
             String javaIdentifier,
-            int javaRawId,
+            int targetJavaRawId,
             CustomMappingAccess.BlockEntityRule rule) {
     }
 
@@ -172,12 +171,10 @@ public record CustomMappingSnapshot(
             final int maxCustomBlockEntityTypes,
             final int maxJavaBlockStateId) {
         final Reader r = new Reader(body, maxSnapshotBytes);
+        final int schemaVersion = r.readNonNegativeVarInt("schema version");
+        if (schemaVersion != 2) throw new IllegalArgumentException("Unsupported BedrockLoader custom mapping schema " + schemaVersion + " (expected 2)");
         final int javaProtocolVersion = r.readNonNegativeVarInt("java protocol");
-        final int vanillaBlockStateCount = r.readNonNegativeVarInt("vanilla block state count");
-        final int vanillaBlockEntityTypeCount = r.readNonNegativeVarInt("vanilla block entity type count");
         final int flags = r.readNonNegativeVarInt("flags");
-        if (vanillaBlockStateCount != BedrockProtocol.MAPPINGS.getVanillaBlockStateCount()) throw new IllegalArgumentException("Vanilla block state count mismatch");
-        if (vanillaBlockEntityTypeCount != BedrockProtocol.MAPPINGS.getVanillaBlockEntityCount()) throw new IllegalArgumentException("Vanilla block entity type count mismatch");
 
         final int stringCount = r.readNonNegativeVarInt("string table size");
         if (stringCount > 262144) throw new IllegalArgumentException("Invalid string table size");
@@ -199,7 +196,7 @@ public record CustomMappingSnapshot(
         if (blockStateCount > maxCustomBlockStates) throw new IllegalArgumentException("Invalid custom block state count");
         final List<BlockStateEntry> blockStates = new ArrayList<>(blockStateCount);
         final HashSet<TypedBedrockState> seenStates = new HashSet<>();
-        final HashSet<Integer> seenJavaRawIds = new HashSet<>();
+        final HashSet<Integer> seenTargetJavaRawIds = new HashSet<>();
         WireBlockStateOrder previousBlockStateOrder = null;
         for (int i = 0; i < blockStateCount; i++) {
             final int identifierId = id(r, strings);
@@ -246,16 +243,16 @@ public record CustomMappingSnapshot(
                 propertyOrder.add(new WirePropertyOrder(nameId, typeId, boolValue, intValue, stringValueId));
             }
 
-            final int javaRawId = r.readNonNegativeVarInt("java raw id");
-            final int fallbackJavaRawId = r.readVarInt();
+            final int targetJavaRawId = r.readNonNegativeVarInt("target java raw id");
+            final String fallbackJavaState = strings[id(r, strings)];
             final int emit = r.readUnsignedByte();
             final int filter = r.readUnsignedByte();
             final CustomMappingAccess.BlockEntityRule rule = rule(r.readUnsignedByte());
             if (emit > 15 || filter > 15) throw new IllegalArgumentException("Invalid light semantics");
 
-            if (javaRawId < vanillaBlockStateCount) throw new IllegalArgumentException("Custom java raw id in vanilla range");
-            if (javaRawId > maxJavaBlockStateId) throw new IllegalArgumentException("Java raw id exceeds configured maximum");
-            if (!seenJavaRawIds.add(javaRawId)) throw new IllegalArgumentException("Duplicate java raw id");
+            if (targetJavaRawId > maxJavaBlockStateId) throw new IllegalArgumentException("Target Java raw id exceeds configured maximum");
+            if (!seenTargetJavaRawIds.add(targetJavaRawId)) throw new IllegalArgumentException("Duplicate target Java raw id");
+            if (fallbackJavaState.isBlank()) throw new IllegalArgumentException("Blank fallback Java state");
 
             final WireBlockStateOrder order = new WireBlockStateOrder(identifierId, propertyOrder);
             if (previousBlockStateOrder != null && previousBlockStateOrder.compareTo(order) >= 0) throw new IllegalArgumentException("Block states are not sorted");
@@ -263,7 +260,7 @@ public record CustomMappingSnapshot(
 
             final TypedBedrockState typedState = new TypedBedrockState(identifier, properties);
             if (!seenStates.add(typedState)) throw new IllegalArgumentException("Duplicate bedrock block state");
-            blockStates.add(new BlockStateEntry(typedState, javaRawId, fallbackJavaRawId, emit, filter, rule));
+            blockStates.add(new BlockStateEntry(typedState, targetJavaRawId, fallbackJavaState, emit, filter, rule));
         }
 
         final int blockEntityCount = r.readNonNegativeVarInt("custom block entity type count");
@@ -278,20 +275,19 @@ public record CustomMappingSnapshot(
             if (isPlaceholder(bedrockIdentifier)) throw new IllegalArgumentException("Placeholder block entity type in custom mapping snapshot");
             final int javaIdentifierId = id(r, strings);
             final String javaIdentifier = strings[javaIdentifierId];
-            final int javaRawId = r.readNonNegativeVarInt("block entity raw id");
+            final int targetJavaRawId = r.readNonNegativeVarInt("target block entity raw id");
             final CustomMappingAccess.BlockEntityRule rule = rule(r.readUnsignedByte());
-            if (javaRawId < vanillaBlockEntityTypeCount) throw new IllegalArgumentException("Custom block entity id in vanilla range");
-            if ((long) javaRawId >= (long) vanillaBlockEntityTypeCount + maxCustomBlockEntityTypes) throw new IllegalArgumentException("Custom block entity id exceeds configured maximum");
-            if (!blockEntityRawIds.add(javaRawId)) throw new IllegalArgumentException("Duplicate custom block entity raw id");
+            if ((long) targetJavaRawId >= (long) Integer.MAX_VALUE) throw new IllegalArgumentException("Custom block entity id exceeds configured maximum");
+            if (!blockEntityRawIds.add(targetJavaRawId)) throw new IllegalArgumentException("Duplicate custom block entity raw id");
             if (!blockEntityIdentifiers.add(bedrockIdentifier)) throw new IllegalArgumentException("Duplicate custom block entity identifier");
-            final WireBlockEntityOrder order = new WireBlockEntityOrder(bedrockIdentifierId, javaIdentifierId, javaRawId);
+            final WireBlockEntityOrder order = new WireBlockEntityOrder(bedrockIdentifierId, javaIdentifierId, targetJavaRawId);
             if (previousBlockEntityOrder != null && previousBlockEntityOrder.compareTo(order) >= 0) throw new IllegalArgumentException("Block entity types are not sorted");
             previousBlockEntityOrder = order;
-            blockEntityTypes.add(new BlockEntityTypeEntry(bedrockIdentifier, javaIdentifier, javaRawId, rule));
+            blockEntityTypes.add(new BlockEntityTypeEntry(bedrockIdentifier, javaIdentifier, targetJavaRawId, rule));
         }
 
         r.ensureFullyRead();
-        return new CustomMappingSnapshot(javaProtocolVersion, vanillaBlockStateCount, vanillaBlockEntityTypeCount, flags, blockStates, blockEntityTypes);
+        return new CustomMappingSnapshot(schemaVersion, javaProtocolVersion, flags, blockStates, blockEntityTypes);
     }
 
     private static int id(final Reader r, final String[] strings) {

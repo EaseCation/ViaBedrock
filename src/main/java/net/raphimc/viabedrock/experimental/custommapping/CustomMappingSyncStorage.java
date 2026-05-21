@@ -2,6 +2,9 @@ package net.raphimc.viabedrock.experimental.custommapping;
 
 import com.viaversion.viaversion.api.connection.StoredObject;
 import com.viaversion.viaversion.api.connection.UserConnection;
+import com.viaversion.viaversion.api.data.MappingData;
+import com.viaversion.viaversion.api.data.Mappings;
+import com.viaversion.viaversion.api.protocol.Protocol;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.protocol.storage.CustomRegistryStorage;
 import com.viaversion.viaversion.api.type.Types;
@@ -12,7 +15,6 @@ import io.netty.util.concurrent.ScheduledFuture;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.platform.ViaBedrockConfig;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
-import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 import net.raphimc.viabedrock.protocol.model.BlockProperties;
 import net.raphimc.viabedrock.protocol.packet.JoinPackets;
 
@@ -36,6 +38,9 @@ public final class CustomMappingSyncStorage extends StoredObject {
     private static final int MSG_RESULT = 4;
     private static final int MAX_PAYLOAD_BYTES = 28672;
     private static final int MAX_SNAPSHOT_BYTES = 16 * 1024 * 1024;
+    private static final Set<String> CUSTOM_BLOCK_ENTITY_STAGE_NAMES = Set.of(
+        "com.viaversion.viabackwards.protocol.v1_18to1_17_1.Protocol1_18To1_17_1"
+    );
     private static final int MAX_CUSTOM_BLOCK_STATES = 65536;
     private static final int MAX_CUSTOM_BLOCK_ENTITY_TYPES = 4096;
     private static final int MAX_JAVA_BLOCK_STATE_ID = 1048575;
@@ -52,6 +57,8 @@ public final class CustomMappingSyncStorage extends StoredObject {
     private ScheduledFuture<?> timeoutTask;
     private boolean finishStarted;
     private boolean channelProbeSent;
+    private boolean blockStatesAreFinalOutput;
+    private boolean blockEntityTypesAreFinalOutput;
 
     public CustomMappingSyncStorage(final UserConnection user) {
         super(user);
@@ -216,26 +223,34 @@ public final class CustomMappingSyncStorage extends StoredObject {
             this.access = CustomMappingAccess.safe();
             return null;
         }
-        final boolean useSyntheticSourceIds = !this.user().getProtocolInfo().protocolVersion().equals(ProtocolConstants.JAVA_VERSION);
-        return new RuntimeProjectionBuilder(this.profile, RuntimeProjectionCache.key(this.profile, blockProperties, hashedRuntimeBlockIds, useSyntheticSourceIds), useSyntheticSourceIds);
+        final int blockStateSourceBase = blockStateSourceBase();
+        final int blockEntitySourceBase = blockEntitySourceBase();
+        if ((long) blockStateSourceBase + this.profile.blockStateCount() > this.limits.maxJavaBlockStateId()) {
+            fail("Custom block state source allocation exceeds configured maximum: sourceBase=" + blockStateSourceBase + ", count=" + this.profile.blockStateCount() + ", maxJavaBlockStateId=" + this.limits.maxJavaBlockStateId(), null);
+            return null;
+        }
+        if ((long) blockEntitySourceBase + this.profile.blockEntityTypeCount() > Integer.MAX_VALUE) {
+            fail("Custom block entity source allocation exceeds integer id range: sourceBase=" + blockEntitySourceBase + ", count=" + this.profile.blockEntityTypeCount(), null);
+            return null;
+        }
+        final long pipelineRegistryKey = RuntimeProjectionCache.pipelineRegistryKey(this.user().getProtocolInfo().getPipeline().pipes());
+        return new RuntimeProjectionBuilder(this.profile, RuntimeProjectionCache.key(this.profile, blockProperties, hashedRuntimeBlockIds, blockStateSourceBase, blockEntitySourceBase, pipelineRegistryKey), blockStateSourceBase, blockEntitySourceBase);
     }
 
     public void installProjection(final RuntimeProjection projection) {
         if (projection != null) {
-            this.access = projection.toAccess();
+            final List<Protocol> blockStateStages = relevantStages(true);
+            final List<Protocol> blockEntityStages = relevantStages(false);
+            ViaBedrock.getPlatform().getLogger().info("Custom mapping clientbound block state stages: " + stageNames(blockStateStages));
+            ViaBedrock.getPlatform().getLogger().info("Custom mapping clientbound block entity stages: " + stageNames(blockEntityStages));
+            this.blockStatesAreFinalOutput = blockStateStages.isEmpty();
+            this.blockEntityTypesAreFinalOutput = blockEntityStages.isEmpty();
+            this.access = projection.toAccess(this.blockStatesAreFinalOutput, this.blockEntityTypesAreFinalOutput);
+            clearCustomRegistryStorage();
             if (!projection.blockEntityTypes().isEmpty() || !projection.blockStates().isEmpty()) {
-                CustomRegistryStorage storage = this.user().get(CustomRegistryStorage.class);
-                if (storage == null) {
-                    storage = new CustomRegistryStorage();
-                    this.user().put(storage);
-                }
-                for (SnapshotProfile.BlockEntityTypeMapping type : projection.blockEntityTypes()) {
-                    storage.put(CustomRegistryStorage.BLOCK_ENTITY_TYPE, type.javaRawId(), type.javaRawId(), "mod_block:" + type.bedrockIdentifier());
-                }
-                for (RuntimeProjection.ProjectedBlockState state : projection.blockStates()) {
-                    storage.put(CustomRegistryStorage.BLOCK_STATE, state.sourceJavaRawId(), state.targetJavaRawId(), "mod_block:" + state.bedrockIdentifier());
-                    storage.put(CustomRegistryStorage.BLOCK_STATE, state.targetJavaRawId(), state.targetJavaRawId(), "mod_block:" + state.bedrockIdentifier());
-                }
+                final CustomRegistryStorage storage = new CustomRegistryStorage();
+                this.user().put(storage);
+                installStageAwareOverlay(storage, projection, blockStateStages, blockEntityStages);
             }
             this.state = State.INSTALLED;
             ViaBedrock.getPlatform().getLogger().info("Installed custom block mapping overlay; max java block state id " + this.access.maxJavaBlockStateId());
@@ -245,6 +260,120 @@ public final class CustomMappingSyncStorage extends StoredObject {
 
     public void failProjection(final String message, final Throwable e) {
         fail(message, e);
+    }
+
+    public int packetBlockStateId(final RuntimeProjection.ProjectedBlockState state) {
+        return this.blockStatesAreFinalOutput ? state.targetJavaRawId() : state.sourceJavaRawId();
+    }
+
+    private void installStageAwareOverlay(final CustomRegistryStorage storage, final RuntimeProjection projection, final List<Protocol> blockStateStages, final List<Protocol> blockEntityStages) {
+        if (!projection.blockStates().isEmpty()) {
+            final int minSourceId = projection.blockStates().get(0).sourceJavaRawId();
+            final int maxSourceId = projection.blockStates().get(projection.blockStates().size() - 1).sourceJavaRawId();
+            for (Protocol stage : blockStateStages) {
+                storage.putSourceRange(stage.getClass(), CustomRegistryStorage.BLOCK_STATE, minSourceId, maxSourceId);
+            }
+        }
+        for (RuntimeProjection.ProjectedBlockState state : projection.blockStates()) {
+            for (int i = 0; i < blockStateStages.size(); i++) {
+                final Protocol stage = blockStateStages.get(i);
+                final boolean last = i == blockStateStages.size() - 1;
+                storage.put(stage.getClass(), CustomRegistryStorage.BLOCK_STATE, state.sourceJavaRawId(), last ? state.targetJavaRawId() : state.sourceJavaRawId(), "mod_block:" + state.bedrockIdentifier());
+            }
+        }
+
+        if (!projection.blockEntityTypes().isEmpty()) {
+            final int minSourceId = projection.blockEntityTypes().get(0).sourceJavaRawId();
+            final int maxSourceId = projection.blockEntityTypes().get(projection.blockEntityTypes().size() - 1).sourceJavaRawId();
+            for (Protocol stage : blockEntityStages) {
+                storage.putSourceRange(stage.getClass(), CustomRegistryStorage.BLOCK_ENTITY_TYPE, minSourceId, maxSourceId);
+            }
+        }
+        for (SnapshotProfile.BlockEntityTypeMapping type : projection.blockEntityTypes()) {
+            for (int i = 0; i < blockEntityStages.size(); i++) {
+                final Protocol stage = blockEntityStages.get(i);
+                final boolean last = i == blockEntityStages.size() - 1;
+                storage.put(stage.getClass(), CustomRegistryStorage.BLOCK_ENTITY_TYPE, type.sourceJavaRawId(), last ? type.targetJavaRawId() : type.sourceJavaRawId(), type.javaIdentifier());
+            }
+        }
+    }
+
+    private List<Protocol> relevantStages(final boolean blockStates) {
+        final List<Protocol> stages = new ArrayList<>();
+        for (Protocol protocol : this.user().getProtocolInfo().getPipeline().reversedPipes()) {
+            final MappingData mappingData = protocol.getMappingData();
+            if (mappingData == null) continue;
+            if (blockStates) {
+                if (mappingData.getBlockStateMappings() != null) stages.add(protocol);
+            } else if (isBlockEntityStage(protocol, mappingData)) {
+                stages.add(protocol);
+            }
+        }
+        return stages;
+    }
+
+    private static boolean isBlockEntityStage(final Protocol protocol, final MappingData mappingData) {
+        return mappingData.getBlockEntityMappings() != null || CUSTOM_BLOCK_ENTITY_STAGE_NAMES.contains(protocol.getClass().getName());
+    }
+
+    private static String stageNames(final List<Protocol> stages) {
+        if (stages.isEmpty()) {
+            return "<final-output>";
+        }
+        final StringJoiner joiner = new StringJoiner(" -> ");
+        for (Protocol stage : stages) {
+            joiner.add(stage.getClass().getSimpleName());
+        }
+        return joiner.toString();
+    }
+
+    private int blockStateSourceBase() {
+        int base = Math.max(BedrockProtocol.MAPPINGS.getVanillaBlockStateCount(), this.profile.maxTargetJavaRawId() + 1);
+        for (Protocol protocol : this.user().getProtocolInfo().getPipeline().pipes()) {
+            final MappingData mappingData = protocol.getMappingData();
+            if (mappingData == null || mappingData.getBlockStateMappings() == null) continue;
+            base = Math.max(base, registryUpperBound(mappingData.getBlockStateMappings().size(), mappingData.getBlockStateMappings().mappedSize()));
+        }
+        return avoidSourceRangeConflicts(base, this.profile.blockStateCount(), true);
+    }
+
+    private int blockEntitySourceBase() {
+        int base = Math.max(BedrockProtocol.MAPPINGS.getVanillaBlockEntityCount(), this.profile.maxTargetBlockEntityRawId() + 1);
+        for (Protocol protocol : this.user().getProtocolInfo().getPipeline().pipes()) {
+            final MappingData mappingData = protocol.getMappingData();
+            if (mappingData == null || mappingData.getBlockEntityMappings() == null) continue;
+            base = Math.max(base, registryUpperBound(mappingData.getBlockEntityMappings().size(), mappingData.getBlockEntityMappings().mappedSize()));
+        }
+        return avoidSourceRangeConflicts(base, this.profile.blockEntityTypeCount(), false);
+    }
+
+    private static int registryUpperBound(final int sourceSize, final int targetSize) {
+        return Math.max(Math.max(0, sourceSize), Math.max(0, targetSize));
+    }
+
+    private int avoidSourceRangeConflicts(int base, final int count, final boolean blockStates) {
+        if (count <= 0) return base;
+        final int step = Math.max(1, count);
+        while (base >= 0 && base <= Integer.MAX_VALUE - count) {
+            if (!sourceRangeConflicts(base, count, blockStates)) return base;
+            base += step;
+        }
+        return Integer.MAX_VALUE;
+    }
+
+    private boolean sourceRangeConflicts(final int base, final int count, final boolean blockStates) {
+        for (Protocol protocol : this.user().getProtocolInfo().getPipeline().pipes()) {
+            final MappingData mappingData = protocol.getMappingData();
+            if (mappingData == null) continue;
+            final Mappings mappings = blockStates ? mappingData.getBlockStateMappings() : mappingData.getBlockEntityMappings();
+            if (mappings == null) continue;
+            for (int id = base; id < base + count; id++) {
+                if (mappings.getNewId(id) != -1) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private void finishPendingStartGame() {
@@ -302,6 +431,16 @@ public final class CustomMappingSyncStorage extends StoredObject {
         this.access = CustomMappingAccess.safe();
         this.chunks = null;
         this.pendingStartGame = null;
+        this.blockStatesAreFinalOutput = false;
+        this.blockEntityTypesAreFinalOutput = false;
+        clearCustomRegistryStorage();
+    }
+
+    private void clearCustomRegistryStorage() {
+        final CustomRegistryStorage storage = this.user().remove(CustomRegistryStorage.class);
+        if (storage != null) {
+            storage.clear();
+        }
     }
 
     private CustomMappingSnapshot decodeSnapshot(final byte[] body) {
@@ -341,6 +480,9 @@ public final class CustomMappingSyncStorage extends StoredObject {
     private void fail(final String message, final Throwable e) {
         this.profile = null;
         this.access = CustomMappingAccess.safe();
+        this.blockStatesAreFinalOutput = false;
+        this.blockEntityTypesAreFinalOutput = false;
+        clearCustomRegistryStorage();
         if (ViaBedrock.getConfig().getCustomMappingSyncFailureMode() == ViaBedrockConfig.CustomMappingSyncFailureMode.KICK) {
             this.state = State.KICKED;
             cancelTimeout();
