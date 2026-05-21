@@ -618,7 +618,7 @@ public class ChunkTracker extends StoredObject {
                 for (int i = 0; i < remappedBlockPalette.size(); i++) {
                     final int bedrockBlockState = remappedBlockPalette.idByIndex(i);
                     final CustomMappingAccess.JavaBlockStateResolution resolution = customAccess.resolveBedrockRuntimeId(bedrockBlockState, blockStateRewriter.javaId(bedrockBlockState), "chunk palette remap");
-                    if (customAccess.shouldFailClosed(resolution) && resolution.reason() != CustomMappingAccess.FallbackReason.UNKNOWN_RUNTIME_FALLBACK) {
+                    if (customAccess.shouldFailClosed(resolution)) {
                         return null;
                     }
                     int javaBlockState = resolution.javaBlockStateId();
