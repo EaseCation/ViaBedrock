@@ -75,6 +75,8 @@ public class BlockStateRewriter implements StorableObject {
         }
         bedrockBlockStates.sort((a, b) -> HashedPaletteComparator.INSTANCE.compare(a.namespacedIdentifier(), b.namespacedIdentifier()));
         final Set<String> reportedMissingCustomRuntimeProperties = new HashSet<>();
+        final Map<String, Integer> missingCustomRuntimeCounts = new HashMap<>();
+        final Map<String, String> missingCustomRuntimeExamples = new HashMap<>();
 
         for (int i = 0; i < bedrockBlockStates.size(); i++) {
             final BedrockBlockState bedrockBlockState = bedrockBlockStates.get(i);
@@ -108,11 +110,14 @@ public class BlockStateRewriter implements StorableObject {
                 this.blockStateIdMappings.put(bedrockId, javaId);
             } else {
                 if (customRuntimeState) {
+                    final String identifier = bedrockBlockState.namespacedIdentifier();
+                    missingCustomRuntimeCounts.merge(identifier, 1, Integer::sum);
+                    missingCustomRuntimeExamples.putIfAbsent(identifier, bedrockBlockState.toBlockStateString());
                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing custom mapping snapshot entry for runtime block state: " + bedrockBlockState.toBlockStateString());
-                    if (reportedMissingCustomRuntimeProperties.add(bedrockBlockState.namespacedIdentifier())) {
-                        final CompoundTag properties = customRuntimeBlockProperties.get(bedrockBlockState.namespacedIdentifier());
+                    if (reportedMissingCustomRuntimeProperties.add(identifier)) {
+                        final CompoundTag properties = customRuntimeBlockProperties.get(identifier);
                         final String diagnostics = properties != null ? RuntimeProjectionBuilder.describeBlockProperties(properties) : "<missing START_GAME block properties>";
-                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing custom mapping START_GAME block properties for " + bedrockBlockState.namespacedIdentifier() + ": " + diagnostics);
+                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing custom mapping START_GAME block properties for " + identifier + ": " + diagnostics);
                     }
                 } else {
                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing bedrock -> java block state mapping: " + bedrockBlockState.toBlockStateString());
@@ -120,6 +125,15 @@ public class BlockStateRewriter implements StorableObject {
                     this.blockStateIdMappings.put(bedrockId, javaId);
                 }
             }
+        }
+        if (!missingCustomRuntimeCounts.isEmpty()) {
+            final int missingStateCount = missingCustomRuntimeCounts.values().stream().mapToInt(Integer::intValue).sum();
+            final String topMissing = missingCustomRuntimeCounts.entrySet().stream()
+                    .sorted(Map.Entry.<String, Integer>comparingByValue().reversed().thenComparing(Map.Entry.comparingByKey()))
+                    .limit(20)
+                    .map(entry -> entry.getKey() + "=" + entry.getValue() + " example=" + missingCustomRuntimeExamples.get(entry.getKey()))
+                    .collect(Collectors.joining("; "));
+            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing custom mapping snapshot summary: identifiers=" + missingCustomRuntimeCounts.size() + ", states=" + missingStateCount + ", top=" + topMissing);
         }
         if (runtimeProjectionBuilder != null) {
             try {
