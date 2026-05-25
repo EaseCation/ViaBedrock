@@ -260,18 +260,15 @@ public class WorldPackets {
                 }
             }
 
-            final BedrockChunk chunk = chunkTracker.createChunk(chunkX, chunkZ, sectionCount < 0 ? requestSectionCount : sectionCount);
+            final BedrockChunk chunk = chunkTracker.createChunk(chunkX, chunkZ, requestSectionCount > 0 ? requestSectionCount : sectionCount);
             if (chunk == null) {
                 return;
             }
-            chunk.setRequestSubChunks(sectionCount < 0);
+            chunk.setRequestSubChunks(requestSectionCount > 0);
 
             final int fRequestSectionCount = requestSectionCount;
             final Consumer<byte[]> dataConsumer = combinedData -> {
                 try {
-                    if (fRequestSectionCount > 0) {
-                        chunkTracker.requestSubChunks(chunkX, chunkZ, startY, MathUtil.clamp(startY + fRequestSectionCount, startY + 1, endY));
-                    }
                     final ByteBuf dataBuf = Unpooled.wrappedBuffer(combinedData);
 
                     final BedrockChunkSection[] sections = chunk.getSections();
@@ -313,6 +310,9 @@ public class WorldPackets {
                         ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error reading chunk data", e);
                     }
 
+                    if (fRequestSectionCount > 0) {
+                        chunkTracker.requestSubChunks(chunkX, chunkZ, startY, MathUtil.clamp(startY + fRequestSectionCount, startY + 1, endY));
+                    }
                     if (!chunk.isRequestSubChunks()) {
                         chunkTracker.sendChunk(chunkX, chunkZ);
                     }
