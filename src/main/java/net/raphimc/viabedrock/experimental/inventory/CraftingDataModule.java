@@ -77,8 +77,6 @@ public class CraftingDataModule implements FeatureModule {
             switch (type) {
                 case ShapelessRecipe, UserDataShapelessRecipe, ShapelessChemistryRecipe -> readShapelessRecipe(wrapper, parsedRecipes);
                 case ShapedRecipe, ShapedChemistryRecipe -> readShapedRecipe(wrapper, parsedRecipes);
-                case FurnaceRecipe -> skipFurnaceRecipe(wrapper);
-                case FurnaceAuxRecipe -> skipFurnaceAuxRecipe(wrapper);
                 case MultiRecipe -> skipMultiRecipe(wrapper);
                 case SmithingTransformRecipe -> skipSmithingTransformRecipe(wrapper);
                 case SmithingTrimRecipe -> skipSmithingTrimRecipe(wrapper);

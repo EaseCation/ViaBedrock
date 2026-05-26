@@ -19,7 +19,7 @@ package net.raphimc.viabedrock.experimental.pyrpc;
 
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Types;
-import com.viaversion.viaversion.protocols.v1_21_9to1_21_11.packet.ClientboundPackets1_21_11;
+import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.experimental.FeatureModule;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
@@ -52,7 +52,7 @@ public class PyRpcDispatcherModule implements FeatureModule {
                 return;
             }
 
-            final PacketWrapper msg = PacketWrapper.create(ClientboundPackets1_21_11.CUSTOM_PAYLOAD, wrapper.user());
+            final PacketWrapper msg = PacketWrapper.create(ClientboundPackets26_1.CUSTOM_PAYLOAD, wrapper.user());
             msg.write(Types.STRING, CHANNEL);
             msg.write(Types.REMAINING_BYTES, data);
             msg.scheduleSend(BedrockProtocol.class);

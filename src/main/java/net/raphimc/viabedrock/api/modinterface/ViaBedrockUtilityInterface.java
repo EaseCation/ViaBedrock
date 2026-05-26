@@ -21,8 +21,8 @@ import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Types;
+import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import com.viaversion.viaversion.protocols.v1_21_7to1_21_9.packet.ClientboundConfigurationPackets1_21_9;
-import com.viaversion.viaversion.protocols.v1_21_9to1_21_11.packet.ClientboundPackets1_21_11;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorDataIDs;
 import net.raphimc.viabedrock.protocol.model.SkinData;
@@ -50,7 +50,7 @@ public class ViaBedrockUtilityInterface {
     }
 
     public static void spawnCustomEntity(final UserConnection user, final UUID uuid, final String identifier, final Map<ActorDataIDs, EntityData> entityData) {
-        final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets1_21_11.CUSTOM_PAYLOAD, user);
+        final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets26_1.CUSTOM_PAYLOAD, user);
         pluginMessage.write(Types.STRING, CHANNEL); // Channel
         pluginMessage.write(Types.INT, PayloadType.MODEL_REQUEST.ordinal()); // Type
 
@@ -106,7 +106,7 @@ public class ViaBedrockUtilityInterface {
         final int chunkCount = (int) Math.ceil(skinData.length / (double) maxPayloadSize);
 
         {
-            final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets1_21_11.CUSTOM_PAYLOAD, user);
+            final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets26_1.CUSTOM_PAYLOAD, user);
             pluginMessage.write(Types.STRING, CHANNEL); // Channel
             pluginMessage.write(Types.INT, PayloadType.SKIN_INFORMATION.ordinal());
             pluginMessage.write(Types.UUID, uuid);
@@ -123,7 +123,7 @@ public class ViaBedrockUtilityInterface {
             pluginMessage.scheduleSend(BedrockProtocol.class);
         }
         for (int i = 0; i < chunkCount; i++) {
-            final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets1_21_11.CUSTOM_PAYLOAD, user);
+            final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets26_1.CUSTOM_PAYLOAD, user);
             pluginMessage.write(Types.STRING, CHANNEL); // Channel
             pluginMessage.write(Types.INT, PayloadType.SKIN_DATA.ordinal());
             pluginMessage.write(Types.UUID, uuid);
@@ -138,7 +138,7 @@ public class ViaBedrockUtilityInterface {
         if (skin.capeData() != null) {
             final byte[] capeData = ImageType.getImageData(skin.capeData());
 
-            final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets1_21_11.CUSTOM_PAYLOAD, user);
+            final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets26_1.CUSTOM_PAYLOAD, user);
             pluginMessage.write(Types.STRING, CHANNEL); // Channel
             pluginMessage.write(Types.INT, PayloadType.CAPE.ordinal());
             pluginMessage.write(Types.UUID, uuid);
@@ -158,7 +158,7 @@ public class ViaBedrockUtilityInterface {
                 final int animChunkCount = (int) Math.ceil(animData.length / (double) maxPayloadSize);
 
                 {
-                    final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets1_21_11.CUSTOM_PAYLOAD, user);
+                    final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets26_1.CUSTOM_PAYLOAD, user);
                     pluginMessage.write(Types.STRING, CHANNEL);
                     pluginMessage.write(Types.INT, PayloadType.SKIN_ANIMATION_INFO.ordinal());
                     pluginMessage.write(Types.UUID, uuid);
@@ -172,7 +172,7 @@ public class ViaBedrockUtilityInterface {
                     pluginMessage.scheduleSend(BedrockProtocol.class);
                 }
                 for (int i = 0; i < animChunkCount; i++) {
-                    final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets1_21_11.CUSTOM_PAYLOAD, user);
+                    final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets26_1.CUSTOM_PAYLOAD, user);
                     pluginMessage.write(Types.STRING, CHANNEL);
                     pluginMessage.write(Types.INT, PayloadType.SKIN_ANIMATION_DATA.ordinal());
                     pluginMessage.write(Types.UUID, uuid);
@@ -202,9 +202,13 @@ public class ViaBedrockUtilityInterface {
         SPAWN_PARTICLE
     }
 
+    public static void spawnParticle(final UserConnection user, final String identifier, final float x, final float y, final float z) {
+        spawnParticle(user, identifier, x, y, z, null);
+    }
+
     public static void spawnParticle(final UserConnection user, final String identifier, final float x, final float y, final float z, final String molangVarsJson) {
         java.util.logging.Logger.getLogger("ViaBedrock").log(java.util.logging.Level.INFO, "[Particle:L2] Sending SPAWN_PARTICLE payload: " + identifier + " at (" + x + ", " + y + ", " + z + ") molang=" + (molangVarsJson != null));
-        final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets1_21_11.CUSTOM_PAYLOAD, user);
+        final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets26_1.CUSTOM_PAYLOAD, user);
         pluginMessage.write(Types.STRING, CHANNEL);
         pluginMessage.write(Types.INT, PayloadType.SPAWN_PARTICLE.ordinal());
         writeString(pluginMessage, identifier);

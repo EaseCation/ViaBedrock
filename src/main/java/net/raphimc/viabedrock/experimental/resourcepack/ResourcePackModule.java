@@ -20,7 +20,7 @@ package net.raphimc.viabedrock.experimental.resourcepack;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import net.raphimc.viabedrock.experimental.FeatureModule;
 import net.raphimc.viabedrock.protocol.rewriter.ResourcePackRewriter;
-import net.raphimc.viabedrock.protocol.storage.ResourcePacksStorage;
+import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 
 /**
  * Registers fork-specific resource pack rewriters and handles post-pack-stack initialization.
@@ -33,8 +33,8 @@ public class ResourcePackModule implements FeatureModule {
 
     @Override
     public void onResourcePackStackSet(final UserConnection user) {
-        final ResourcePacksStorage resourcePacksStorage = user.get(ResourcePacksStorage.class);
-        ResourcePackRewriter.initRuntimeData(resourcePacksStorage);
+        final ResourcePackStorage resourcePackStorage = user.get(ResourcePackStorage.class);
+        ResourcePackRewriter.initRuntimeData(resourcePackStorage);
     }
 
 }

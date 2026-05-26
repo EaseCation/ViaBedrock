@@ -20,11 +20,12 @@ package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
 import com.viaversion.viaversion.libs.gson.JsonArray;
 import com.viaversion.viaversion.libs.gson.JsonObject;
 import net.raphimc.viabedrock.ViaBedrock;
-import net.raphimc.viabedrock.api.model.resourcepack.ResourcePack;
-import net.raphimc.viabedrock.api.model.resourcepack.SoundDefinitions;
+import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
+import net.raphimc.viabedrock.api.resourcepack.content.Content;
+import net.raphimc.viabedrock.api.resourcepack.definition.SoundDefinitions;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.rewriter.ResourcePackRewriter;
-import net.raphimc.viabedrock.protocol.storage.ResourcePacksStorage;
+import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 
 import java.util.HashSet;
 import java.util.Map;
@@ -36,8 +37,18 @@ public class CustomSoundResourceRewriter implements ResourcePackRewriter.Rewrite
     public static final String CUSTOM_SOUNDS_KEY = "custom_sound_names";
 
     @Override
-    public void apply(final ResourcePacksStorage resourcePacksStorage, final ResourcePack.Content javaContent) {
-        final SoundDefinitions sounds = resourcePacksStorage.getSounds();
+    public void apply(final ResourcePackStorage resourcePackStorage, final Content javaContent) {
+        final Set<String> customSoundNames = this.collectCustomSoundNames(resourcePackStorage, javaContent);
+        resourcePackStorage.getConverterData().put(CUSTOM_SOUNDS_KEY, customSoundNames);
+    }
+
+    @Override
+    public void initRuntimeData(final ResourcePackStorage resourcePackStorage) {
+        resourcePackStorage.getConverterData().put(CUSTOM_SOUNDS_KEY, this.collectCustomSoundNames(resourcePackStorage, null));
+    }
+
+    private Set<String> collectCustomSoundNames(final ResourcePackStorage resourcePackStorage, final Content javaContent) {
+        final SoundDefinitions sounds = resourcePackStorage.getSounds();
         final Set<String> customSoundNames = new HashSet<>();
         final JsonObject javaSoundsJson = new JsonObject();
 
@@ -64,9 +75,11 @@ public class CustomSoundResourceRewriter implements ResourcePackRewriter.Rewrite
 
                 // Search through pack stack for the .ogg file
                 boolean found = false;
-                for (ResourcePack pack : resourcePacksStorage.getPackStackTopToBottom()) {
+                for (ResourcePack pack : resourcePackStorage.getPackStackTopToBottom()) {
                     if (pack.content().contains(bedrockOggPath)) {
-                        javaContent.copyFrom(pack.content(), bedrockOggPath, javaOggPath);
+                        if (javaContent != null) {
+                            javaContent.copyFrom(pack.content(), bedrockOggPath, javaOggPath);
+                        }
                         found = true;
                         break;
                     }
@@ -77,33 +90,37 @@ public class CustomSoundResourceRewriter implements ResourcePackRewriter.Rewrite
                 }
 
                 hasAnyFile = true;
-                final JsonObject soundEntry = new JsonObject();
-                // Java sounds.json references sounds relative to assets/<namespace>/sounds/
-                // The "name" field is <namespace>:<path_without_sounds_prefix_and_extension>
-                soundEntry.addProperty("name", "bedrock:" + soundFile.path());
-                if (soundFile.volume() != 1F) {
-                    soundEntry.addProperty("volume", soundFile.volume());
+                if (javaContent != null) {
+                    final JsonObject soundEntry = new JsonObject();
+                    // Java sounds.json references sounds relative to assets/<namespace>/sounds/
+                    // The "name" field is <namespace>:<path_without_sounds_prefix_and_extension>
+                    soundEntry.addProperty("name", "bedrock:" + soundFile.path());
+                    if (soundFile.volume() != 1F) {
+                        soundEntry.addProperty("volume", soundFile.volume());
+                    }
+                    if (soundFile.pitch() != 1F) {
+                        soundEntry.addProperty("pitch", soundFile.pitch());
+                    }
+                    javaSoundEntries.add(soundEntry);
                 }
-                if (soundFile.pitch() != 1F) {
-                    soundEntry.addProperty("pitch", soundFile.pitch());
-                }
-                javaSoundEntries.add(soundEntry);
             }
 
             if (hasAnyFile) {
-                final JsonObject soundDef = new JsonObject();
-                soundDef.add("sounds", javaSoundEntries);
-                javaSoundsJson.add(soundName, soundDef);
+                if (javaContent != null) {
+                    final JsonObject soundDef = new JsonObject();
+                    soundDef.add("sounds", javaSoundEntries);
+                    javaSoundsJson.add(soundName, soundDef);
+                }
                 customSoundNames.add(soundName);
             }
         }
 
-        if (!javaSoundsJson.isEmpty()) {
+        if (javaContent != null && !javaSoundsJson.isEmpty()) {
             javaContent.putJson("assets/bedrock/sounds.json", javaSoundsJson);
             ViaBedrock.getPlatform().getLogger().log(Level.INFO, "Added " + customSoundNames.size() + " custom sound(s) to Java resource pack");
         }
 
-        resourcePacksStorage.getConverterData().put(CUSTOM_SOUNDS_KEY, customSoundNames);
+        return customSoundNames;
     }
 
 }

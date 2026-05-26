@@ -17,8 +17,8 @@
  */
 package net.raphimc.viabedrock;
 
+import net.raphimc.viabedrock.api.resourcepack.http.ResourcePackHttpServer;
 import net.raphimc.viabedrock.experimental.resourcepack.JavaPackCache;
-import net.raphimc.viabedrock.api.http.ResourcePackHttpServer;
 import net.raphimc.viabedrock.platform.ViaBedrockConfig;
 import net.raphimc.viabedrock.platform.ViaBedrockPlatform;
 

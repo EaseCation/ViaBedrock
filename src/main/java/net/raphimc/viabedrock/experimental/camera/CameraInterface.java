@@ -21,7 +21,7 @@ import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.protocols.v1_21_7to1_21_9.packet.ClientboundConfigurationPackets1_21_9;
-import com.viaversion.viaversion.protocols.v1_21_9to1_21_11.packet.ClientboundPackets1_21_11;
+import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.model.Position3f;
@@ -208,7 +208,7 @@ public class CameraInterface {
     // --- Payload sending methods ---
 
     public static void sendCameraShake(final UserConnection user, final float intensity, final float duration, final byte type, final byte action) {
-        final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets1_21_11.CUSTOM_PAYLOAD, user);
+        final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets26_1.CUSTOM_PAYLOAD, user);
         pluginMessage.write(Types.STRING, CHANNEL);
         pluginMessage.write(Types.INT, PayloadType.CAMERA_SHAKE.ordinal());
         pluginMessage.write(Types.FLOAT, intensity);
@@ -223,7 +223,7 @@ public class CameraInterface {
                                          final Float[] posXs, final Float[] posYs, final Float[] posZs,
                                          final Float[] rotXs, final Float[] rotYs,
                                          final Byte[] audioListeners, final Boolean[] playerEffects) {
-        final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets1_21_11.CUSTOM_PAYLOAD, user);
+        final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets26_1.CUSTOM_PAYLOAD, user);
         pluginMessage.write(Types.STRING, CHANNEL);
         pluginMessage.write(Types.INT, PayloadType.CAMERA_PRESETS.ordinal());
         pluginMessage.write(Types.INT, count);
@@ -250,7 +250,7 @@ public class CameraInterface {
                                               final boolean hasFade, final boolean hasFadeTime,
                                               final float fadeIn, final float fadeStay, final float fadeOut,
                                               final boolean hasFadeColor, final float fadeR, final float fadeG, final float fadeB) {
-        final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets1_21_11.CUSTOM_PAYLOAD, user);
+        final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets26_1.CUSTOM_PAYLOAD, user);
         pluginMessage.write(Types.STRING, CHANNEL);
         pluginMessage.write(Types.INT, PayloadType.CAMERA_INSTRUCTION.ordinal());
 

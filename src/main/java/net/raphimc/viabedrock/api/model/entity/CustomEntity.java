@@ -26,15 +26,14 @@ import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
 import com.viaversion.viaversion.api.minecraft.entities.EntityTypes1_21_11;
 import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
 import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
-import com.viaversion.viaversion.api.minecraft.item.data.ItemModel;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
-import com.viaversion.viaversion.protocols.v1_21_9to1_21_11.packet.ClientboundPackets1_21_11;
+import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import net.easecation.bedrockmotion.pack.PackManager;
 import net.easecation.bedrockmotion.render.RenderControllerEvaluator;
 import net.raphimc.viabedrock.ViaBedrock;
-import net.raphimc.viabedrock.api.model.resourcepack.EntityDefinitions;
+import net.raphimc.viabedrock.api.resourcepack.definition.EntityDefinitions;
 import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
 import net.raphimc.viabedrock.api.util.MathUtil;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
@@ -48,7 +47,7 @@ import net.raphimc.viabedrock.experimental.model.animation.SimpleBoneModel;
 import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomEntityResourceRewriter;
 import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
-import net.raphimc.viabedrock.protocol.storage.ResourcePacksStorage;
+import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
 import team.unnamed.mocha.runtime.value.MutableObjectBinding;
 import team.unnamed.mocha.runtime.value.Value;
@@ -205,18 +204,18 @@ public class CustomEntity extends Entity {
             return; // Server-side animation disabled by config
         }
 
-        final ResourcePacksStorage resourcePacksStorage = this.user.get(ResourcePacksStorage.class);
+        final ResourcePackStorage resourcePackStorage = this.user.get(ResourcePackStorage.class);
 
         // Find the first geometry model for this entity
         for (Map.Entry<String, String> entry : this.entityDefinition.entityData().getGeometries().entrySet()) {
-            final BedrockGeometryModel geometry = resourcePacksStorage.getModels().entityModels().get(entry.getValue());
+            final BedrockGeometryModel geometry = resourcePackStorage.getModels().entityModels().get(entry.getValue());
             if (geometry == null) continue;
 
             final SimpleBoneModel boneModel = new SimpleBoneModel(geometry);
 
             // Build a PackManager from bedrockmotion definitions
-            // The PackManager is stored in ResourcePacksStorage's converterData during resource pack processing
-            final PackManager packManager = (PackManager) resourcePacksStorage.getConverterData().get("bedrockmotion_pack_manager");
+            // The PackManager is stored in ResourcePackStorage's converterData during resource pack processing
+            final PackManager packManager = (PackManager) resourcePackStorage.getConverterData().get("bedrockmotion_pack_manager");
             if (packManager == null) {
                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING,
                         "BedrockMotion PackManager not found, server-side animation disabled");
@@ -235,7 +234,7 @@ public class CustomEntity extends Entity {
         this.spawned = true;
 
         final EntityTracker entityTracker = this.user.get(EntityTracker.class);
-        final ResourcePacksStorage resourcePacksStorage = this.user.get(ResourcePacksStorage.class);
+        final ResourcePackStorage resourcePackStorage = this.user.get(ResourcePackStorage.class);
         final ChannelStorage channelStorage = this.user.get(ChannelStorage.class);
 
         // VBU mod present: delegate to client-side rendering
@@ -256,12 +255,12 @@ public class CustomEntity extends Entity {
             final String baseKey = this.entityDefinition.identifier() + "_" + model.key();
 
             @SuppressWarnings("unchecked")
-            final List<String> boneNames = (List<String>) resourcePacksStorage.getConverterData().get("ce_" + baseKey + "_bones");
+            final List<String> boneNames = (List<String>) resourcePackStorage.getConverterData().get("ce_" + baseKey + "_bones");
             if (boneNames == null || boneNames.isEmpty()) continue;
 
             for (String boneName : boneNames) {
                 final String boneKey = baseKey + "_" + boneName;
-                final Object scaleObj = resourcePacksStorage.getConverterData().get("ce_" + boneKey + "_scale");
+                final Object scaleObj = resourcePackStorage.getConverterData().get("ce_" + boneKey + "_scale");
                 if (scaleObj == null) continue;
                 final float scale = (float) scaleObj;
 
@@ -279,13 +278,13 @@ public class CustomEntity extends Entity {
 
                 // Item model with per-bone custom model data
                 final StructuredDataContainer data = ProtocolConstants.createStructuredDataContainer();
-                data.set(StructuredDataKey.ITEM_MODEL, new ItemModel(CustomEntityResourceRewriter.ITEM_MODEL_KEY));
+                data.set(StructuredDataKey.ITEM_MODEL, CustomEntityResourceRewriter.getItemModel(this.entityDefinition.identifier()));
                 data.set(StructuredDataKey.CUSTOM_MODEL_DATA1_21_4, CustomEntityResourceRewriter.getCustomModelData(boneKey));
                 final StructuredItem item = new StructuredItem(
                         BedrockProtocol.MAPPINGS.getJavaItems().get("minecraft:paper"), 1, data);
                 javaEntityData.add(new EntityData(
                         boneEntity.getJavaEntityDataIndex(EntityDataFields.ITEM_STACK),
-                        VersionedTypes.V1_21_11.entityDataTypes.itemType, item));
+                        VersionedTypes.V26_1.entityDataTypes.itemType, item));
 
                 // Entity-level scale (from RESERVED_038 entity data)
                 final float entityScale = getEntityScale();
@@ -293,7 +292,7 @@ public class CustomEntity extends Entity {
                 // Scale (model scale * entity scale)
                 javaEntityData.add(new EntityData(
                         boneEntity.getJavaEntityDataIndex(EntityDataFields.SCALE),
-                        VersionedTypes.V1_21_11.entityDataTypes.vector3FType,
+                        VersionedTypes.V26_1.entityDataTypes.vector3FType,
                         new Vector3f(scale * entityScale, scale * entityScale, scale * entityScale)));
 
                 // Translation: rest pose offset, scaled by entity scale
@@ -302,7 +301,7 @@ public class CustomEntity extends Entity {
                 final Vector3f pivotJava = bedrockPivotToJavaBlocks(restPivot);
                 javaEntityData.add(new EntityData(
                         boneEntity.getJavaEntityDataIndex(EntityDataFields.TRANSLATION),
-                        VersionedTypes.V1_21_11.entityDataTypes.vector3FType,
+                        VersionedTypes.V26_1.entityDataTypes.vector3FType,
                         new Vector3f((pivotJava.x() - restOffset.x()) * entityScale,
                                 (pivotJava.y() - restOffset.y()) * entityScale,
                                 (pivotJava.z() - restOffset.z()) * entityScale)));
@@ -310,28 +309,28 @@ public class CustomEntity extends Entity {
                 // LEFT_ROTATION: identity quaternion initially
                 javaEntityData.add(new EntityData(
                         boneEntity.getJavaEntityDataIndex(EntityDataFields.LEFT_ROTATION),
-                        VersionedTypes.V1_21_11.entityDataTypes.quaternionType,
+                        VersionedTypes.V26_1.entityDataTypes.quaternionType,
                         new Quaternion(0F, 0F, 0F, 1F)));
 
                 // Enable interpolation for smooth animation
                 javaEntityData.add(new EntityData(
                         boneEntity.getJavaEntityDataIndex(EntityDataFields.TRANSFORMATION_INTERPOLATION_DURATION),
-                        VersionedTypes.V1_21_11.entityDataTypes.varIntType,
+                        VersionedTypes.V26_1.entityDataTypes.varIntType,
                         this.currentLodInterval));
                 javaEntityData.add(new EntityData(
                         boneEntity.getJavaEntityDataIndex(EntityDataFields.TRANSFORMATION_INTERPOLATION_START_DELTA_TICKS),
-                        VersionedTypes.V1_21_11.entityDataTypes.varIntType,
+                        VersionedTypes.V26_1.entityDataTypes.varIntType,
                         0));
 
                 // Spawn ADD_ENTITY packet
-                final PacketWrapper addEntity = PacketWrapper.create(ClientboundPackets1_21_11.ADD_ENTITY, this.user);
+                final PacketWrapper addEntity = PacketWrapper.create(ClientboundPackets26_1.ADD_ENTITY, this.user);
                 addEntity.write(Types.VAR_INT, boneEntity.javaId());
                 addEntity.write(Types.UUID, boneEntity.javaUuid());
                 addEntity.write(Types.VAR_INT, boneEntity.javaType().getId());
                 addEntity.write(Types.DOUBLE, (double) this.position.x());
                 addEntity.write(Types.DOUBLE, (double) this.position.y());
                 addEntity.write(Types.DOUBLE, (double) this.position.z());
-                addEntity.write(Types.MOVEMENT_VECTOR, Vector3d.ZERO);
+                addEntity.write(Types.LOW_PRECISION_VECTOR, Vector3d.ZERO);
                 addEntity.write(Types.BYTE, MathUtil.float2Byte(this.rotation.x()));
                 addEntity.write(Types.BYTE, MathUtil.float2Byte(this.rotation.y()));
                 addEntity.write(Types.BYTE, MathUtil.float2Byte(this.rotation.z()));
@@ -339,9 +338,9 @@ public class CustomEntity extends Entity {
                 addEntity.send(BedrockProtocol.class);
 
                 // Set entity data
-                final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets1_21_11.SET_ENTITY_DATA, this.user);
+                final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets26_1.SET_ENTITY_DATA, this.user);
                 setEntityData.write(Types.VAR_INT, boneEntity.javaId());
-                setEntityData.write(VersionedTypes.V1_21_11.entityDataList, javaEntityData);
+                setEntityData.write(VersionedTypes.V26_1.entityDataList, javaEntityData);
                 setEntityData.send(BedrockProtocol.class);
             }
         }
@@ -355,7 +354,7 @@ public class CustomEntity extends Entity {
         }
         this.boneEntities.clear();
         if (entityIds.length > 0) {
-            final PacketWrapper removeEntities = PacketWrapper.create(ClientboundPackets1_21_11.REMOVE_ENTITIES, this.user);
+            final PacketWrapper removeEntities = PacketWrapper.create(ClientboundPackets26_1.REMOVE_ENTITIES, this.user);
             removeEntities.write(Types.VAR_INT_ARRAY_PRIMITIVE, entityIds);
             removeEntities.send(BedrockProtocol.class);
         }
@@ -393,7 +392,7 @@ public class CustomEntity extends Entity {
 
             javaEntityData.add(new EntityData(
                     boneEntity.getJavaEntityDataIndex(EntityDataFields.TRANSLATION),
-                    VersionedTypes.V1_21_11.entityDataTypes.vector3FType,
+                    VersionedTypes.V26_1.entityDataTypes.vector3FType,
                     new Vector3f((pivotJava.x() - scaledRotatedOffset.x) * entityScale,
                             (pivotJava.y() - scaledRotatedOffset.y) * entityScale,
                             (pivotJava.z() - scaledRotatedOffset.z) * entityScale)));
@@ -401,14 +400,14 @@ public class CustomEntity extends Entity {
             // Rotation
             javaEntityData.add(new EntityData(
                     boneEntity.getJavaEntityDataIndex(EntityDataFields.LEFT_ROTATION),
-                    VersionedTypes.V1_21_11.entityDataTypes.quaternionType,
+                    VersionedTypes.V26_1.entityDataTypes.quaternionType,
                     rotJava));
 
             // Scale from animation (model scale * animation scale * entity scale)
             final float baseScale = boneEntity.modelScale;
             javaEntityData.add(new EntityData(
                     boneEntity.getJavaEntityDataIndex(EntityDataFields.SCALE),
-                    VersionedTypes.V1_21_11.entityDataTypes.vector3FType,
+                    VersionedTypes.V26_1.entityDataTypes.vector3FType,
                     new Vector3f(baseScale * animScale.x * entityScale,
                             baseScale * animScale.y * entityScale,
                             baseScale * animScale.z * entityScale)));
@@ -416,16 +415,16 @@ public class CustomEntity extends Entity {
             // Set interpolation: duration = LOD interval, start = 0 (now)
             javaEntityData.add(new EntityData(
                     boneEntity.getJavaEntityDataIndex(EntityDataFields.TRANSFORMATION_INTERPOLATION_DURATION),
-                    VersionedTypes.V1_21_11.entityDataTypes.varIntType,
+                    VersionedTypes.V26_1.entityDataTypes.varIntType,
                     this.currentLodInterval));
             javaEntityData.add(new EntityData(
                     boneEntity.getJavaEntityDataIndex(EntityDataFields.TRANSFORMATION_INTERPOLATION_START_DELTA_TICKS),
-                    VersionedTypes.V1_21_11.entityDataTypes.varIntType,
+                    VersionedTypes.V26_1.entityDataTypes.varIntType,
                     0));
 
-            final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets1_21_11.SET_ENTITY_DATA, this.user);
+            final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets26_1.SET_ENTITY_DATA, this.user);
             setEntityData.write(Types.VAR_INT, boneEntity.javaId());
-            setEntityData.write(VersionedTypes.V1_21_11.entityDataList, javaEntityData);
+            setEntityData.write(VersionedTypes.V26_1.entityDataList, javaEntityData);
             setEntityData.send(BedrockProtocol.class);
         }
     }
@@ -571,9 +570,9 @@ public class CustomEntity extends Entity {
         final List<EntityData> javaEntityData = new ArrayList<>();
         this.updateCollisionBox(javaEntityData);
         if (!javaEntityData.isEmpty()) {
-            final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets1_21_11.SET_ENTITY_DATA, this.user);
+            final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets26_1.SET_ENTITY_DATA, this.user);
             setEntityData.write(Types.VAR_INT, this.javaId()); // entity id
-            setEntityData.write(VersionedTypes.V1_21_11.entityDataList, javaEntityData); // entity data
+            setEntityData.write(VersionedTypes.V26_1.entityDataList, javaEntityData); // entity data
             setEntityData.send(BedrockProtocol.class);
         }
     }
@@ -598,10 +597,10 @@ public class CustomEntity extends Entity {
 
         javaEntityData.add(new EntityData(
                 this.getJavaEntityDataIndex(EntityDataFields.WIDTH),
-                VersionedTypes.V1_21_11.entityDataTypes().floatType, width));
+                VersionedTypes.V26_1.entityDataTypes().floatType, width));
         javaEntityData.add(new EntityData(
                 this.getJavaEntityDataIndex(EntityDataFields.HEIGHT),
-                VersionedTypes.V1_21_11.entityDataTypes().floatType, height));
+                VersionedTypes.V26_1.entityDataTypes().floatType, height));
     }
 
     // ---- Entity scale helper ----
@@ -668,7 +667,7 @@ public class CustomEntity extends Entity {
         }
 
         public void updatePositionAndRotation() {
-            final PacketWrapper entityPositionSync = PacketWrapper.create(ClientboundPackets1_21_11.ENTITY_POSITION_SYNC, this.user);
+            final PacketWrapper entityPositionSync = PacketWrapper.create(ClientboundPackets26_1.ENTITY_POSITION_SYNC, this.user);
             entityPositionSync.write(Types.VAR_INT, this.javaId());
             entityPositionSync.write(Types.DOUBLE, (double) CustomEntity.this.position.x());
             entityPositionSync.write(Types.DOUBLE, (double) CustomEntity.this.position.y());

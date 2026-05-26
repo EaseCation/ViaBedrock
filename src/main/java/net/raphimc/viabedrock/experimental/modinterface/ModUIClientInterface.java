@@ -20,7 +20,7 @@ package net.raphimc.viabedrock.experimental.modinterface;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Types;
-import com.viaversion.viaversion.protocols.v1_21_9to1_21_11.packet.ClientboundPackets1_21_11;
+import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
@@ -74,7 +74,7 @@ public class ModUIClientInterface {
 
     private static void sendEntityMappingPayload(final UserConnection user, final byte[] data) {
         try {
-            final PacketWrapper pw = PacketWrapper.create(ClientboundPackets1_21_11.CUSTOM_PAYLOAD, user);
+            final PacketWrapper pw = PacketWrapper.create(ClientboundPackets26_1.CUSTOM_PAYLOAD, user);
             pw.write(Types.STRING, ENTITY_MAPPING_CHANNEL);
             pw.write(Types.REMAINING_BYTES, data);
             pw.scheduleSend(BedrockProtocol.class);

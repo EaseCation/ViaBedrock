@@ -25,7 +25,7 @@ import net.raphimc.viabedrock.experimental.model.inventory.InventorySource;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventorySourceType;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventorySource_InventorySourceFlags;
-import net.raphimc.viabedrock.protocol.data.enums.java.generated.ClickType;
+import net.raphimc.viabedrock.protocol.data.enums.java.generated.ContainerInput;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
 import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 
@@ -46,7 +46,7 @@ public class ClickSimulator {
             final int javaContainerId,
             final short javaSlot,
             final byte button,
-            final ClickType action,
+            final ContainerInput action,
             final InventoryTracker tracker,
             final ClientAuthInventoryModule.DragState dragState) {
 

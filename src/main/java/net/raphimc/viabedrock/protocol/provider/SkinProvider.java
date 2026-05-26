@@ -23,11 +23,12 @@ import com.viaversion.viaversion.libs.gson.JsonArray;
 import com.viaversion.viaversion.libs.gson.JsonElement;
 import com.viaversion.viaversion.libs.gson.JsonObject;
 import com.viaversion.viaversion.libs.gson.JsonParser;
-import net.raphimc.viabedrock.api.model.resourcepack.ResourcePack;
+import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.modinterface.BedrockSkinUtilityInterface;
 import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
-import net.raphimc.viabedrock.ViaBedrock;
+import net.raphimc.viabedrock.api.resourcepack.content.Content;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
+import net.raphimc.viabedrock.protocol.data.DataValues;
 import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.MemoryTier;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.BuildPlatform;
@@ -52,7 +53,11 @@ import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
-import java.util.concurrent.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 public class SkinProvider implements Provider {
 
@@ -160,12 +165,11 @@ public class SkinProvider implements Provider {
     }
 
     public Map<String, Object> getClientPlayerSkin(final UserConnection user) {
-        final HandshakeStorage handshakeStorage = user.get(HandshakeStorage.class);
         final AuthData authData = user.get(AuthData.class);
         final Map<String, Object> claims = new HashMap<>();
 
-        { // Skin claims (default Steve)
-            final ResourcePack.Content skinPackContent = BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks().get("vanilla_skin_pack").content();
+        { // Skin claims
+            final Content skinPackContent = BedrockProtocol.MAPPINGS.getBedrockSkinPacks().get(DataValues.VANILLA_SKIN_PACK_KEY).content();
             final BufferedImage skin = skinPackContent.getImage("steve.png").getImage();
             final JsonObject skinGeometry = skinPackContent.getSortedJson("geometry.json");
 
@@ -240,6 +244,7 @@ public class SkinProvider implements Provider {
         }
 
         { // Session claims
+            final HandshakeStorage handshakeStorage = user.get(HandshakeStorage.class);
             claims.put("ServerAddress", handshakeStorage.hostname() + ":" + handshakeStorage.port());
             claims.put("ThirdPartyName", user.getProtocolInfo().getUsername());
         }
@@ -250,16 +255,17 @@ public class SkinProvider implements Provider {
             claims.put("GraphicsMode", GraphicsMode.Fancy.getValue());
             claims.put("GuiScale", -1);
             claims.put("UIProfile", UIProfile.Classic.getValue());
-            claims.put("ClientRandomId", ThreadLocalRandom.current().nextLong()); // ?
-            claims.put("SelfSignedId", UUID.randomUUID().toString()); // ?
+            claims.put("ClientRandomId", authData.getClientRandomId());
+            claims.put("SelfSignedId", authData.getSelfSignedId());
             claims.put("IsEditorMode", false);
+            claims.put("FilterProfanity", false);
         }
         { // Device claims
             claims.put("DeviceId", authData.getDeviceId().toString().replace("-", ""));
-            claims.put("DeviceModel", "");
-            claims.put("DeviceOS", BuildPlatform.Google.getValue());
+            claims.put("DeviceModel", "MS-7E51 Micro-Star International Co., Ltd. (Unknown)");
+            claims.put("DeviceOS", BuildPlatform.Win32.getValue());
             claims.put("CurrentInputMode", InputMode.Mouse.getValue());
-            claims.put("DefaultInputMode", InputMode.Touch.getValue());
+            claims.put("DefaultInputMode", InputMode.Mouse.getValue());
         }
         { // Hardware claims
             claims.put("MemoryTier", MemoryTier.SuperHigh.ordinal());

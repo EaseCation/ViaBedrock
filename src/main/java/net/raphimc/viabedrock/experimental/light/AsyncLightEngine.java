@@ -22,7 +22,7 @@ import com.viaversion.viaversion.api.minecraft.ChunkPosition;
 import com.viaversion.viaversion.api.minecraft.chunks.*;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Types;
-import com.viaversion.viaversion.protocols.v1_21_9to1_21_11.packet.ClientboundPackets1_21_11;
+import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.experimental.custommapping.CustomMappingAccess;
 import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
@@ -626,7 +626,7 @@ public class AsyncLightEngine implements ChunkLightProvider {
             }
         }
 
-        final PacketWrapper lightUpdate = PacketWrapper.create(ClientboundPackets1_21_11.LIGHT_UPDATE, this.user);
+        final PacketWrapper lightUpdate = PacketWrapper.create(ClientboundPackets26_1.LIGHT_UPDATE, this.user);
         lightUpdate.write(Types.VAR_INT, chunkX); // chunk x
         lightUpdate.write(Types.VAR_INT, chunkZ); // chunk z
         lightUpdate.write(Types.LONG_ARRAY_PRIMITIVE, skyLightMask.toLongArray()); // sky light mask

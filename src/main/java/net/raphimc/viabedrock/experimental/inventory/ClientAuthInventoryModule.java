@@ -21,7 +21,7 @@ import com.viaversion.viaversion.api.connection.StoredObject;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Types;
-import com.viaversion.viaversion.protocols.v1_21_5to1_21_6.packet.ServerboundPackets1_21_6;
+import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ServerboundPackets26_1;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.model.container.Container;
 import net.raphimc.viabedrock.api.model.container.CraftingTableContainer;
@@ -38,7 +38,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ComplexInven
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventorySourceType;
-import net.raphimc.viabedrock.protocol.data.enums.java.generated.ClickType;
+import net.raphimc.viabedrock.protocol.data.enums.java.generated.ContainerInput;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
 import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 
@@ -65,12 +65,12 @@ public class ClientAuthInventoryModule implements FeatureModule {
     }
 
     private void registerContainerClickHandler(final BedrockProtocol protocol) {
-        ProtocolUtil.prependServerbound(protocol, ServerboundPackets1_21_6.CONTAINER_CLICK, wrapper -> {
+        ProtocolUtil.prependServerbound(protocol, ServerboundPackets26_1.CONTAINER_CLICK, wrapper -> {
             final int containerId = wrapper.read(Types.VAR_INT); // container id
             final int revision = wrapper.read(Types.VAR_INT); // revision
             final short slot = wrapper.read(Types.SHORT); // slot
             final byte button = wrapper.read(Types.BYTE); // button
-            final ClickType action = ClickType.values()[wrapper.read(Types.VAR_INT)]; // action
+            final ContainerInput action = ContainerInput.values()[wrapper.read(Types.VAR_INT)]; // action
 
             wrapper.cancel(); // Prevent original handler from executing
 
@@ -125,7 +125,7 @@ public class ClientAuthInventoryModule implements FeatureModule {
             applyMirrorUpdates(actions, inventoryTracker);
 
             // Resync client for operations where Java client predicts differently
-            if (action == ClickType.QUICK_MOVE || isCraftingAction) {
+            if (action == ContainerInput.QUICK_MOVE || isCraftingAction) {
                 if (containerId != ContainerID.CONTAINER_ID_INVENTORY.getValue()) {
                     PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getInventoryContainer());
                 }

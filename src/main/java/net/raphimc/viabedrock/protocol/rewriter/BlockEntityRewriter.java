@@ -34,7 +34,7 @@ import net.raphimc.viabedrock.api.util.TextUtil;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomBlockTags;
 import net.raphimc.viabedrock.protocol.rewriter.blockentity.*;
-import net.raphimc.viabedrock.protocol.storage.ResourcePacksStorage;
+import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -129,7 +129,7 @@ public class BlockEntityRewriter {
         }
 
         final String tag = blockStateRewriter.tag(bedrockBlockStateId);
-        if (BLOCK_ENTITY_REWRITERS.containsKey(tag)) {
+        if (isBlockEntity(tag)) {
             final BlockEntity javaBlockEntity = BLOCK_ENTITY_REWRITERS.get(tag).toJava(user, bedrockBlockEntity);
             if (javaBlockEntity == null) return null;
 
@@ -184,6 +184,10 @@ public class BlockEntityRewriter {
         return !NULL_REWRITER.equals(BLOCK_ENTITY_REWRITERS.get(tag));
     }
 
+    public static boolean isBlockEntity(final String tag) {
+        return BLOCK_ENTITY_REWRITERS.containsKey(tag);
+    }
+
     public interface Rewriter {
 
         BlockEntity toJava(final UserConnection user, final BedrockBlockEntity bedrockBlockEntity);
@@ -227,7 +231,7 @@ public class BlockEntityRewriter {
         default ListTag<?> rewriteItemList(final UserConnection user, final ListTag<CompoundTag> bedrockItemList) {
             final ListTag<CompoundTag> javaItemList = new ListTag<>(CompoundTag.class);
             final ItemRewriter itemRewriter = user.get(ItemRewriter.class);
-            for (final CompoundTag bedrockItemTag : bedrockItemList) {
+            for (CompoundTag bedrockItemTag : bedrockItemList) {
                 final CompoundTag javaItemTag = itemRewriter.javaItem(bedrockItemTag);
                 this.copy(bedrockItemTag, javaItemTag, "Slot", ByteTag.class);
                 javaItemList.add(javaItemTag);
@@ -236,7 +240,7 @@ public class BlockEntityRewriter {
         }
 
         default StringTag rewriteCustomName(final UserConnection user, final StringTag textTag) {
-            return new StringTag(TextUtil.stringToJson(user.get(ResourcePacksStorage.class).getTexts().translate(textTag.getValue())));
+            return new StringTag(TextUtil.stringToJson(user.get(ResourcePackStorage.class).getTexts().translate(textTag.getValue())));
         }
 
     }

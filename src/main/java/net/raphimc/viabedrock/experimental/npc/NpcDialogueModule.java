@@ -30,8 +30,8 @@ import com.viaversion.viaversion.libs.mcstructs.dialog.body.PlainMessageBody;
 import com.viaversion.viaversion.libs.mcstructs.dialog.impl.MultiActionDialog;
 import com.viaversion.viaversion.libs.mcstructs.dialog.serializer.DialogSerializer;
 import com.viaversion.viaversion.libs.mcstructs.text.components.StringComponent;
-import com.viaversion.viaversion.protocols.v1_21_5to1_21_6.packet.ServerboundPackets1_21_6;
-import com.viaversion.viaversion.protocols.v1_21_9to1_21_11.packet.ClientboundPackets1_21_11;
+import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ServerboundPackets26_1;
+import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import net.lenni0451.mcstructs_bedrock.text.utils.BedrockTextUtils;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.model.entity.Entity;
@@ -45,7 +45,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.NpcDialogueP
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.NpcRequestPacket_RequestType;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
-import net.raphimc.viabedrock.protocol.storage.ResourcePacksStorage;
+import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.util.ArrayList;
@@ -90,7 +90,7 @@ public class NpcDialogueModule implements FeatureModule {
             if (actionType == NpcDialoguePacket_NpcDialogueActionType.Close) {
                 if (inventoryTracker.getCurrentNpcDialogue() != null) {
                     inventoryTracker.setCurrentNpcDialogue(null);
-                    final PacketWrapper clearDialog = PacketWrapper.create(ClientboundPackets1_21_11.CLEAR_DIALOG, wrapper.user());
+                    final PacketWrapper clearDialog = PacketWrapper.create(ClientboundPackets26_1.CLEAR_DIALOG, wrapper.user());
                     clearDialog.send(BedrockProtocol.class);
                 }
                 return;
@@ -113,12 +113,12 @@ public class NpcDialogueModule implements FeatureModule {
 
             inventoryTracker.setCurrentNpcDialogue(new InventoryTracker.NpcDialogueState(npcEntityUniqueId, npcEntityRuntimeId, sceneName));
 
-            final ResourcePacksStorage resourcePacksStorage = wrapper.user().get(ResourcePacksStorage.class);
+            final ResourcePackStorage resourcePackStorage = wrapper.user().get(ResourcePackStorage.class);
             final Identifier responseIdentifier = Identifier.of("viabedrock", "npc/" + sceneName);
 
             final CompoundTag exitButtonAdditions = new CompoundTag();
             exitButtonAdditions.putBoolean("exit", true);
-            final ActionButton exitButton = new ActionButton(new StringComponent(resourcePacksStorage.getTexts().get("gui.close")), DIALOG_BUTTON_WIDTH, new CustomAllAction(responseIdentifier, exitButtonAdditions));
+            final ActionButton exitButton = new ActionButton(new StringComponent(resourcePackStorage.getTexts().get("gui.close")), DIALOG_BUTTON_WIDTH, new CustomAllAction(responseIdentifier, exitButtonAdditions));
 
             final MultiActionDialog dialog = new MultiActionDialog(
                     TextUtil.stringToTextComponent(npcName.isEmpty() ? "NPC" : npcName),
@@ -153,7 +153,7 @@ public class NpcDialogueModule implements FeatureModule {
             }
 
             try {
-                final PacketWrapper showDialog = PacketWrapper.create(ClientboundPackets1_21_11.SHOW_DIALOG, wrapper.user());
+                final PacketWrapper showDialog = PacketWrapper.create(ClientboundPackets26_1.SHOW_DIALOG, wrapper.user());
                 showDialog.write(Types.VAR_INT, 0); // registry id
                 showDialog.write(Types.TAG, DialogSerializer.V1_21_6.getDirectCodec().serialize(NbtConverter_v1_21_5.INSTANCE, dialog).get()); // dialog data
                 showDialog.send(BedrockProtocol.class);
@@ -175,7 +175,7 @@ public class NpcDialogueModule implements FeatureModule {
     }
 
     private void registerNpcClickActionHandler(final BedrockProtocol protocol) {
-        ProtocolUtil.prependServerbound(protocol, ServerboundPackets1_21_6.CUSTOM_CLICK_ACTION, wrapper -> {
+        ProtocolUtil.prependServerbound(protocol, ServerboundPackets26_1.CUSTOM_CLICK_ACTION, wrapper -> {
             final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
             if (inventoryTracker.getCurrentNpcDialogue() == null) {
                 return; // Not an NPC dialogue response, fall through to form handler

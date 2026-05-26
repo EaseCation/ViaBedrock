@@ -17,7 +17,7 @@
  */
 package net.raphimc.viabedrock.experimental.resourcepack;
 
-import net.raphimc.viabedrock.api.model.resourcepack.ResourcePack;
+import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 
 import java.io.File;
 import java.io.IOException;
@@ -25,6 +25,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.stream.Collectors;
 
@@ -39,8 +40,15 @@ public class JavaPackCache {
 
     public static String computeCacheKey(final Collection<ResourcePack> packs) {
         final String raw = packs.stream()
-                .map(p -> p.packId() + "_" + p.version())
-                .sorted()
+                .map(ResourcePack::key)
+                .map(ResourcePack.Key::toString)
+                .collect(Collectors.joining(","));
+        return sha1Hex(raw.getBytes(StandardCharsets.UTF_8));
+    }
+
+    public static String computeCacheKey(final ResourcePack.Key[] keys) {
+        final String raw = Arrays.stream(keys)
+                .map(ResourcePack.Key::toString)
                 .collect(Collectors.joining(","));
         return sha1Hex(raw.getBytes(StandardCharsets.UTF_8));
     }

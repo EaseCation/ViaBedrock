@@ -200,16 +200,12 @@ public final class RuntimeProjectionBuilder {
                     }
 
                     if (trait.get("enabled_states") instanceof CompoundTag enabledStatesTag) {
-                        if (enabledStatesTag.size() != traitStateProperties.size()) {
-                            throw new RuntimeException("Invalid enabled_states tag for trait " + name + " (size mismatch)");
-                        }
-
                         for (Map.Entry<String, Tag> tag : enabledStatesTag) {
                             final String key = Key.namespaced(tag.getKey());
                             final boolean enabled = tag.getValue() instanceof com.viaversion.nbt.tag.ByteTag byteTag && byteTag.asByte() != 0;
                             if (!enabled) continue;
                             if (!traitStateProperties.containsKey(key)) {
-                                throw new RuntimeException("Missing block trait state properties for trait " + name + " and enabled state " + key);
+                                throw new RuntimeException("Missing block trait state properties for trait " + name + " and enabled state " + key + " on " + identifier);
                             }
                             for (Map.Entry<String, Set<String>> propertiesEntry : traitStateProperties.get(key).entrySet()) {
                                 final Set<Tag> values = new LinkedHashSet<>();

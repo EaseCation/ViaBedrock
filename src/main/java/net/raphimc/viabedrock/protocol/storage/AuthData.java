@@ -18,6 +18,7 @@
 package net.raphimc.viabedrock.protocol.storage;
 
 import com.viaversion.viaversion.api.connection.StorableObject;
+import net.raphimc.viabedrock.api.util.Jwt;
 
 import java.security.KeyPair;
 import java.util.ArrayList;
@@ -30,21 +31,42 @@ public class AuthData implements StorableObject {
     private final String mojangJwt;
     private final String identityJwt;
     private final String multiplayerToken;
+    private final Jwt multiplayerTokenJwt;
     private final KeyPair sessionKeyPair;
-    private final UUID deviceId;
 
+    private UUID deviceId;
+    private UUID selfSignedId;
+    private Long clientRandomId;
     private String selfSignedJwt;
     private String skinJwt;
     private String displayName;
     private String xuid;
-    private CompletableFuture<Object> javaSkinFuture;
+    private CompletableFuture<?> javaSkinFuture;
 
+    public AuthData(final String multiplayerToken, final KeyPair sessionKeyPair) {
+        this(null, null, multiplayerToken, sessionKeyPair, null);
+    }
+
+    public AuthData(final String multiplayerToken, final KeyPair sessionKeyPair, final UUID deviceId) {
+        this(null, null, multiplayerToken, sessionKeyPair, deviceId);
+    }
+
+    public static AuthData fromIdentityJwt(final String identityJwt, final KeyPair sessionKeyPair, final UUID deviceId) {
+        return new AuthData(null, identityJwt, null, sessionKeyPair, deviceId);
+    }
+
+    @Deprecated(forRemoval = true)
     public AuthData(final String mojangJwt, final String identityJwt, final String multiplayerToken, final KeyPair sessionKeyPair, final UUID deviceId) {
         this.mojangJwt = mojangJwt;
         this.identityJwt = identityJwt;
         this.multiplayerToken = multiplayerToken;
+        this.multiplayerTokenJwt = multiplayerToken != null ? Jwt.parse(multiplayerToken) : null;
         this.sessionKeyPair = sessionKeyPair;
         this.deviceId = deviceId;
+        if (this.multiplayerTokenJwt != null) {
+            this.displayName = this.multiplayerTokenJwt.payload().get("xname").getAsString();
+            this.xuid = this.multiplayerTokenJwt.payload().get("xid").getAsString();
+        }
     }
 
     public String getMojangJwt() {
@@ -67,6 +89,26 @@ public class AuthData implements StorableObject {
         return this.deviceId;
     }
 
+    public void setDeviceId(final UUID deviceId) {
+        this.deviceId = deviceId;
+    }
+
+    public UUID getSelfSignedId() {
+        return this.selfSignedId;
+    }
+
+    public void setSelfSignedId(final UUID selfSignedId) {
+        this.selfSignedId = selfSignedId;
+    }
+
+    public Long getClientRandomId() {
+        return this.clientRandomId;
+    }
+
+    public void setClientRandomId(final Long clientRandomId) {
+        this.clientRandomId = clientRandomId;
+    }
+
     public String getSelfSignedJwt() {
         return this.selfSignedJwt;
     }
@@ -83,6 +125,14 @@ public class AuthData implements StorableObject {
         this.skinJwt = skinJwt;
     }
 
+    public CompletableFuture<?> getJavaSkinFuture() {
+        return this.javaSkinFuture;
+    }
+
+    public void setJavaSkinFuture(final CompletableFuture<?> javaSkinFuture) {
+        this.javaSkinFuture = javaSkinFuture;
+    }
+
     public String getDisplayName() {
         return this.displayName;
     }
@@ -97,14 +147,6 @@ public class AuthData implements StorableObject {
 
     public void setXuid(final String xuid) {
         this.xuid = xuid;
-    }
-
-    public CompletableFuture<Object> getJavaSkinFuture() {
-        return this.javaSkinFuture;
-    }
-
-    public void setJavaSkinFuture(final CompletableFuture<Object> javaSkinFuture) {
-        this.javaSkinFuture = javaSkinFuture;
     }
 
     public List<String> getCertificateChain() {

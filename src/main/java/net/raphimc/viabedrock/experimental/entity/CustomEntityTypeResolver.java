@@ -17,11 +17,11 @@
  */
 package net.raphimc.viabedrock.experimental.entity;
 
-import com.google.gson.Gson;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.minecraft.entities.EntityTypes1_21_11;
+import com.viaversion.viaversion.libs.gson.Gson;
+import com.viaversion.viaversion.libs.gson.JsonElement;
+import com.viaversion.viaversion.libs.gson.JsonObject;
 import com.viaversion.viaversion.util.Key;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.model.entity.Entity;

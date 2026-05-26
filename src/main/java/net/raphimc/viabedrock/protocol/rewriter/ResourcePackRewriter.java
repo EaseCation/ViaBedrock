@@ -19,20 +19,20 @@ package net.raphimc.viabedrock.protocol.rewriter;
 
 import com.viaversion.viaversion.libs.gson.JsonObject;
 import net.easecation.bedrockmotion.pack.PackManager;
-import net.easecation.bedrockmotion.pack.content.Content;
 import net.raphimc.viabedrock.ViaBedrock;
-import net.raphimc.viabedrock.api.model.resourcepack.EntityDefinitions;
-import net.raphimc.viabedrock.api.model.resourcepack.ResourcePack;
-import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
+import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
+import net.raphimc.viabedrock.api.resourcepack.content.Content;
+import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
+import net.raphimc.viabedrock.api.resourcepack.definition.EntityDefinitions;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
+import net.raphimc.viabedrock.protocol.data.DataValues;
 import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomAttachableResourceRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomEntityResourceRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomItemTextureResourceRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomSoundResourceRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.resourcepack.GlyphSheetResourceRewriter;
-import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
-import net.raphimc.viabedrock.protocol.storage.ResourcePacksStorage;
+import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 import org.cube.converter.converter.enums.RotationType;
 import org.cube.converter.model.element.Parent;
 import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
@@ -60,26 +60,12 @@ public class ResourcePackRewriter {
         REWRITERS.add(rewriter);
     }
 
-    public static ResourcePack.Content bedrockToJava(final ResourcePacksStorage resourcePacksStorage) {
-        final ResourcePack.Content javaContent = new ResourcePack.Content();
-
+    public static Content bedrockToJava(final ResourcePackStorage resourcePackStorage) {
+        final Content javaContent = new InMemoryContent();
         for (Rewriter rewriter : REWRITERS) {
-            rewriter.apply(resourcePacksStorage, javaContent);
+            rewriter.apply(resourcePackStorage, javaContent);
         }
-
         javaContent.putJson("pack.mcmeta", createPackManifest());
-
-        final ChannelStorage channelStorage = resourcePacksStorage.user().get(ChannelStorage.class);
-        if (channelStorage.hasChannel(ViaBedrockUtilityInterface.CONFIRM_CHANNEL)) {
-            for (ResourcePack pack : resourcePacksStorage.getPacks()) {
-                try {
-                    javaContent.put("bedrock/" + pack.packId() + ".mcpack", pack.content().toZip());
-                } catch (IOException e) {
-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to put bedrock pack " + pack.packId() + " into java resource pack", e);
-                }
-            }
-        }
-
         return javaContent;
     }
 
@@ -101,25 +87,29 @@ public class ResourcePackRewriter {
      * This must be called after setPackStack() to ensure data is available regardless of
      * whether the Java client downloads or caches the resource pack.
      */
-    public static void initRuntimeData(final ResourcePacksStorage resourcePacksStorage) {
+    public static void initRuntimeData(final ResourcePackStorage resourcePackStorage) {
+        for (Rewriter rewriter : REWRITERS) {
+            rewriter.initRuntimeData(resourcePackStorage);
+        }
+
         if (!ViaBedrock.getConfig().shouldEnableServerEntityAnimation()) {
             return; // Server-side animation disabled, skip BedrockMotion initialization
         }
-        initBedrockMotionPackManager(resourcePacksStorage);
-        initCustomEntityBoneData(resourcePacksStorage);
+        initBedrockMotionPackManager(resourcePackStorage);
+        initCustomEntityBoneData(resourcePackStorage);
     }
 
     /**
      * Populate per-bone metadata (bone names and scales) for all custom entities.
      * This data is needed by CustomEntity.spawn() to create per-bone Display Entities.
      */
-    private static void initCustomEntityBoneData(final ResourcePacksStorage resourcePacksStorage) {
-        if (resourcePacksStorage.getEntities() == null || resourcePacksStorage.getModels() == null) return;
+    private static void initCustomEntityBoneData(final ResourcePackStorage resourcePackStorage) {
+        if (resourcePackStorage.getEntities() == null || resourcePackStorage.getModels() == null) return;
 
-        for (Map.Entry<String, EntityDefinitions.EntityDefinition> entityEntry : resourcePacksStorage.getEntities().entities().entrySet()) {
+        for (Map.Entry<String, EntityDefinitions.EntityDefinition> entityEntry : resourcePackStorage.getEntities().entities().entrySet()) {
             final EntityDefinitions.EntityDefinition entityDefinition = entityEntry.getValue();
             for (Map.Entry<String, String> modelEntry : entityDefinition.entityData().getGeometries().entrySet()) {
-                final BedrockGeometryModel bedrockGeometry = resourcePacksStorage.getModels().entityModels().get(modelEntry.getValue());
+                final BedrockGeometryModel bedrockGeometry = resourcePackStorage.getModels().entityModels().get(modelEntry.getValue());
                 if (bedrockGeometry == null) continue;
 
                 for (Map.Entry<String, String> textureEntry : entityDefinition.entityData().getTextures().entrySet()) {
@@ -146,7 +136,7 @@ public class ResourcePackRewriter {
 
                             final String boneKey = baseKey + "_" + boneName;
                             final float safeScale = Float.isFinite(itemModel.getScale()) ? itemModel.getScale() : 1.0f;
-                            resourcePacksStorage.getConverterData().put("ce_" + boneKey + "_scale", safeScale);
+                            resourcePackStorage.getConverterData().put("ce_" + boneKey + "_scale", safeScale);
                             boneNames.add(boneName);
                         } catch (Throwable e) {
                             ViaBedrock.getPlatform().getLogger().log(Level.WARNING,
@@ -154,7 +144,7 @@ public class ResourcePackRewriter {
                         }
                     }
 
-                    resourcePacksStorage.getConverterData().put("ce_" + baseKey + "_bones", boneNames);
+                    resourcePackStorage.getConverterData().put("ce_" + baseKey + "_bones", boneNames);
                 }
             }
         }
@@ -165,25 +155,24 @@ public class ResourcePackRewriter {
      * This PackManager provides animation/controller definitions for server-side entity animation.
      * Stored in converterData for access by CustomEntity's ServerEntityTicker.
      */
-    private static void initBedrockMotionPackManager(final ResourcePacksStorage resourcePacksStorage) {
+    private static void initBedrockMotionPackManager(final ResourcePackStorage resourcePackStorage) {
         try {
-            final List<Content> contents = new ArrayList<>();
+            final List<net.easecation.bedrockmotion.pack.content.Content> contents = new ArrayList<>();
 
-            // Include vanilla_skin_pack at lowest priority for vanilla geometries (e.g., geometry.humanoid.custom)
-            if (BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks() != null) {
-                final ResourcePack skinPack = BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks().get("vanilla_skin_pack");
+            if (BedrockProtocol.MAPPINGS.getBedrockSkinPacks() != null) {
+                final ResourcePack skinPack = BedrockProtocol.MAPPINGS.getBedrockSkinPacks().get(DataValues.VANILLA_SKIN_PACK_KEY);
                 if (skinPack != null) {
                     try {
-                        contents.add(new Content(skinPack.content().toZip()));
+                        contents.add(new net.easecation.bedrockmotion.pack.content.Content(skinPack.content().toZip()));
                     } catch (IOException e) {
                         ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to convert vanilla skin pack for BedrockMotion", e);
                     }
                 }
             }
 
-            for (ResourcePack pack : resourcePacksStorage.getPackStackBottomToTop()) {
+            for (ResourcePack pack : resourcePackStorage.getPackStackBottomToTop()) {
                 try {
-                    contents.add(new Content(pack.content().toZip()));
+                    contents.add(new net.easecation.bedrockmotion.pack.content.Content(pack.content().toZip()));
                 } catch (IOException e) {
                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to convert pack for BedrockMotion", e);
                 }
@@ -191,7 +180,7 @@ public class ResourcePackRewriter {
 
             if (!contents.isEmpty()) {
                 final PackManager packManager = new PackManager(contents);
-                resourcePacksStorage.getConverterData().put("bedrockmotion_pack_manager", packManager);
+                resourcePackStorage.getConverterData().put("bedrockmotion_pack_manager", packManager);
                 ViaBedrock.getPlatform().getLogger().info("Initialized BedrockMotion PackManager with " + contents.size() + " pack(s)");
             }
         } catch (Throwable e) {
@@ -201,7 +190,10 @@ public class ResourcePackRewriter {
 
     public interface Rewriter {
 
-        void apply(final ResourcePacksStorage resourcePacksStorage, final ResourcePack.Content javaContent);
+        void apply(final ResourcePackStorage resourcePackStorage, final Content javaContent);
+
+        default void initRuntimeData(final ResourcePackStorage resourcePackStorage) {
+        }
 
     }
 

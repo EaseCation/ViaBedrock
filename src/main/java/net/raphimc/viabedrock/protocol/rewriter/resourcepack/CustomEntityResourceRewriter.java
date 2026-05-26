@@ -17,88 +17,92 @@
  */
 package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
 
+import com.viaversion.viaversion.api.minecraft.item.data.ItemModel;
+import com.viaversion.viaversion.libs.gson.JsonObject;
 import com.viaversion.viaversion.util.Key;
 import net.raphimc.viabedrock.ViaBedrock;
-import net.raphimc.viabedrock.api.model.resourcepack.EntityDefinitions;
-import net.raphimc.viabedrock.api.model.resourcepack.ResourcePack;
-import net.raphimc.viabedrock.protocol.storage.ResourcePacksStorage;
+import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
+import net.raphimc.viabedrock.api.resourcepack.content.Content;
+import net.raphimc.viabedrock.api.resourcepack.definition.EntityDefinitions;
+import net.raphimc.viabedrock.api.util.StringUtil;
+import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 import org.cube.converter.converter.enums.RotationType;
 import org.cube.converter.model.element.Parent;
 import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
 import org.cube.converter.model.impl.java.JavaItemModel;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.logging.Level;
 
 public class CustomEntityResourceRewriter extends ItemModelResourceRewriter {
 
-    public static final Key ITEM_MODEL_KEY = Key.of("viabedrock", "entity");
+    private static final String SUB_FOLDER = "entities";
+
+    public static ItemModel getItemModel(final String entityIdentifier) {
+        return new ItemModel(Key.of("viabedrock", SUB_FOLDER + '/' + StringUtil.makeIdentifierValueSafe(entityIdentifier)));
+    }
 
     public CustomEntityResourceRewriter() {
-        super("entity", "entity");
+        super(SUB_FOLDER);
     }
 
     @Override
-    protected void apply(final ResourcePacksStorage resourcePacksStorage, final ResourcePack.Content javaContent, final Set<String> modelsList) {
-        for (Map.Entry<String, EntityDefinitions.EntityDefinition> entityEntry : resourcePacksStorage.getEntities().entities().entrySet()) {
-            for (String bedrockPath : entityEntry.getValue().entityData().getTextures().values()) {
-                for (ResourcePack pack : resourcePacksStorage.getPackStackTopToBottom()) {
-                    final ResourcePack.Content bedrockContent = pack.content();
-                    final ResourcePack.Content.LazyImage texture = bedrockContent.getShortnameImage(bedrockPath);
+    public void apply(final ResourcePackStorage resourcePackStorage, final Content javaContent) {
+        for (Map.Entry<String, EntityDefinitions.EntityDefinition> entityEntry : resourcePackStorage.getEntities().entities().entrySet()) {
+            final EntityDefinitions.EntityDefinition entityDefinition = entityEntry.getValue();
+            final Map<String, JsonObject> javaModelDefinitions = new HashMap<>();
+            for (String bedrockPath : entityDefinition.entityData().getTextures().values()) {
+                for (ResourcePack pack : resourcePackStorage.getPackStackTopToBottom()) {
+                    final Content.LazyImage texture = pack.content().getShortnameImage(bedrockPath);
                     if (texture != null) {
                         javaContent.putPngImage("assets/viabedrock/textures/" + this.getJavaTexturePath(bedrockPath) + ".png", texture);
                         break;
                     }
                 }
             }
-
-            final EntityDefinitions.EntityDefinition entityDefinition = entityEntry.getValue();
             for (Map.Entry<String, String> modelEntry : entityDefinition.entityData().getGeometries().entrySet()) {
-                final BedrockGeometryModel bedrockGeometry = resourcePacksStorage.getModels().entityModels().get(modelEntry.getValue());
-                if (bedrockGeometry == null) continue;
+                final BedrockGeometryModel bedrockGeometry = resourcePackStorage.getModels().entityModels().get(modelEntry.getValue());
+                if (bedrockGeometry != null) {
+                    for (Map.Entry<String, String> textureEntry : entityDefinition.entityData().getTextures().entrySet()) {
+                        final String modelKey = modelEntry.getKey() + "_" + textureEntry.getKey();
+                        final JavaItemModel itemModelData = bedrockGeometry.toJavaItemModel("viabedrock:" + this.getJavaTexturePath(textureEntry.getValue()), RotationType.POST_1_21_11);
+                        javaModelDefinitions.put(modelKey, itemModelData.compile());
+                        resourcePackStorage.getConverterData().put("ce_" + entityEntry.getKey() + '_' + modelKey + "_scale", itemModelData.getScale());
 
-                for (Map.Entry<String, String> textureEntry : entityDefinition.entityData().getTextures().entrySet()) {
-                    final String javaTexturePath = this.getJavaTexturePath(textureEntry.getValue());
-                    final String baseKey = entityEntry.getKey() + "_" + modelEntry.getKey() + "_" + textureEntry.getKey();
+                        final List<String> boneNames = new ArrayList<>();
+                        for (Parent bone : bedrockGeometry.getParents()) {
+                            if (bone.getCubes().isEmpty()) {
+                                continue;
+                            }
 
-                    // Generate per-bone item models
-                    final List<String> boneNames = new ArrayList<>();
-                    for (Parent bone : bedrockGeometry.getParents()) {
-                        if (bone.getCubes().isEmpty()) continue;
+                            final String boneName = bone.getName().toLowerCase();
+                            try {
+                                final BedrockGeometryModel perBoneGeometry = new BedrockGeometryModel(
+                                        bedrockGeometry.getIdentifier() + "_" + boneName,
+                                        bedrockGeometry.getTextureSize());
+                                final Parent clonedBone = bone.clone();
+                                clonedBone.setParent(null);
+                                perBoneGeometry.getParents().add(clonedBone);
 
-                        final String boneName = bone.getName().toLowerCase();
-                        try {
-                            // Create a standalone geometry containing only this bone
-                            final BedrockGeometryModel perBoneGeometry = new BedrockGeometryModel(
-                                    bedrockGeometry.getIdentifier() + "_" + boneName,
-                                    bedrockGeometry.getTextureSize());
-                            final Parent clonedBone = bone.clone();
-                            clonedBone.setParent(null);
-                            perBoneGeometry.getParents().add(clonedBone);
-
-                            final JavaItemModel itemModel = perBoneGeometry.toJavaItemModel(
-                                    "viabedrock:" + javaTexturePath, RotationType.HACKY_POST_1_21_6);
-
-                            final String boneKey = baseKey + "_" + boneName;
-                            final float safeScale = Float.isFinite(itemModel.getScale()) ? itemModel.getScale() : 1.0f;
-                            resourcePacksStorage.getConverterData().put("ce_" + boneKey + "_scale", safeScale);
-                            javaContent.putString("assets/viabedrock/models/" + this.getJavaModelName(boneKey) + ".json",
-                                    itemModel.compile().toString());
-                            modelsList.add(boneKey);
-                            boneNames.add(boneName);
-                        } catch (Throwable e) {
-                            ViaBedrock.getPlatform().getLogger().log(Level.WARNING,
-                                    "Failed to generate per-bone model for " + boneName + " in " + baseKey, e);
+                                final JavaItemModel boneModelData = perBoneGeometry.toJavaItemModel(
+                                        "viabedrock:" + this.getJavaTexturePath(textureEntry.getValue()),
+                                        RotationType.HACKY_POST_1_21_6);
+                                final String boneKey = entityEntry.getKey() + '_' + modelKey + '_' + boneName;
+                                javaModelDefinitions.put(boneKey, boneModelData.compile());
+                                resourcePackStorage.getConverterData().put("ce_" + boneKey + "_scale", Float.isFinite(boneModelData.getScale()) ? boneModelData.getScale() : 1.0F);
+                                boneNames.add(boneName);
+                            } catch (Throwable e) {
+                                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to generate per-bone model for " + boneName + " in " + entityEntry.getKey() + '_' + modelKey, e);
+                            }
                         }
+                        resourcePackStorage.getConverterData().put("ce_" + entityEntry.getKey() + '_' + modelKey + "_bones", boneNames);
                     }
-
-                    // Store ordered bone name list for this geometry+texture combination
-                    resourcePacksStorage.getConverterData().put("ce_" + baseKey + "_bones", boneNames);
                 }
             }
+            this.putItemDefinition(javaContent, entityEntry.getKey(), javaModelDefinitions);
         }
     }
 

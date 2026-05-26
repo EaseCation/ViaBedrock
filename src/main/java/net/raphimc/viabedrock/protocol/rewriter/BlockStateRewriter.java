@@ -73,6 +73,7 @@ public class BlockStateRewriter implements StorableObject {
                 runtimeProjectionBuilder = null;
             }
         }
+
         bedrockBlockStates.sort((a, b) -> HashedPaletteComparator.INSTANCE.compare(a.namespacedIdentifier(), b.namespacedIdentifier()));
         final Set<String> reportedMissingCustomRuntimeProperties = new HashSet<>();
         final Map<String, Integer> missingCustomRuntimeCounts = new HashMap<>();

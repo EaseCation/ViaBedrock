@@ -18,9 +18,10 @@
 package net.raphimc.viabedrock.experimental.resourcepack;
 
 import net.raphimc.viabedrock.ViaBedrock;
-import net.raphimc.viabedrock.api.model.resourcepack.ResourcePack;
+import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
+import net.raphimc.viabedrock.api.resourcepack.content.Content;
 import net.raphimc.viabedrock.protocol.rewriter.ResourcePackRewriter;
-import net.raphimc.viabedrock.protocol.storage.ResourcePacksStorage;
+import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 
 import java.util.List;
 import java.util.Locale;
@@ -40,10 +41,10 @@ public class UITextureResourceRewriter implements ResourcePackRewriter.Rewriter 
     private static final String[] IMAGE_EXTENSIONS = {".jpg", ".jpeg"};
 
     @Override
-    public void apply(final ResourcePacksStorage resourcePacksStorage, final ResourcePack.Content javaContent) {
+    public void apply(final ResourcePackStorage resourcePackStorage, final Content javaContent) {
         int count = 0;
-        for (final ResourcePack pack : resourcePacksStorage.getPackStackTopToBottom()) {
-            final ResourcePack.Content bedrockContent = pack.content();
+        for (final ResourcePack pack : resourcePackStorage.getPackStackTopToBottom()) {
+            final Content bedrockContent = pack.content();
 
             for (final String prefix : TEXTURE_PREFIXES) {
                 // PNG and JSON files: copy directly
@@ -68,7 +69,7 @@ public class UITextureResourceRewriter implements ResourcePackRewriter.Rewriter 
                         final String basePath = bedrockPath.substring(0, bedrockPath.length() - extension.length());
                         final String javaPath = "assets/minecraft/" + basePath.toLowerCase(Locale.ROOT) + ".png";
                         if (!javaContent.contains(javaPath)) {
-                            final ResourcePack.Content.LazyImage image = bedrockContent.getImage(bedrockPath);
+                            final Content.LazyImage image = bedrockContent.getImage(bedrockPath);
                             if (image != null) {
                                 javaContent.putPngImage(javaPath, image);
                                 count++;

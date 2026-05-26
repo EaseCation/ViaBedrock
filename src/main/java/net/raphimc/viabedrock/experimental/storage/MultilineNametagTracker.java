@@ -28,7 +28,7 @@ import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
 import com.viaversion.viaversion.libs.mcstructs.text.TextFormatting;
-import com.viaversion.viaversion.protocols.v1_21_9to1_21_11.packet.ClientboundPackets1_21_11;
+import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
 import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.api.model.entity.PlayerEntity;
@@ -37,7 +37,7 @@ import net.raphimc.viabedrock.experimental.util.ProtocolUtil;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorDataIDs;
-import net.raphimc.viabedrock.protocol.data.enums.java.PlayerTeamAction;
+import net.raphimc.viabedrock.protocol.data.enums.java.PlayerTeamMethod;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.TeamCollisionRule;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.TeamVisibility;
 import net.raphimc.viabedrock.protocol.data.generated.java.Attributes;
@@ -278,7 +278,7 @@ public class MultilineNametagTracker extends StoredObject {
         // 2. Spawn TEXT_DISPLAY entity at the host entity's position.
         // The client will reposition it to the passenger attachment point once SET_PASSENGERS arrives.
         info.lastScale = getEffectiveScale(entity);
-        final PacketWrapper addEntity = PacketWrapper.create(ClientboundPackets1_21_11.ADD_ENTITY, this.user());
+        final PacketWrapper addEntity = PacketWrapper.create(ClientboundPackets26_1.ADD_ENTITY, this.user());
         addEntity.write(Types.VAR_INT, javaId); // entity id
         addEntity.write(Types.UUID, uuid); // uuid
         addEntity.write(Types.VAR_INT, EntityTypes1_21_11.TEXT_DISPLAY.getId()); // type id
@@ -314,11 +314,11 @@ public class MultilineNametagTracker extends StoredObject {
                 final List<EntityData> displayData = new ArrayList<>();
                 displayData.add(new EntityData(
                         textDisplayIndex(EntityDataFields.TEXT),
-                        VersionedTypes.V1_21_11.entityDataTypes().componentType,
+                        VersionedTypes.V26_1.entityDataTypes().componentType,
                         textNbt));
-                final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets1_21_11.SET_ENTITY_DATA, this.user());
+                final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets26_1.SET_ENTITY_DATA, this.user());
                 setEntityData.write(Types.VAR_INT, info.textDisplayJavaId);
-                setEntityData.write(VersionedTypes.V1_21_11.entityDataList, displayData);
+                setEntityData.write(VersionedTypes.V26_1.entityDataList, displayData);
                 setEntityData.send(BedrockProtocol.class);
             }
             if (scaleChanged) {
@@ -331,7 +331,7 @@ public class MultilineNametagTracker extends StoredObject {
     private void removeTextDisplay(final TextDisplayInfo info) {
         // Clear riding relationship before removing the entity
         sendSetPassengers(info.hostJavaId);
-        final PacketWrapper removeEntities = PacketWrapper.create(ClientboundPackets1_21_11.REMOVE_ENTITIES, this.user());
+        final PacketWrapper removeEntities = PacketWrapper.create(ClientboundPackets26_1.REMOVE_ENTITIES, this.user());
         removeEntities.write(Types.VAR_INT_ARRAY_PRIMITIVE, new int[]{info.textDisplayJavaId});
         removeEntities.send(BedrockProtocol.class);
     }
@@ -345,13 +345,13 @@ public class MultilineNametagTracker extends StoredObject {
         // TEXT — the multiline text content
         displayData.add(new EntityData(
                 textDisplayIndex(EntityDataFields.TEXT),
-                VersionedTypes.V1_21_11.entityDataTypes().componentType,
+                VersionedTypes.V26_1.entityDataTypes().componentType,
                 textNbt));
 
         // BILLBOARD_RENDER_CONSTRAINTS = 3 (CENTER — face camera on all axes, matches vanilla nametag rendering)
         displayData.add(new EntityData(
                 textDisplayIndex(EntityDataFields.BILLBOARD_RENDER_CONSTRAINTS),
-                VersionedTypes.V1_21_11.entityDataTypes().byteType,
+                VersionedTypes.V26_1.entityDataTypes().byteType,
                 (byte) 3));
 
         // TRANSLATION — small vertical offset from passenger attachment point to nametag height.
@@ -359,36 +359,36 @@ public class MultilineNametagTracker extends StoredObject {
         // Only ~0.3 blocks for scale=1, so MC-261696 billboard distortion is negligible.
         displayData.add(new EntityData(
                 textDisplayIndex(EntityDataFields.TRANSLATION),
-                VersionedTypes.V1_21_11.entityDataTypes().vector3FType,
+                VersionedTypes.V26_1.entityDataTypes().vector3FType,
                 new Vector3f(0f, getTranslationY(info.lastScale), 0f)));
 
         // BACKGROUND_COLOR = 0x40000000 (semi-transparent black, matches vanilla nametag style)
         displayData.add(new EntityData(
                 textDisplayIndex(EntityDataFields.BACKGROUND_COLOR),
-                VersionedTypes.V1_21_11.entityDataTypes().varIntType,
+                VersionedTypes.V26_1.entityDataTypes().varIntType,
                 0x40000000));
 
         // TEXT_OPACITY = -1 (0xFF = fully opaque)
         displayData.add(new EntityData(
                 textDisplayIndex(EntityDataFields.TEXT_OPACITY),
-                VersionedTypes.V1_21_11.entityDataTypes().byteType,
+                VersionedTypes.V26_1.entityDataTypes().byteType,
                 (byte) -1));
 
         // VIEW_RANGE = 1.0 (default)
         displayData.add(new EntityData(
                 textDisplayIndex(EntityDataFields.VIEW_RANGE),
-                VersionedTypes.V1_21_11.entityDataTypes().floatType,
+                VersionedTypes.V26_1.entityDataTypes().floatType,
                 1.0f));
 
         // STYLE_FLAGS = 0x02 (see_through — render through blocks, like Bedrock nametags)
         displayData.add(new EntityData(
                 textDisplayIndex(EntityDataFields.STYLE_FLAGS),
-                VersionedTypes.V1_21_11.entityDataTypes().byteType,
+                VersionedTypes.V26_1.entityDataTypes().byteType,
                 (byte) 0x02));
 
-        final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets1_21_11.SET_ENTITY_DATA, this.user());
+        final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets26_1.SET_ENTITY_DATA, this.user());
         setEntityData.write(Types.VAR_INT, info.textDisplayJavaId);
-        setEntityData.write(VersionedTypes.V1_21_11.entityDataList, displayData);
+        setEntityData.write(VersionedTypes.V26_1.entityDataList, displayData);
         setEntityData.send(BedrockProtocol.class);
     }
 
@@ -396,11 +396,11 @@ public class MultilineNametagTracker extends StoredObject {
         final List<EntityData> displayData = new ArrayList<>();
         displayData.add(new EntityData(
                 textDisplayIndex(EntityDataFields.TRANSLATION),
-                VersionedTypes.V1_21_11.entityDataTypes().vector3FType,
+                VersionedTypes.V26_1.entityDataTypes().vector3FType,
                 new Vector3f(0f, getTranslationY(info.lastScale), 0f)));
-        final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets1_21_11.SET_ENTITY_DATA, this.user());
+        final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets26_1.SET_ENTITY_DATA, this.user());
         setEntityData.write(Types.VAR_INT, info.textDisplayJavaId);
-        setEntityData.write(VersionedTypes.V1_21_11.entityDataList, displayData);
+        setEntityData.write(VersionedTypes.V26_1.entityDataList, displayData);
         setEntityData.send(BedrockProtocol.class);
     }
 
@@ -413,15 +413,15 @@ public class MultilineNametagTracker extends StoredObject {
         final List<EntityData> clearData = new ArrayList<>();
         clearData.add(new EntityData(
                 entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME),
-                VersionedTypes.V1_21_11.entityDataTypes().optionalComponentType,
+                VersionedTypes.V26_1.entityDataTypes().optionalComponentType,
                 null));
         clearData.add(new EntityData(
                 entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME_VISIBLE),
-                VersionedTypes.V1_21_11.entityDataTypes().booleanType,
+                VersionedTypes.V26_1.entityDataTypes().booleanType,
                 false));
-        final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets1_21_11.SET_ENTITY_DATA, this.user());
+        final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets26_1.SET_ENTITY_DATA, this.user());
         setEntityData.write(Types.VAR_INT, entity.javaId());
-        setEntityData.write(VersionedTypes.V1_21_11.entityDataList, clearData);
+        setEntityData.write(VersionedTypes.V26_1.entityDataList, clearData);
         setEntityData.send(BedrockProtocol.class);
     }
 
@@ -450,7 +450,7 @@ public class MultilineNametagTracker extends StoredObject {
         // passthrough() polls the entity data list from readableObjects and adds it to
         // packetValues (the output). Since it returns the same ArrayList reference,
         // removeIf modifies the data that will be serialized to the client.
-        final List<EntityData> entityDataList = wrapper.passthrough(VersionedTypes.V1_21_11.entityDataList);
+        final List<EntityData> entityDataList = wrapper.passthrough(VersionedTypes.V26_1.entityDataList);
         final int customNameIndex = entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME);
         final int customNameVisibleIndex = entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME_VISIBLE);
         entityDataList.removeIf(ed ->
@@ -515,7 +515,7 @@ public class MultilineNametagTracker extends StoredObject {
             sendSetPassengers(entity.javaId(), info.getVirtualEntityIds());
             final int[] removeIds = removed.stream().mapToInt(l -> l.javaId).toArray();
             final PacketWrapper removeEntities = PacketWrapper.create(
-                    ClientboundPackets1_21_11.REMOVE_ENTITIES, this.user());
+                    ClientboundPackets26_1.REMOVE_ENTITIES, this.user());
             removeEntities.write(Types.VAR_INT_ARRAY_PRIMITIVE, removeIds);
             removeEntities.send(BedrockProtocol.class);
             // passengersChanged stays false — SET_PASSENGERS already sent above
@@ -557,7 +557,7 @@ public class MultilineNametagTracker extends StoredObject {
             // Clear riding relationship
             sendSetPassengers(info.hostJavaId);
             // Remove all armor stand entities
-            final PacketWrapper removeEntities = PacketWrapper.create(ClientboundPackets1_21_11.REMOVE_ENTITIES, this.user());
+            final PacketWrapper removeEntities = PacketWrapper.create(ClientboundPackets26_1.REMOVE_ENTITIES, this.user());
             removeEntities.write(Types.VAR_INT_ARRAY_PRIMITIVE, info.getVirtualEntityIds());
             removeEntities.send(BedrockProtocol.class);
         }
@@ -566,7 +566,7 @@ public class MultilineNametagTracker extends StoredObject {
     }
 
     private void spawnArmorStand(final Entity hostEntity, final int javaId, final UUID uuid) {
-        final PacketWrapper addEntity = PacketWrapper.create(ClientboundPackets1_21_11.ADD_ENTITY, this.user());
+        final PacketWrapper addEntity = PacketWrapper.create(ClientboundPackets26_1.ADD_ENTITY, this.user());
         addEntity.write(Types.VAR_INT, javaId); // entity id
         addEntity.write(Types.UUID, uuid); // uuid
         addEntity.write(Types.VAR_INT, EntityTypes1_21_11.ARMOR_STAND.getId()); // type id
@@ -587,42 +587,42 @@ public class MultilineNametagTracker extends StoredObject {
         // SHARED_FLAGS: 0x20 (invisible — hide the armor stand model)
         data.add(new EntityData(
                 armorStandIndex(EntityDataFields.SHARED_FLAGS),
-                VersionedTypes.V1_21_11.entityDataTypes().byteType,
+                VersionedTypes.V26_1.entityDataTypes().byteType,
                 (byte) 0x20));
 
         // CUSTOM_NAME — the line text
         data.add(new EntityData(
                 armorStandIndex(EntityDataFields.CUSTOM_NAME),
-                VersionedTypes.V1_21_11.entityDataTypes().optionalComponentType,
+                VersionedTypes.V26_1.entityDataTypes().optionalComponentType,
                 TextUtil.stringToNbt(text)));
 
         // CUSTOM_NAME_VISIBLE = true — always show the nametag
         data.add(new EntityData(
                 armorStandIndex(EntityDataFields.CUSTOM_NAME_VISIBLE),
-                VersionedTypes.V1_21_11.entityDataTypes().booleanType,
+                VersionedTypes.V26_1.entityDataTypes().booleanType,
                 true));
 
         // NO_GRAVITY = true
         data.add(new EntityData(
                 armorStandIndex(EntityDataFields.NO_GRAVITY),
-                VersionedTypes.V1_21_11.entityDataTypes().booleanType,
+                VersionedTypes.V26_1.entityDataTypes().booleanType,
                 true));
 
         // CLIENT_FLAGS: 0x04 (no base plate). NOT marker (0x10) — marker makes height=0,
         // which would prevent scale-based vertical positioning of nametags.
         data.add(new EntityData(
                 armorStandIndex(EntityDataFields.CLIENT_FLAGS),
-                VersionedTypes.V1_21_11.entityDataTypes().byteType,
+                VersionedTypes.V26_1.entityDataTypes().byteType,
                 (byte) 0x04));
 
-        final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets1_21_11.SET_ENTITY_DATA, this.user());
+        final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets26_1.SET_ENTITY_DATA, this.user());
         setEntityData.write(Types.VAR_INT, javaId);
-        setEntityData.write(VersionedTypes.V1_21_11.entityDataList, data);
+        setEntityData.write(VersionedTypes.V26_1.entityDataList, data);
         setEntityData.send(BedrockProtocol.class);
     }
 
     private void sendArmorStandScale(final int javaId, final double scale) {
-        final PacketWrapper updateAttributes = PacketWrapper.create(ClientboundPackets1_21_11.UPDATE_ATTRIBUTES, this.user());
+        final PacketWrapper updateAttributes = PacketWrapper.create(ClientboundPackets26_1.UPDATE_ATTRIBUTES, this.user());
         updateAttributes.write(Types.VAR_INT, javaId); // entity id
         updateAttributes.write(Types.VAR_INT, 1); // attribute count
         updateAttributes.write(Types.VAR_INT, BedrockProtocol.MAPPINGS.getJavaEntityAttributes().get(Attributes.SCALE)); // attribute id
@@ -635,11 +635,11 @@ public class MultilineNametagTracker extends StoredObject {
         final List<EntityData> data = new ArrayList<>();
         data.add(new EntityData(
                 armorStandIndex(EntityDataFields.CUSTOM_NAME),
-                VersionedTypes.V1_21_11.entityDataTypes().optionalComponentType,
+                VersionedTypes.V26_1.entityDataTypes().optionalComponentType,
                 TextUtil.stringToNbt(text)));
-        final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets1_21_11.SET_ENTITY_DATA, this.user());
+        final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets26_1.SET_ENTITY_DATA, this.user());
         setEntityData.write(Types.VAR_INT, javaId);
-        setEntityData.write(VersionedTypes.V1_21_11.entityDataList, data);
+        setEntityData.write(VersionedTypes.V26_1.entityDataList, data);
         setEntityData.send(BedrockProtocol.class);
     }
 
@@ -650,9 +650,9 @@ public class MultilineNametagTracker extends StoredObject {
      */
     private void sendPlayerTeamPrefix(final PlayerEntity entity, final String bottomLine) {
         final boolean hasVisibleName = !TextUtil.stripFormatting(bottomLine).isEmpty();
-        final PacketWrapper setPlayerTeam = PacketWrapper.create(ClientboundPackets1_21_11.SET_PLAYER_TEAM, this.user());
+        final PacketWrapper setPlayerTeam = PacketWrapper.create(ClientboundPackets26_1.SET_PLAYER_TEAM, this.user());
         setPlayerTeam.write(Types.STRING, "vb_" + entity.javaId()); // team name
-        setPlayerTeam.write(Types.BYTE, (byte) PlayerTeamAction.CHANGE.ordinal()); // mode
+        setPlayerTeam.write(Types.BYTE, (byte) PlayerTeamMethod.CHANGE.ordinal()); // mode
         setPlayerTeam.write(Types.TAG, TextUtil.stringToNbt("vb_" + entity.javaId())); // display name
         setPlayerTeam.write(Types.BYTE, (byte) 3); // flags
         setPlayerTeam.write(Types.VAR_INT, (hasVisibleName ? TeamVisibility.ALWAYS : TeamVisibility.NEVER).ordinal()); // name tag visibility
@@ -670,7 +670,7 @@ public class MultilineNametagTracker extends StoredObject {
      * With no passenger IDs, this clears all passengers from the vehicle.
      */
     private void sendSetPassengers(final int vehicleJavaId, final int... passengerJavaIds) {
-        final PacketWrapper setPassengers = PacketWrapper.create(ClientboundPackets1_21_11.SET_PASSENGERS, this.user());
+        final PacketWrapper setPassengers = PacketWrapper.create(ClientboundPackets26_1.SET_PASSENGERS, this.user());
         setPassengers.write(Types.VAR_INT, vehicleJavaId); // vehicle entity id
         setPassengers.write(Types.VAR_INT_ARRAY_PRIMITIVE, passengerJavaIds); // passenger entity ids
         setPassengers.send(BedrockProtocol.class);
