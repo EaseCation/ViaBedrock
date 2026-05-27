@@ -82,7 +82,7 @@ public final class CustomMappingSyncStorage extends StoredObject {
     }
 
     public void beginRequestIfNeeded() {
-        if (this.state != State.UNSEEN && this.state != State.WAITING_FOR_CHANNEL) return;
+        if (this.state != State.UNSEEN) return;
         if (!ViaBedrock.getConfig().isCustomMappingSyncEnabled()) {
             this.state = State.UNSUPPORTED_SAFE;
             this.access = CustomMappingAccess.safe();
@@ -130,22 +130,16 @@ public final class CustomMappingSyncStorage extends StoredObject {
             case UNSEEN -> {
                 if (ViaBedrock.getConfig().isCustomMappingSyncEnabled()) {
                     sendChannelProbeIfNeeded();
-                    this.state = State.WAITING_FOR_CHANNEL;
-                    startTimeout();
-                    ViaBedrock.getPlatform().getLogger().info("Bedrock START_GAME is waiting for BedrockLoader custom mapping sync channel");
+                    this.state = State.UNSUPPORTED_SAFE;
+                    this.access = CustomMappingAccess.safe();
+                    ViaBedrock.getPlatform().getLogger().warning("BedrockLoader custom mapping sync channel was not registered before START_GAME; using safe fallback");
+                    sendResult(STATUS_UNSUPPORTED_SAFE, "unsupported_safe: BedrockLoader mapping sync channel was not registered before START_GAME");
+                    finishPendingStartGame();
                     return;
                 }
                 this.state = State.UNSUPPORTED_SAFE;
                 this.access = CustomMappingAccess.safe();
                 ViaBedrock.getPlatform().getLogger().warning("BedrockLoader custom mapping sync is disabled; using safe fallback");
-                sendResult(STATUS_UNSUPPORTED_SAFE, "unsupported_safe: BedrockLoader mapping sync channel was not registered");
-                finishPendingStartGame();
-            }
-            case WAITING_FOR_CHANNEL -> {
-                if (!hasTimedOut()) return;
-                this.state = State.UNSUPPORTED_SAFE;
-                this.access = CustomMappingAccess.safe();
-                ViaBedrock.getPlatform().getLogger().warning("BedrockLoader custom mapping sync channel was not registered before timeout; using safe fallback");
                 sendResult(STATUS_UNSUPPORTED_SAFE, "unsupported_safe: BedrockLoader mapping sync channel was not registered");
                 finishPendingStartGame();
             }
@@ -521,7 +515,7 @@ public final class CustomMappingSyncStorage extends StoredObject {
         }
     }
 
-    private enum State { UNSEEN, WAITING_FOR_CHANNEL, REQUESTED, SNAPSHOT_READY, INSTALLED, UNSUPPORTED_SAFE, FAILED_SAFE, KICKED }
+    private enum State { UNSEEN, REQUESTED, SNAPSHOT_READY, INSTALLED, UNSUPPORTED_SAFE, FAILED_SAFE, KICKED }
 
     private static final int STATUS_INSTALLED = 0;
     private static final int STATUS_UNSUPPORTED_SAFE = 1;
