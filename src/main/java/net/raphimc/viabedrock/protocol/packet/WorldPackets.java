@@ -523,26 +523,46 @@ public class WorldPackets {
             final int radius = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT) >> 4; // radius
             wrapper.write(Types.VAR_INT, radius); // radius
 
+            final int centerX = position.x() >> 4;
+            final int centerZ = position.z() >> 4;
             final ChunkTracker chunkTracker = wrapper.user().get(ChunkTracker.class);
+            final int previousCenterX = chunkTracker.centerX();
+            final int previousCenterZ = chunkTracker.centerZ();
+            final int previousRadius = chunkTracker.radius();
+            final boolean centerChanged = previousCenterX != centerX || previousCenterZ != centerZ;
+            final boolean radiusChanged = previousRadius != radius;
             chunkTracker.setRadius(radius);
-            chunkTracker.setCenter(position.x() >> 4, position.z() >> 4);
-
-            final PacketWrapper updateViewPosition = wrapper.create(ClientboundPackets26_1.SET_CHUNK_CACHE_CENTER);
-            updateViewPosition.write(Types.VAR_INT, position.x() >> 4); // chunk x
-            updateViewPosition.write(Types.VAR_INT, position.z() >> 4); // chunk z
-            updateViewPosition.send(BedrockProtocol.class);
+            chunkTracker.setCenter(centerX, centerZ);
 
             final int count = wrapper.read(BedrockTypes.INT_LE); // server built chunks count
             for (int i = 0; i < count; i++) {
                 wrapper.read(BedrockTypes.VAR_INT); // chunk x
                 wrapper.read(BedrockTypes.VAR_INT); // chunk z
             }
+
+            if (centerChanged) {
+                final PacketWrapper updateViewPosition = wrapper.create(ClientboundPackets26_1.SET_CHUNK_CACHE_CENTER);
+                updateViewPosition.write(Types.VAR_INT, centerX); // chunk x
+                updateViewPosition.write(Types.VAR_INT, centerZ); // chunk z
+                updateViewPosition.send(BedrockProtocol.class);
+            }
+            if (!radiusChanged) {
+                wrapper.cancel();
+            }
         });
         protocol.registerClientbound(ClientboundBedrockPackets.CHUNK_RADIUS_UPDATED, ClientboundPackets26_1.SET_CHUNK_CACHE_RADIUS, new PacketHandlers() {
             @Override
             public void register() {
                 map(BedrockTypes.VAR_INT, Types.VAR_INT); // radius
-                handler(wrapper -> wrapper.user().get(ChunkTracker.class).setRadius(wrapper.get(Types.VAR_INT, 0)));
+                handler(wrapper -> {
+                    final ChunkTracker chunkTracker = wrapper.user().get(ChunkTracker.class);
+                    final int radius = wrapper.get(Types.VAR_INT, 0);
+                    final boolean radiusChanged = chunkTracker.radius() != radius;
+                    chunkTracker.setRadius(radius);
+                    if (!radiusChanged) {
+                        wrapper.cancel();
+                    }
+                });
             }
         });
         protocol.registerClientbound(ClientboundBedrockPackets.SET_TIME, ClientboundPackets26_1.SET_TIME, wrapper -> {

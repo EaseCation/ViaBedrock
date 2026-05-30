@@ -24,6 +24,7 @@ import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ServerboundPack
 import com.viaversion.viaversion.protocols.v1_21_7to1_21_9.packet.ServerboundConfigurationPackets1_21_9;
 import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
+import net.raphimc.viabedrock.protocol.storage.JoinGate;
 
 public class ConfigurationPackets {
 
@@ -40,6 +41,13 @@ public class ConfigurationPackets {
         protocol.registerServerboundTransition(ServerboundConfigurationPackets1_21_9.FINISH_CONFIGURATION, null, wrapper -> {
             wrapper.cancel();
             wrapper.user().getProtocolInfo().setClientState(State.PLAY);
+            final JoinGate joinGate = wrapper.user().get(JoinGate.class);
+            if (joinGate != null) {
+                joinGate.onJavaConfigurationAck();
+                if (joinGate.trySendJavaLogin()) {
+                    joinGate.sendReadyPlayerChunk();
+                }
+            }
         });
         protocol.registerServerbound(ServerboundPackets26_1.CONFIGURATION_ACKNOWLEDGED, null, wrapper -> {
             wrapper.cancel();

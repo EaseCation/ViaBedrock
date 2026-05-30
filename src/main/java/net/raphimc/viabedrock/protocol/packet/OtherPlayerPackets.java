@@ -150,15 +150,27 @@ public class OtherPlayerPackets {
                 return;
             }
 
-            entity.setPosition(position);
-            entity.setRotation(rotation);
-            entity.setOnGround(onGround);
+            final Position3f previousPosition = entity.position();
+            final Position3f previousRotation = entity.rotation();
+            final boolean previousOnGround = entity.isOnGround();
+            final boolean duplicatePosition = previousPosition.equals(position) && previousRotation.equals(rotation) && previousOnGround == onGround;
 
             if ((mode == PlayerPositionModeComponent_PositionMode.Teleport || mode == PlayerPositionModeComponent_PositionMode.Respawn) && entity instanceof ClientPlayerEntity clientPlayer) {
+                if (mode == PlayerPositionModeComponent_PositionMode.Teleport && duplicatePosition) {
+                    wrapper.cancel();
+                    return;
+                }
+                entity.setPosition(position);
+                entity.setRotation(rotation);
+                entity.setOnGround(onGround);
                 wrapper.setPacketType(ClientboundPackets26_1.PLAYER_POSITION);
                 clientPlayer.writePlayerPositionPacketToClient(wrapper, Relative.NONE, mode == PlayerPositionModeComponent_PositionMode.Respawn);
                 return;
             }
+
+            entity.setPosition(position);
+            entity.setRotation(rotation);
+            entity.setOnGround(onGround);
 
             wrapper.write(Types.VAR_INT, entity.javaId()); // entity id
             wrapper.write(Types.DOUBLE, (double) position.x()); // x

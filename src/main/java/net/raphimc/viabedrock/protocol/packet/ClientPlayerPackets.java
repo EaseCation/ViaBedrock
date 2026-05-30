@@ -120,7 +120,7 @@ public class ClientPlayerPackets {
                         wrapper.send(BedrockProtocol.class);
                         clientPlayer.sendAttribute("minecraft:health"); // Ensure health is synced
                         clientPlayer.setAbilities(clientPlayer.abilities()); // Java client always resets abilities on respawn. Resend them
-                        PacketFactory.sendJavaGameEvent(wrapper.user(), GameEventType.LEVEL_CHUNKS_LOAD_START, 0F);
+                        chunkTracker.resetLevelChunksLoadStart();
                         if (gameRulesStorage.getGameRule("keepInventory")) {
                             PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getInventoryContainer()); // Java client always resets inventory on respawn. Resend it
                         }
@@ -153,7 +153,7 @@ public class ClientPlayerPackets {
                     clientPlayer.sendPlayerActionPacketToServer(PlayerActionType.ChangeDimensionAck);
                     PacketFactory.sendBedrockLoadingScreen(wrapper.user(), ServerboundLoadingScreenPacketType.EndLoadingScreen, clientPlayer.dimensionChangeInfo().loadingScreenId());
                     clientPlayer.sendPlayerPositionPacketToClient(Relative.NONE);
-                    PacketFactory.sendJavaGameEvent(wrapper.user(), GameEventType.LEVEL_CHUNKS_LOAD_START, 0F);
+                    wrapper.user().get(ChunkTracker.class).resetLevelChunksLoadStart();
                     clientPlayer.setDimensionChangeInfo(null);
                 }
             }

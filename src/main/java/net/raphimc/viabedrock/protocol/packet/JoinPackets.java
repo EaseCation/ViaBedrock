@@ -165,8 +165,6 @@ public class JoinPackets {
                         final PacketWrapper setLocalPlayerAsInitialized = PacketWrapper.create(ServerboundBedrockPackets.SET_LOCAL_PLAYER_AS_INITIALIZED, wrapper.user());
                         setLocalPlayerAsInitialized.write(BedrockTypes.UNSIGNED_VAR_LONG, clientPlayer.runtimeId()); // entity runtime id
                         setLocalPlayerAsInitialized.sendToServer(BedrockProtocol.class);
-
-                        PacketFactory.sendJavaGameEvent(wrapper.user(), GameEventType.LEVEL_CHUNKS_LOAD_START, 0F);
                     } else {
                         wrapper.setPacketType(ClientboundPackets26_1.DISCONNECT);
                         writePlayStatusKickMessage(wrapper, status);
@@ -465,6 +463,7 @@ public class JoinPackets {
     }
 
     public static void finishCustomMappingStartGame(final UserConnection user, final PendingStartGame pending) {
+        final JoinGate joinGate = JoinGate.install(user);
         user.put(new JoinGameStorage(pending.levelName(), pending.difficulty(), pending.rainLevel(), pending.lightningLevel(), pending.currentTime(), pending.chunkTickRange()));
         user.put(new GameRulesStorage(user, pending.gameRules()));
         user.put(new BlockStateRewriter(user, pending.blockProperties(), pending.hashedRuntimeBlockIds()));
@@ -474,17 +473,7 @@ public class JoinPackets {
         entityTracker.addEntity(pending.clientPlayer(), false);
         user.put(entityTracker);
 
-        sendBrandCustomPayload(user, "Bedrock" + (!pending.serverEngine().isEmpty() ? " @" + pending.serverEngine() : "") + " v: " + pending.vanillaVersion());
-
-        if (!pending.enabledFeatures().isEmpty()) {
-            final List<String> enabledFeatures = new ArrayList<>(pending.enabledFeatures());
-            enabledFeatures.add("minecraft:vanilla");
-            final PacketWrapper updateEnabledFeatures = PacketWrapper.create(ClientboundConfigurationPackets1_21_9.UPDATE_ENABLED_FEATURES, user);
-            updateEnabledFeatures.write(Types.STRING_ARRAY, enabledFeatures.toArray(new String[0])); // enabled features
-            updateEnabledFeatures.send(BedrockProtocol.class);
-        }
-
-        handleJavaClientGameJoin(user);
+        sendJavaConfigurationOutputs(user, "Bedrock" + (!pending.serverEngine().isEmpty() ? " @" + pending.serverEngine() : "") + " v: " + pending.vanillaVersion(), pending.enabledFeatures());
 
         final PacketWrapper requestChunkRadius = PacketWrapper.create(ServerboundBedrockPackets.REQUEST_CHUNK_RADIUS, user);
         requestChunkRadius.write(BedrockTypes.VAR_INT, user.get(ClientSettingsStorage.class).viewDistance()); // radius
@@ -527,13 +516,24 @@ public class JoinPackets {
     }
 
     private static void handleJavaClientGameJoin(final UserConnection user) {
-        final JoinGameStorage joinGameStorage = user.get(JoinGameStorage.class);
+        sendJavaConfigurationOutputs(user, null, Collections.emptyList());
+        sendJavaLoginAndInitialPackets(user);
+    }
+
+    public static void sendJavaConfigurationOutputs(final UserConnection user, final String brand, final List<String> enabledFeatures) {
         final GameSessionStorage gameSession = user.get(GameSessionStorage.class);
-        final ClientSettingsStorage clientSettingsStorage = user.get(ClientSettingsStorage.class);
-        final GameRulesStorage gameRulesStorage = user.get(GameRulesStorage.class);
-        final ChunkTracker chunkTracker = user.get(ChunkTracker.class);
-        final CommandsStorage commandsStorage = user.get(CommandsStorage.class);
-        final ClientPlayerEntity clientPlayer = user.get(EntityTracker.class).getClientPlayer();
+
+        if (brand != null) {
+            sendBrandCustomPayload(user, brand);
+        }
+
+        if (enabledFeatures != null && !enabledFeatures.isEmpty()) {
+            final List<String> features = new ArrayList<>(enabledFeatures);
+            features.add("minecraft:vanilla");
+            final PacketWrapper updateEnabledFeatures = PacketWrapper.create(ClientboundConfigurationPackets1_21_9.UPDATE_ENABLED_FEATURES, user);
+            updateEnabledFeatures.write(Types.STRING_ARRAY, features.toArray(new String[0])); // enabled features
+            updateEnabledFeatures.send(BedrockProtocol.class);
+        }
 
         for (Map.Entry<String, Tag> registry : gameSession.getJavaRegistries().entrySet()) {
             final CompoundTag registryTag = (CompoundTag) registry.getValue();
@@ -567,6 +567,17 @@ public class JoinPackets {
             // Problematic code: https://github.com/ViaVersion/ViaBackwards/blob/b90b573f1d6f4d59841a3243e5bd072a43ec78e5/common/src/main/java/com/viaversion/viabackwards/protocol/v1_21_4to1_21_2/rewriter/EntityPacketRewriter1_21_4.java#L109
             user.getProtocolInfo().setClientState(State.PLAY); // Wrong, but needed because ViaBackwards expects this and would otherwise send the player loaded packet in configuration state.
         }
+    }
+
+    public static void sendJavaLoginAndInitialPackets(final UserConnection user) {
+        final JoinGameStorage joinGameStorage = user.get(JoinGameStorage.class);
+        final GameSessionStorage gameSession = user.get(GameSessionStorage.class);
+        final ClientSettingsStorage clientSettingsStorage = user.get(ClientSettingsStorage.class);
+        final GameRulesStorage gameRulesStorage = user.get(GameRulesStorage.class);
+        final ChunkTracker chunkTracker = user.get(ChunkTracker.class);
+        final CommandsStorage commandsStorage = user.get(CommandsStorage.class);
+        final InventoryTracker inventoryTracker = user.get(InventoryTracker.class);
+        final ClientPlayerEntity clientPlayer = user.get(EntityTracker.class).getClientPlayer();
 
         final PacketWrapper joinGame = PacketWrapper.create(ClientboundPackets26_1.LOGIN, user);
         joinGame.write(Types.INT, clientPlayer.javaId()); // entity id
@@ -599,6 +610,10 @@ public class JoinPackets {
         if (commandsStorage != null) {
             commandsStorage.updateCommandTree();
         }
+        if (inventoryTracker != null) {
+            PacketFactory.sendJavaContainerSetContent(user, inventoryTracker.getInventoryContainer());
+        }
+        chunkTracker.sendCurrentCacheSettingsToJava();
 
         final PacketWrapper initializeBorder = PacketWrapper.create(ClientboundPackets26_1.INITIALIZE_BORDER, user);
         initializeBorder.write(Types.DOUBLE, 0D); // center x

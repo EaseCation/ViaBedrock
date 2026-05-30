@@ -27,6 +27,7 @@ import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.storage.BlobCache;
 import net.raphimc.viabedrock.protocol.storage.GameRulesStorage;
+import net.raphimc.viabedrock.protocol.storage.JoinGate;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 public class PlayPackets {
@@ -68,6 +69,17 @@ public class PlayPackets {
 
         protocol.registerServerbound(ServerboundPackets26_1.CLIENT_INFORMATION, ServerboundBedrockPackets.REQUEST_CHUNK_RADIUS, MultiStatePackets.CLIENT_SETTINGS_HANDLER);
         protocol.registerServerbound(ServerboundPackets26_1.CUSTOM_PAYLOAD, null, MultiStatePackets.CUSTOM_PAYLOAD_HANDLER);
+        protocol.registerServerbound(ServerboundPackets26_1.CHUNK_BATCH_RECEIVED, null, wrapper -> {
+            wrapper.cancel();
+            wrapper.read(Types.FLOAT);
+        });
+        protocol.registerServerbound(ServerboundPackets26_1.PLAYER_LOADED, null, wrapper -> {
+            wrapper.cancel();
+            final JoinGate joinGate = wrapper.user().get(JoinGate.class);
+            if (joinGate != null) {
+                joinGate.onPlayerLoaded();
+            }
+        });
         protocol.registerServerbound(ServerboundPackets26_1.PING_REQUEST, null, wrapper -> {
             wrapper.cancel();
             final PacketWrapper pongResponse = wrapper.create(ClientboundPackets26_1.PONG_RESPONSE);

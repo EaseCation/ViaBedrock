@@ -215,6 +215,10 @@ public class ClientPlayerEntity extends PlayerEntity {
         }
     }
 
+    public boolean hasPendingPositionSync() {
+        return this.pendingTeleportId != 0 || this.waitingForPositionSync;
+    }
+
     public Position3f prevPosition() {
         return this.prevPosition;
     }

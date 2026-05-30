@@ -205,12 +205,46 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
         } else {
             System.out.println("PRE: direction = " + direction + ", state = " + state + ", packet=" + ServerboundPackets26_1.values()[wrapper.getId()] + ", wrapper = " + wrapper);
         }*/
-        super.transform(direction, state, wrapper);
+        if (direction == Direction.SERVERBOUND && state == State.PLAY) {
+            final JoinGate joinGate = wrapper.user().get(JoinGate.class);
+            if (joinGate != null) {
+                final ServerboundPackets26_1 packet = this.packetTypeById(ServerboundPackets26_1.class, wrapper.getId(), wrapper.getPacketType());
+                if (packet == null ? joinGate.interceptUnknownServerboundBeforeOpen(wrapper) : joinGate.interceptServerboundBeforeOpen(packet, wrapper)) {
+                    throw CancelException.generate();
+                }
+            }
+        }
+        try {
+            super.transform(direction, state, wrapper);
+            if (direction == Direction.CLIENTBOUND && state == State.PLAY) {
+                final JoinGate joinGate = wrapper.user().get(JoinGate.class);
+                if (joinGate != null && !wrapper.isCancelled()) {
+                    final ClientboundPackets26_1 packet = this.packetTypeById(ClientboundPackets26_1.class, wrapper.getId(), wrapper.getPacketType());
+                    if (packet == null ? joinGate.interceptUnknownClientbound(wrapper) : joinGate.interceptClientbound(packet, wrapper)) {
+                        throw CancelException.generate();
+                    }
+                }
+            }
+        } catch (CancelException e) {
+            throw e;
+        }
         /*if (direction == Direction.CLIENTBOUND) {
             System.out.println("POST: direction = " + direction + ", state = " + state + ", packet=" + ClientboundPackets26_1.values()[wrapper.getId()] + ", wrapper = " + wrapper);
         } else {
             System.out.println("POST: direction = " + direction + ", state = " + state + ", packet=" + ServerboundBedrockPackets.getPacket(wrapper.getId()) + ", wrapper = " + wrapper);
         }*/
+    }
+
+    private <T extends Enum<T> & PacketType> T packetTypeById(final Class<T> packetClass, final int id, final PacketType packetType) {
+        if (packetClass.isInstance(packetType)) {
+            return packetClass.cast(packetType);
+        }
+        for (T packet : packetClass.getEnumConstants()) {
+            if (packet.getId() == id) {
+                return packet;
+            }
+        }
+        return null;
     }
 
     public static void kickForIllegalState(final UserConnection user, final String reason) {

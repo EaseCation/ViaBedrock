@@ -52,11 +52,9 @@ public class UnhandledPackets {
         protocol.registerServerboundTransition(ServerboundConfigurationPackets1_21_9.KEEP_ALIVE, null, PacketWrapper::cancel);
         protocol.cancelServerbound(ServerboundPackets26_1.CHAT_ACK);
         protocol.cancelServerbound(ServerboundPackets26_1.CHAT_SESSION_UPDATE);
-        protocol.cancelServerbound(ServerboundPackets26_1.CHUNK_BATCH_RECEIVED);
         protocol.cancelServerbound(ServerboundPackets26_1.COOKIE_RESPONSE);
         protocol.cancelServerbound(ServerboundPackets26_1.DEBUG_SAMPLE_SUBSCRIPTION);
         protocol.cancelServerbound(ServerboundPackets26_1.KEEP_ALIVE);
-        protocol.cancelServerbound(ServerboundPackets26_1.PLAYER_LOADED);
         protocol.cancelServerbound(ServerboundPackets26_1.SET_TEST_BLOCK);
         protocol.cancelServerbound(ServerboundPackets26_1.TEST_INSTANCE_BLOCK_ACTION);
     }

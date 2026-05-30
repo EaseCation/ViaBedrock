@@ -47,10 +47,12 @@ import net.raphimc.viabedrock.api.chunk.datapalette.BedrockDataPalette;
 import net.raphimc.viabedrock.api.chunk.section.BedrockChunkSection;
 import net.raphimc.viabedrock.api.chunk.section.BedrockChunkSectionImpl;
 import net.raphimc.viabedrock.api.model.BedrockBlockState;
+import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 import net.raphimc.viabedrock.protocol.data.enums.Dimension;
+import net.raphimc.viabedrock.protocol.data.enums.java.GameEventType;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.HeightmapType;
 import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomBlockTags;
 import net.raphimc.viabedrock.protocol.data.generated.java.RegistryKeys;
@@ -63,7 +65,6 @@ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.util.*;
 import java.util.logging.Level;
-import java.util.stream.Collectors;
 
 import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.experimental.custommapping.CustomMappingAccess;
@@ -87,6 +88,7 @@ public class ChunkTracker extends StoredObject {
 
     private final Long2ObjectMap<BedrockChunk> chunks = new Long2ObjectOpenHashMap<>();
     private final LongSet dirtyChunks = new LongOpenHashSet();
+    private final LongSet javaSentChunks = new LongOpenHashSet();
 
     private ChunkLightProvider lightProvider;
 
@@ -96,6 +98,7 @@ public class ChunkTracker extends StoredObject {
     private int centerX = 0;
     private int centerZ = 0;
     private int radius;
+    private boolean levelChunksLoadStartSent;
 
     public ChunkTracker(final UserConnection user, final Dimension dimension) {
         this(user, dimension, dimension.getKey());
@@ -136,15 +139,84 @@ public class ChunkTracker extends StoredObject {
         this.removeOutOfLoadDistanceChunks();
     }
 
+    public int centerX() {
+        return this.centerX;
+    }
+
+    public int centerZ() {
+        return this.centerZ;
+    }
+
+    public int radius() {
+        return this.radius;
+    }
+
+    private JoinGate joinGate() {
+        return this.user().get(JoinGate.class);
+    }
+
+    private boolean suppressJavaRuntimePacketBeforeLogin(final ClientboundPackets26_1 packet) {
+        final JoinGate joinGate = this.joinGate();
+        if (joinGate == null || joinGate.atLeastJoinPhase(JoinGate.JoinPhase.LOGIN_SENT)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    private boolean delayNonPlayerChunkBeforeJavaLogin(final int chunkX, final int chunkZ, final boolean playerChunkForGate) {
+        final JoinGate joinGate = this.joinGate();
+        if (joinGate == null || joinGate.atLeastJoinPhase(JoinGate.JoinPhase.LOGIN_SENT) || playerChunkForGate) {
+            return false;
+        }
+
+        this.dirtyChunks.add(ChunkPosition.chunkKey(chunkX, chunkZ));
+        return true;
+    }
+
+    private boolean ensureJavaLoginForPlayerChunk(final int chunkX, final int chunkZ, final boolean playerChunkForGate) {
+        final JoinGate joinGate = this.joinGate();
+        if (joinGate == null || joinGate.atLeastJoinPhase(JoinGate.JoinPhase.LOGIN_SENT) || !playerChunkForGate) {
+            return true;
+        }
+
+        joinGate.onPlayerChunkReady(chunkX, chunkZ);
+        return joinGate.trySendJavaLogin();
+    }
+
+    private void markPlayerChunkSentForJoinGate(final boolean playerChunk) {
+        if (!playerChunk) {
+            return;
+        }
+
+        final JoinGate joinGate = this.joinGate();
+        if (joinGate != null) {
+            joinGate.onPlayerChunkSent();
+        }
+    }
+
+    public void sendCurrentCacheSettingsToJava() {
+        final PacketWrapper setChunkCacheCenter = PacketWrapper.create(ClientboundPackets26_1.SET_CHUNK_CACHE_CENTER, this.user());
+        setChunkCacheCenter.write(Types.VAR_INT, this.centerX); // chunk x
+        setChunkCacheCenter.write(Types.VAR_INT, this.centerZ); // chunk z
+        setChunkCacheCenter.send(BedrockProtocol.class);
+
+        final PacketWrapper setChunkCacheRadius = PacketWrapper.create(ClientboundPackets26_1.SET_CHUNK_CACHE_RADIUS, this.user());
+        setChunkCacheRadius.write(Types.VAR_INT, this.radius); // radius
+        setChunkCacheRadius.send(BedrockProtocol.class);
+    }
+
     public BedrockChunk createChunk(final int chunkX, final int chunkZ, final int nonNullSectionCount) {
         if (!this.isInLoadDistance(chunkX, chunkZ)) return null;
         if (!this.isInRenderDistance(chunkX, chunkZ)) {
             ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received chunk outside of render distance, but within load distance: " + chunkX + ", " + chunkZ);
             final EntityTracker entityTracker = this.user().get(EntityTracker.class);
-            final PacketWrapper setChunkCacheCenter = PacketWrapper.create(ClientboundPackets26_1.SET_CHUNK_CACHE_CENTER, this.user());
-            setChunkCacheCenter.write(Types.VAR_INT, (int) Math.floor(entityTracker.getClientPlayer().position().x()) >> 4); // chunk x
-            setChunkCacheCenter.write(Types.VAR_INT, (int) Math.floor(entityTracker.getClientPlayer().position().z()) >> 4); // chunk z
-            setChunkCacheCenter.send(BedrockProtocol.class);
+            if (!this.suppressJavaRuntimePacketBeforeLogin(ClientboundPackets26_1.SET_CHUNK_CACHE_CENTER)) {
+                final PacketWrapper setChunkCacheCenter = PacketWrapper.create(ClientboundPackets26_1.SET_CHUNK_CACHE_CENTER, this.user());
+                setChunkCacheCenter.write(Types.VAR_INT, (int) Math.floor(entityTracker.getClientPlayer().position().x()) >> 4); // chunk x
+                setChunkCacheCenter.write(Types.VAR_INT, (int) Math.floor(entityTracker.getClientPlayer().position().z()) >> 4); // chunk z
+                setChunkCacheCenter.send(BedrockProtocol.class);
+            }
         }
 
         final BedrockChunk chunk = new BedrockChunk(chunkX, chunkZ, new BedrockChunkSection[this.worldHeight >> 4]);
@@ -164,12 +236,17 @@ public class ChunkTracker extends StoredObject {
         final long key = chunkPos.chunkKey();
         this.chunks.remove(key);
         this.dirtyChunks.remove(key);
+        this.javaSentChunks.remove(key);
         this.subChunkRequests.removeIf(s -> s.chunkX == chunkPos.chunkX() && s.chunkZ == chunkPos.chunkZ());
         this.pendingSubChunks.removeIf(s -> s.chunkX == chunkPos.chunkX() && s.chunkZ == chunkPos.chunkZ());
         if (this.lightProvider != null) {
             this.lightProvider.onChunkUnload(key);
         }
         this.user().get(EntityTracker.class).removeItemFrame(chunkPos);
+
+        if (this.suppressJavaRuntimePacketBeforeLogin(ClientboundPackets26_1.FORGET_LEVEL_CHUNK)) {
+            return;
+        }
 
         final PacketWrapper unloadChunk = PacketWrapper.create(ClientboundPackets26_1.FORGET_LEVEL_CHUNK, this.user());
         unloadChunk.write(Types.CHUNK_POSITION, chunkPos); // chunk position
@@ -460,8 +537,17 @@ public class ChunkTracker extends StoredObject {
             return;
         }
 
+        final boolean playerChunkForGate = this.isPlayerChunk(chunkX, chunkZ);
+        if (this.delayNonPlayerChunkBeforeJavaLogin(chunkX, chunkZ, playerChunkForGate)) {
+            return;
+        }
+
         final Chunk remappedChunk = this.remapChunk(chunk);
         if (remappedChunk == null) {
+            return;
+        }
+
+        if (!this.ensureJavaLoginForPlayerChunk(chunkX, chunkZ, playerChunkForGate)) {
             return;
         }
 
@@ -480,6 +566,18 @@ public class ChunkTracker extends StoredObject {
         final byte[][] blockLight = new byte[lightSectionCount][];
 
         this.sendChunkWithLight(remappedChunk, skyLight, blockLight, lightSectionCount);
+    }
+
+    private boolean isPlayerChunk(final int chunkX, final int chunkZ) {
+        final EntityTracker entityTracker = this.user().get(EntityTracker.class);
+        if (entityTracker == null) {
+            return false;
+        }
+
+        final Position3f playerPosition = entityTracker.getClientPlayer().position();
+        final int playerChunkX = (int) Math.floor(playerPosition.x()) >> 4;
+        final int playerChunkZ = (int) Math.floor(playerPosition.z()) >> 4;
+        return chunkX == playerChunkX && chunkZ == playerChunkZ;
     }
 
     public void sendChunkWithLight(final Chunk remappedChunk, final byte[][] skyLight, final byte[][] blockLight, final int lightSectionCount) {
@@ -502,6 +600,22 @@ public class ChunkTracker extends StoredObject {
                 emptyBlockLightMask.set(i);
             }
         }
+        final EntityTracker entityTracker = this.user().get(EntityTracker.class);
+        boolean playerChunk = false;
+        if (entityTracker != null) {
+            final Position3f playerPosition = entityTracker.getClientPlayer().position();
+            final int playerChunkX = (int) Math.floor(playerPosition.x()) >> 4;
+            final int playerChunkZ = (int) Math.floor(playerPosition.z()) >> 4;
+            playerChunk = remappedChunk.getX() == playerChunkX && remappedChunk.getZ() == playerChunkZ;
+            if (playerChunk && !this.levelChunksLoadStartSent) {
+                this.levelChunksLoadStartSent = true;
+                PacketFactory.sendJavaGameEvent(this.user(), GameEventType.LEVEL_CHUNKS_LOAD_START, 0F);
+            }
+        }
+        if (this.suppressJavaRuntimePacketBeforeLogin(ClientboundPackets26_1.LEVEL_CHUNK_WITH_LIGHT)) {
+            return;
+        }
+        this.sendChunkBatchStart(playerChunk, remappedChunk.getX(), remappedChunk.getZ());
 
         final PacketWrapper levelChunkWithLight = PacketWrapper.create(ClientboundPackets26_1.LEVEL_CHUNK_WITH_LIGHT, this.user());
         levelChunkWithLight.write(this.currentChunkType(), remappedChunk); // chunk
@@ -518,6 +632,19 @@ public class ChunkTracker extends StoredObject {
             levelChunkWithLight.write(Types.BYTE_ARRAY_PRIMITIVE, array); // block light
         }
         levelChunkWithLight.send(BedrockProtocol.class);
+        this.javaSentChunks.add(ChunkPosition.chunkKey(remappedChunk.getX(), remappedChunk.getZ()));
+        this.markPlayerChunkSentForJoinGate(playerChunk);
+        this.sendChunkBatchFinished(1);
+    }
+
+    private void sendChunkBatchStart(final boolean playerChunk, final int chunkX, final int chunkZ) {
+        PacketWrapper.create(ClientboundPackets26_1.CHUNK_BATCH_START, this.user()).send(BedrockProtocol.class);
+    }
+
+    private void sendChunkBatchFinished(final int batchSize) {
+        final PacketWrapper chunkBatchFinished = PacketWrapper.create(ClientboundPackets26_1.CHUNK_BATCH_FINISHED, this.user());
+        chunkBatchFinished.write(Types.VAR_INT, batchSize);
+        chunkBatchFinished.send(BedrockProtocol.class);
     }
 
     private static byte[][] generatePlaceholderSkyLight(final int lightSectionCount) {
@@ -585,14 +712,27 @@ public class ChunkTracker extends StoredObject {
     }
 
     private static final int MAX_CHUNKS_PER_TICK = 4;
+    private static final int MAX_SUB_CHUNK_OFFSETS_PER_REQUEST = 256;
 
     public void tick() {
+        final JoinGate joinGate = this.joinGate();
+        if (joinGate != null) {
+            joinGate.tick();
+        }
+
+        final EntityTracker entityTracker = this.user().get(EntityTracker.class);
+        final boolean initiallySpawned = entityTracker != null && entityTracker.getClientPlayer().isInitiallySpawned();
+        if (initiallySpawned && !this.playerCompileNeighborhoodSent()) {
+            this.sendSubChunkRequests();
+        }
+
         if (!this.dirtyChunks.isEmpty()) {
             int count = 0;
-            final Iterator<Long> it = this.dirtyChunks.iterator();
-            while (it.hasNext() && count < MAX_CHUNKS_PER_TICK) {
-                final long dirtyChunk = it.next();
-                it.remove();
+            while (!this.dirtyChunks.isEmpty() && count < MAX_CHUNKS_PER_TICK) {
+                final Long dirtyChunk = this.levelChunksLoadStartSent ? this.pollPlayerNeighborhoodDirtyChunk() : this.pollPlayerDirtyChunk();
+                if (dirtyChunk == null) {
+                    break;
+                }
                 final ChunkPosition chunkPos = new ChunkPosition(dirtyChunk);
                 this.sendChunk(chunkPos.chunkX(), chunkPos.chunkZ());
                 count++;
@@ -603,15 +743,24 @@ public class ChunkTracker extends StoredObject {
             this.lightProvider.tick();
         }
 
-        if (this.user().get(EntityTracker.class) == null || !this.user().get(EntityTracker.class).getClientPlayer().isInitiallySpawned()) {
+        if (!initiallySpawned) {
             return;
         }
 
+        if (this.levelChunksLoadStartSent && this.playerCompileNeighborhoodSent()) {
+            this.sendSubChunkRequests();
+        }
+    }
+
+    private void sendSubChunkRequests() {
         this.subChunkRequests.removeIf(s -> !this.isInLoadDistance(s.chunkX, s.chunkZ));
         this.pendingSubChunks.removeIf(s -> !this.isInLoadDistance(s.chunkX, s.chunkZ));
         final BlockPosition basePosition = new BlockPosition(this.centerX, 0, this.centerZ);
         while (!this.subChunkRequests.isEmpty()) {
-            final Set<SubChunkPosition> group = this.subChunkRequests.stream().limit(256).collect(Collectors.toSet());
+            final Set<SubChunkPosition> group = this.pollNextSubChunkRequestGroup();
+            if (group.isEmpty()) {
+                break;
+            }
             this.subChunkRequests.removeAll(group);
             this.pendingSubChunks.addAll(group);
 
@@ -624,7 +773,158 @@ public class ChunkTracker extends StoredObject {
                 subChunkRequest.write(BedrockTypes.SUB_CHUNK_OFFSET, offset); // offset
             }
             subChunkRequest.sendToServer(BedrockProtocol.class);
+
+            if (!this.playerCompileNeighborhoodSent()) {
+                break;
+            }
         }
+    }
+
+    public void resetLevelChunksLoadStart() {
+        this.levelChunksLoadStartSent = false;
+        this.javaSentChunks.clear();
+    }
+
+    private Long pollNextDirtyChunk() {
+        final EntityTracker entityTracker = this.user().get(EntityTracker.class);
+        final int originX;
+        final int originZ;
+        if (entityTracker != null) {
+            final Position3f playerPosition = entityTracker.getClientPlayer().position();
+            originX = (int) Math.floor(playerPosition.x()) >> 4;
+            originZ = (int) Math.floor(playerPosition.z()) >> 4;
+        } else {
+            originX = this.centerX;
+            originZ = this.centerZ;
+        }
+
+        Long bestKey = null;
+        int bestDistance = Integer.MAX_VALUE;
+        final Iterator<Long> iterator = this.dirtyChunks.iterator();
+        while (iterator.hasNext()) {
+            final long key = iterator.next();
+            final ChunkPosition chunkPos = new ChunkPosition(key);
+            final int distance = Math.abs(chunkPos.chunkX() - originX) + Math.abs(chunkPos.chunkZ() - originZ);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                bestKey = key;
+                if (distance == 0) {
+                    break;
+                }
+            }
+        }
+        if (bestKey != null) {
+            this.dirtyChunks.remove((long) bestKey);
+        }
+        return bestKey;
+    }
+
+    private Long pollPlayerDirtyChunk() {
+        final Long playerChunk = this.playerChunkKey();
+        if (playerChunk != null && this.dirtyChunks.remove((long) playerChunk)) {
+            return playerChunk;
+        }
+        return null;
+    }
+
+    private Long pollPlayerNeighborhoodDirtyChunk() {
+        if (this.playerCompileNeighborhoodSent()) {
+            return this.pollNextDirtyChunk();
+        }
+
+        final EntityTracker entityTracker = this.user().get(EntityTracker.class);
+        if (entityTracker == null) {
+            return null;
+        }
+        final Position3f playerPosition = entityTracker.getClientPlayer().position();
+        final int playerChunkX = (int) Math.floor(playerPosition.x()) >> 4;
+        final int playerChunkZ = (int) Math.floor(playerPosition.z()) >> 4;
+
+        Long bestKey = null;
+        int bestDistance = Integer.MAX_VALUE;
+        final Iterator<Long> iterator = this.dirtyChunks.iterator();
+        while (iterator.hasNext()) {
+            final long key = iterator.next();
+            final ChunkPosition chunkPos = new ChunkPosition(key);
+            if (Math.abs(chunkPos.chunkX() - playerChunkX) > 1 || Math.abs(chunkPos.chunkZ() - playerChunkZ) > 1) {
+                continue;
+            }
+            final int distance = Math.abs(chunkPos.chunkX() - playerChunkX) + Math.abs(chunkPos.chunkZ() - playerChunkZ);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                bestKey = key;
+                if (distance == 0) {
+                    break;
+                }
+            }
+        }
+        if (bestKey != null) {
+            this.dirtyChunks.remove((long) bestKey);
+        }
+        return bestKey;
+    }
+
+    private Set<SubChunkPosition> pollNextSubChunkRequestGroup() {
+        final EntityTracker entityTracker = this.user().get(EntityTracker.class);
+        final int originX;
+        final int originZ;
+        if (entityTracker != null) {
+            final Position3f playerPosition = entityTracker.getClientPlayer().position();
+            originX = (int) Math.floor(playerPosition.x()) >> 4;
+            originZ = (int) Math.floor(playerPosition.z()) >> 4;
+        } else {
+            originX = this.centerX;
+            originZ = this.centerZ;
+        }
+
+        final List<SubChunkPosition> sorted = new ArrayList<>(this.subChunkRequests);
+        sorted.sort(Comparator.comparingInt(position -> Math.abs(position.chunkX - originX) + Math.abs(position.chunkZ - originZ)));
+        final Set<SubChunkPosition> group = new LinkedHashSet<>();
+        for (SubChunkPosition position : sorted) {
+            if (!this.levelChunksLoadStartSent && (position.chunkX != originX || position.chunkZ != originZ)) {
+                continue;
+            }
+            if (this.levelChunksLoadStartSent && !this.playerCompileNeighborhoodSent() && (Math.abs(position.chunkX - originX) > 1 || Math.abs(position.chunkZ - originZ) > 1)) {
+                continue;
+            }
+            group.add(position);
+            if (group.size() >= MAX_SUB_CHUNK_OFFSETS_PER_REQUEST) {
+                break;
+            }
+        }
+        return group;
+    }
+
+    private Long playerChunkKey() {
+        final EntityTracker entityTracker = this.user().get(EntityTracker.class);
+        if (entityTracker == null) {
+            return null;
+        }
+        final Position3f playerPosition = entityTracker.getClientPlayer().position();
+        final int playerChunkX = (int) Math.floor(playerPosition.x()) >> 4;
+        final int playerChunkZ = (int) Math.floor(playerPosition.z()) >> 4;
+        return ChunkPosition.chunkKey(playerChunkX, playerChunkZ);
+    }
+
+    private boolean playerCompileNeighborhoodSent() {
+        if (!this.levelChunksLoadStartSent) {
+            return false;
+        }
+        final EntityTracker entityTracker = this.user().get(EntityTracker.class);
+        if (entityTracker == null) {
+            return true;
+        }
+        final Position3f playerPosition = entityTracker.getClientPlayer().position();
+        final int playerChunkX = (int) Math.floor(playerPosition.x()) >> 4;
+        final int playerChunkZ = (int) Math.floor(playerPosition.z()) >> 4;
+        for (int chunkZ = playerChunkZ - 1; chunkZ <= playerChunkZ + 1; chunkZ++) {
+            for (int chunkX = playerChunkX - 1; chunkX <= playerChunkX + 1; chunkX++) {
+                if (!this.javaSentChunks.contains(ChunkPosition.chunkKey(chunkX, chunkZ))) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     private Chunk remapChunk(final BedrockChunk chunk) {
