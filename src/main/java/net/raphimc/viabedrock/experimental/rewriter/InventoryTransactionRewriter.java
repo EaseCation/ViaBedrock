@@ -20,6 +20,7 @@ package net.raphimc.viabedrock.experimental.rewriter;
 import com.viaversion.viaversion.api.connection.StoredObject;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.type.Type;
+import io.netty.buffer.ByteBuf;
 import net.raphimc.viabedrock.experimental.model.inventory.BedrockInventoryTransaction;
 import net.raphimc.viabedrock.experimental.model.inventory.InventoryActionData;
 import net.raphimc.viabedrock.experimental.types.inventory.InventoryActionDataType;
@@ -30,13 +31,26 @@ import net.raphimc.viabedrock.protocol.types.array.ArrayType;
 public class InventoryTransactionRewriter extends StoredObject {
 
     private final Type<BedrockInventoryTransaction> inventoryTransactionType;
+    private final Type<BedrockInventoryTransaction> itemInteractionDataType;
     private final Type<InventoryActionData[]> inventoryActionDataType;
 
     public InventoryTransactionRewriter(final UserConnection user) {
         super(user);
 
         this.inventoryActionDataType = new ArrayType<>(new InventoryActionDataType(user), BedrockTypes.UNSIGNED_VAR_INT);
-        this.inventoryTransactionType = new InventoryTransactionPacketType(user, inventoryActionDataType);
+        final InventoryTransactionPacketType transactionPacketType = new InventoryTransactionPacketType(user, inventoryActionDataType);
+        this.inventoryTransactionType = transactionPacketType;
+        this.itemInteractionDataType = new Type<>(BedrockInventoryTransaction.class) {
+            @Override
+            public BedrockInventoryTransaction read(final ByteBuf buffer) {
+                throw new UnsupportedOperationException("Item interaction data is only written by ViaBedrock");
+            }
+
+            @Override
+            public void write(final ByteBuf buffer, final BedrockInventoryTransaction value) {
+                transactionPacketType.writeItemInteractionData(buffer, value);
+            }
+        };
     }
 
     public Type<BedrockInventoryTransaction> getInventoryTransactionType() {
@@ -45,6 +59,10 @@ public class InventoryTransactionRewriter extends StoredObject {
 
     public Type<InventoryActionData[]> getInventoryActionDataType() {
         return inventoryActionDataType;
+    }
+
+    public Type<BedrockInventoryTransaction> getItemInteractionDataType() {
+        return itemInteractionDataType;
     }
 
 }

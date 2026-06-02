@@ -288,6 +288,13 @@ public class ItemRewriter extends StoredObject {
         return this.items;
     }
 
+    public String bedrockIdentifier(final BedrockItem item) {
+        if (item == null || item.isEmpty()) {
+            return null;
+        }
+        return this.items.inverse().get(item.identifier());
+    }
+
     public Set<String> getComponentItems() {
         return this.componentItems;
     }

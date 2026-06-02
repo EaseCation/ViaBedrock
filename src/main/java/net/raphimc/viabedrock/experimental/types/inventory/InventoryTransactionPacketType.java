@@ -63,7 +63,7 @@ public class InventoryTransactionPacketType extends Type<BedrockInventoryTransac
                     ItemUseInventoryTransaction_ActionType.getByValue(BedrockTypes.UNSIGNED_VAR_INT.read(buffer)),
                     ItemUseInventoryTransaction_TriggerType.getByValue(BedrockTypes.UNSIGNED_VAR_INT.read(buffer)),
                     BedrockTypes.BLOCK_POSITION.read(buffer),
-                    BedrockTypes.VAR_INT.read(buffer),
+                    readBlockFace(buffer),
                     BedrockTypes.VAR_INT.read(buffer),
                     itemRewriter.itemType().read(buffer),
                     BedrockTypes.POSITION_3F.read(buffer),
@@ -113,17 +113,7 @@ public class InventoryTransactionPacketType extends Type<BedrockInventoryTransac
             }
             case ItemUseTransaction -> {
                 InventoryTransactionData.UseItemTransactionData data = (InventoryTransactionData.UseItemTransactionData) bedrockInventoryTransaction.transactionData();
-                BedrockTypes.UNSIGNED_VAR_INT.write(buffer, data.actionType().getValue());
-                BedrockTypes.UNSIGNED_VAR_INT.write(buffer, data.triggerType().getValue());
-                BedrockTypes.BLOCK_POSITION.write(buffer, data.blockPosition());
-                BedrockTypes.VAR_INT.write(buffer, data.face());
-                BedrockTypes.VAR_INT.write(buffer, data.hotbarSlot());
-                itemRewriter.itemType().write(buffer, data.itemInHand());
-                BedrockTypes.POSITION_3F.write(buffer, data.playerPosition());
-                BedrockTypes.POSITION_3F.write(buffer, data.clickPosition());
-                BedrockTypes.UNSIGNED_VAR_INT.write(buffer, data.blockRuntimeId());
-                BedrockTypes.UNSIGNED_VAR_INT.write(buffer, data.predictedResult().getValue());
-                buffer.writeByte(data.clientCooldownState());
+                writeUseItemTransactionData(buffer, data);
             }
             case ItemUseOnEntityTransaction -> {
                 InventoryTransactionData.UseItemOnEntityTransactionData data = (InventoryTransactionData.UseItemOnEntityTransactionData) bedrockInventoryTransaction.transactionData();
@@ -142,5 +132,44 @@ public class InventoryTransactionPacketType extends Type<BedrockInventoryTransac
                 BedrockTypes.POSITION_3F.write(buffer, data.headPosition());
             }
         }
+    }
+
+    public void writeItemInteractionData(ByteBuf buffer, BedrockInventoryTransaction bedrockInventoryTransaction) {
+        BedrockTypes.VAR_INT.write(buffer, bedrockInventoryTransaction.legacyRequestId());
+        if (bedrockInventoryTransaction.legacyRequestId() != 0) {
+            ExperimentalBedrockTypes.LEGACY_SET_ITEM_SLOT_DATA.write(buffer, bedrockInventoryTransaction.legacySlots().toArray(new LegacySetItemSlotData[0]));
+        }
+        if (bedrockInventoryTransaction.actions() != null) {
+            inventoryActionDataType.write(buffer, bedrockInventoryTransaction.actions().toArray(new InventoryActionData[0]));
+        } else {
+            inventoryActionDataType.write(buffer, new InventoryActionData[0]);
+        }
+        writeUseItemTransactionData(buffer, (InventoryTransactionData.UseItemTransactionData) bedrockInventoryTransaction.transactionData());
+    }
+
+    public void writeUseItemTransactionData(ByteBuf buffer, InventoryTransactionData.UseItemTransactionData data) {
+        ItemRewriter itemRewriter = user.get(ItemRewriter.class);
+        if (itemRewriter == null) {
+            throw new IllegalStateException("ItemRewriter not found for user " + user);
+        }
+        BedrockTypes.UNSIGNED_VAR_INT.write(buffer, data.actionType().getValue());
+        BedrockTypes.UNSIGNED_VAR_INT.write(buffer, data.triggerType().getValue());
+        BedrockTypes.BLOCK_POSITION.write(buffer, data.blockPosition());
+        writeBlockFace(buffer, data.face());
+        BedrockTypes.VAR_INT.write(buffer, data.hotbarSlot());
+        itemRewriter.itemType().write(buffer, data.itemInHand());
+        BedrockTypes.POSITION_3F.write(buffer, data.playerPosition());
+        BedrockTypes.POSITION_3F.write(buffer, data.clickPosition());
+        BedrockTypes.UNSIGNED_VAR_INT.write(buffer, data.blockRuntimeId());
+        BedrockTypes.UNSIGNED_VAR_INT.write(buffer, data.predictedResult().getValue());
+        buffer.writeByte(data.clientCooldownState());
+    }
+
+    private static int readBlockFace(final ByteBuf buffer) {
+        return BedrockTypes.VAR_INT.read(buffer);
+    }
+
+    private static void writeBlockFace(final ByteBuf buffer, final int face) {
+        BedrockTypes.VAR_INT.write(buffer, face);
     }
 }

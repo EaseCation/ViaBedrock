@@ -27,6 +27,7 @@ import com.viaversion.viaversion.util.Pair;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.util.EnumUtil;
 import net.raphimc.viabedrock.api.util.PacketFactory;
+import net.raphimc.viabedrock.experimental.model.inventory.BedrockInventoryTransaction;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.enums.Direction;
@@ -67,6 +68,7 @@ public class ClientPlayerEntity extends PlayerEntity {
     private boolean prevOnGround;
     private final Set<PlayerAuthInputPacket_InputData> authInputData = EnumSet.noneOf(PlayerAuthInputPacket_InputData.class);
     private final List<AuthInputBlockAction> authInputBlockActions = new ArrayList<>();
+    private BedrockInventoryTransaction authInputItemInteraction;
     private Set<InputFlag> inputFlags = EnumSet.noneOf(InputFlag.class);
     private Set<InputFlag> prevInputFlags = EnumSet.noneOf(InputFlag.class);
     private boolean horizontalCollision;
@@ -79,6 +81,8 @@ public class ClientPlayerEntity extends PlayerEntity {
     private boolean cancelNextSwingPacket;
     private BlockBreakingInfo blockBreakingInfo;
     private boolean usingItem;
+    private int usingItemStartAge = -1;
+    private boolean crossbowChargeFinishSent;
 
     public ClientPlayerEntity(final UserConnection user, final long runtimeId, final UUID javaUuid, final PlayerAbilities abilities) {
         super(user, runtimeId, 0, javaUuid, abilities);
@@ -246,6 +250,19 @@ public class ClientPlayerEntity extends PlayerEntity {
     public void addAuthInputBlockAction(final AuthInputBlockAction blockAction) {
         this.authInputData.add(PlayerAuthInputPacket_InputData.PerformBlockActions);
         this.authInputBlockActions.add(blockAction);
+    }
+
+    public BedrockInventoryTransaction authInputItemInteraction() {
+        return this.authInputItemInteraction;
+    }
+
+    public void setAuthInputItemInteraction(final BedrockInventoryTransaction authInputItemInteraction) {
+        this.authInputData.add(PlayerAuthInputPacket_InputData.PerformItemInteraction);
+        this.authInputItemInteraction = authInputItemInteraction;
+    }
+
+    public void clearAuthInputItemInteraction() {
+        this.authInputItemInteraction = null;
     }
 
     @Override
@@ -433,6 +450,20 @@ public class ClientPlayerEntity extends PlayerEntity {
 
     public void setUsingItem(final boolean usingItem) {
         this.usingItem = usingItem;
+        this.usingItemStartAge = usingItem ? this.age : -1;
+        this.crossbowChargeFinishSent = false;
+    }
+
+    public int usingItemTicks() {
+        return this.usingItemStartAge == -1 ? 0 : this.age - this.usingItemStartAge;
+    }
+
+    public boolean isCrossbowChargeFinishSent() {
+        return this.crossbowChargeFinishSent;
+    }
+
+    public void setCrossbowChargeFinishSent(final boolean crossbowChargeFinishSent) {
+        this.crossbowChargeFinishSent = crossbowChargeFinishSent;
     }
 
     @Override

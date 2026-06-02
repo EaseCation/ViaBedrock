@@ -34,6 +34,8 @@ import net.raphimc.viabedrock.api.util.BitSets;
 import net.raphimc.viabedrock.api.util.EnumUtil;
 import net.raphimc.viabedrock.api.util.MathUtil;
 import net.raphimc.viabedrock.api.util.PacketFactory;
+import net.raphimc.viabedrock.experimental.model.inventory.BedrockInventoryTransaction;
+import net.raphimc.viabedrock.experimental.rewriter.InventoryTransactionRewriter;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
@@ -535,6 +537,12 @@ public class ClientPlayerPackets {
             wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().y()); // interact yaw
             wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG, (long) clientPlayer.age()); // tick
             wrapper.write(BedrockTypes.POSITION_3F, velocity); // delta
+            if (clientPlayer.authInputData().contains(PlayerAuthInputPacket_InputData.PerformItemInteraction)) {
+                final BedrockInventoryTransaction itemInteraction = clientPlayer.authInputItemInteraction();
+                if (itemInteraction != null) {
+                    wrapper.write(wrapper.user().get(InventoryTransactionRewriter.class).getItemInteractionDataType(), itemInteraction);
+                }
+            }
             if (clientPlayer.authInputData().contains(PlayerAuthInputPacket_InputData.PerformBlockActions)) {
                 wrapper.write(BedrockTypes.VAR_INT, clientPlayer.authInputBlockActions().size()); // player block actions count
                 for (ClientPlayerEntity.AuthInputBlockAction blockAction : clientPlayer.authInputBlockActions()) {
@@ -554,6 +562,7 @@ public class ClientPlayerPackets {
 
             clientPlayer.authInputData().clear();
             clientPlayer.authInputBlockActions().clear();
+            clientPlayer.clearAuthInputItemInteraction();
         });
         protocol.registerServerbound(ServerboundPackets26_1.PLAYER_ABILITIES, null, wrapper -> {
             wrapper.cancel();
