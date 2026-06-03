@@ -70,6 +70,7 @@ import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.PlayerActionAction;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
 import net.raphimc.viabedrock.protocol.model.Position3f;
+import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
@@ -79,6 +80,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 
 /**
@@ -87,7 +89,34 @@ import java.util.logging.Level;
  */
 public class ExperimentalFeatures {
 
+    private static final int FOOD_USE_TICKS = 32;
+    private static final int DRINK_USE_TICKS = 32;
+    private static final int MILK_BUCKET_USE_TICKS = 32;
+    private static final int CROSSBOW_CHARGE_TICKS = 23;
+    private static final int CROSSBOW_AUTO_FINISH_TICKS = 40;
+    private static final long FINISH_USE_RELEASE_DELAY_MS = 50L;
+    private static final int USE_ITEM_LEGACY_REQUEST_ID = 0;
+    private static final BlockPosition AIR_USE_BLOCK_POSITION = new BlockPosition(0, 0, 0);
+    private static final int AIR_USE_BLOCK_FACE = 255;
+    private static final int AIR_USE_BLOCK_RUNTIME_ID = 0;
+    private static final byte DEFAULT_COOLDOWN_STATE = 0;
+    private static final String FOOD_ITEM_TAG = "minecraft:is_food";
+    private static final Set<String> CONSUME_ON_RELEASE_ITEMS = Set.of(
+            "minecraft:potion",
+            "minecraft:milk_bucket"
+    );
+    private static final Set<String> RELEASE_ON_RELEASE_ITEMS = Set.of(
+            "minecraft:bow",
+            "minecraft:crossbow",
+            "minecraft:trident",
+            "minecraft:brush",
+            "minecraft:spyglass"
+    );
+
     private static final List<FeatureModule> MODULES = new ArrayList<>();
+
+    private record ReleaseItemSnapshot(byte hotbarSlot, BedrockItem itemInHand, Position3f headPosition) {
+    }
 
     public static List<FeatureModule> getModules() {
         return Collections.unmodifiableList(MODULES);
@@ -219,6 +248,166 @@ public class ExperimentalFeatures {
         registerModule(new ClientAuthInventoryModule());
     }
 
+    private static ItemReleaseInventoryTransaction_ActionType releaseActionForItem(final ItemRewriter itemRewriter, final BedrockItem item, final int usingTicks) {
+        final String identifier = itemRewriter.bedrockIdentifier(item);
+        if (identifier == null) {
+            return ItemReleaseInventoryTransaction_ActionType.Release;
+        }
+        if (RELEASE_ON_RELEASE_ITEMS.contains(identifier)) {
+            return ItemReleaseInventoryTransaction_ActionType.Release;
+        }
+        final Set<String> itemTags = BedrockProtocol.MAPPINGS.getBedrockItemTags().get(identifier);
+        if (CONSUME_ON_RELEASE_ITEMS.contains(identifier) || (itemTags != null && itemTags.contains(FOOD_ITEM_TAG))) {
+            return usingTicks >= consumableUseTicks(identifier) ? ItemReleaseInventoryTransaction_ActionType.Use : ItemReleaseInventoryTransaction_ActionType.Release;
+        }
+        return ItemReleaseInventoryTransaction_ActionType.Release;
+    }
+
+    private static int consumableUseTicks(final String identifier) {
+        return switch (identifier) {
+            case "minecraft:potion" -> DRINK_USE_TICKS;
+            case "minecraft:milk_bucket" -> MILK_BUCKET_USE_TICKS;
+            default -> FOOD_USE_TICKS;
+        };
+    }
+
+    private static boolean isContinuousUseItem(final ItemRewriter itemRewriter, final BedrockItem item) {
+        final String identifier = itemRewriter.bedrockIdentifier(item);
+        if (identifier == null) {
+            return false;
+        }
+        if ("minecraft:crossbow".equals(identifier) && isChargedCrossbow(item)) {
+            return false;
+        }
+        if (RELEASE_ON_RELEASE_ITEMS.contains(identifier) || CONSUME_ON_RELEASE_ITEMS.contains(identifier)) {
+            return true;
+        }
+        final Set<String> itemTags = BedrockProtocol.MAPPINGS.getBedrockItemTags().get(identifier);
+        return itemTags != null && itemTags.contains(FOOD_ITEM_TAG);
+    }
+
+    private static boolean isBow(final ItemRewriter itemRewriter, final BedrockItem item) {
+        return "minecraft:bow".equals(itemRewriter.bedrockIdentifier(item));
+    }
+
+    private static boolean isCrossbow(final ItemRewriter itemRewriter, final BedrockItem item) {
+        return "minecraft:crossbow".equals(itemRewriter.bedrockIdentifier(item));
+    }
+
+    private static boolean isChargedCrossbow(final ItemRewriter itemRewriter, final BedrockItem item) {
+        return isCrossbow(itemRewriter, item) && isChargedCrossbow(item);
+    }
+
+    private static boolean isChargedCrossbow(final BedrockItem item) {
+        return item.tag() != null && (item.tag().get("chargedItem") != null || item.tag().get("ChargedProjectiles") != null);
+    }
+
+    private static boolean shouldSendStandaloneUseTransaction(final ItemRewriter itemRewriter, final BedrockItem item) {
+        return isBow(itemRewriter, item) || isCrossbow(itemRewriter, item);
+    }
+
+    private static BedrockInventoryTransaction createUseItemTransaction(final InventoryContainer inventoryContainer, final ClientPlayerEntity clientPlayer) {
+        return new BedrockInventoryTransaction(
+                USE_ITEM_LEGACY_REQUEST_ID,
+                null,
+                null,
+                ComplexInventoryTransaction_Type.ItemUseTransaction,
+                new InventoryTransactionData.UseItemTransactionData(
+                        ItemUseInventoryTransaction_ActionType.Use,
+                        ItemUseInventoryTransaction_TriggerType.Unknown,
+                        AIR_USE_BLOCK_POSITION,
+                        AIR_USE_BLOCK_FACE,
+                        inventoryContainer.getSelectedHotbarSlot(),
+                        inventoryContainer.getSelectedHotbarItem(),
+                        clientPlayer.position(),
+                        Position3f.ZERO,
+                        AIR_USE_BLOCK_RUNTIME_ID,
+                        ItemUseInventoryTransaction_PredictedResult.Success,
+                        DEFAULT_COOLDOWN_STATE
+                )
+        );
+    }
+
+    private static void sendReleaseItemTransaction(final UserConnection user, final InventoryTransactionRewriter inventoryTransactionRewriter, final InventoryContainer inventoryContainer, final ClientPlayerEntity clientPlayer, final ItemReleaseInventoryTransaction_ActionType actionType) {
+        sendReleaseItemTransaction(user, inventoryTransactionRewriter, createReleaseItemSnapshot(inventoryContainer, clientPlayer), actionType);
+    }
+
+    private static ReleaseItemSnapshot createReleaseItemSnapshot(final InventoryContainer inventoryContainer, final ClientPlayerEntity clientPlayer) {
+        return new ReleaseItemSnapshot(
+                inventoryContainer.getSelectedHotbarSlot(),
+                inventoryContainer.getSelectedHotbarItem().copy(),
+                clientPlayer.position().add(0F, clientPlayer.eyeOffset(), 0F)
+        );
+    }
+
+    private static void sendReleaseItemTransaction(final UserConnection user, final InventoryTransactionRewriter inventoryTransactionRewriter, final ReleaseItemSnapshot snapshot, final ItemReleaseInventoryTransaction_ActionType actionType) {
+        final PacketWrapper transactionPacket = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, user);
+        final BedrockInventoryTransaction inventoryTransaction = new BedrockInventoryTransaction(
+                0, // legacy request id
+                null,
+                null,
+                ComplexInventoryTransaction_Type.ItemReleaseTransaction,
+                new InventoryTransactionData.ReleaseItemTransactionData(
+                        actionType,
+                        snapshot.hotbarSlot(),
+                        snapshot.itemInHand(),
+                        snapshot.headPosition()
+                )
+        );
+        transactionPacket.write(inventoryTransactionRewriter.getInventoryTransactionType(), inventoryTransaction);
+        transactionPacket.sendToServer(BedrockProtocol.class);
+    }
+
+    private static void sendUseItemTransaction(final UserConnection user, final InventoryTransactionRewriter inventoryTransactionRewriter, final InventoryContainer inventoryContainer, final ClientPlayerEntity clientPlayer) {
+        sendUseItemTransaction(user, inventoryTransactionRewriter, inventoryContainer, clientPlayer, true);
+    }
+
+    private static void sendUseItemTransaction(final UserConnection user, final InventoryTransactionRewriter inventoryTransactionRewriter, final InventoryContainer inventoryContainer, final ClientPlayerEntity clientPlayer, final boolean sendEquipment) {
+        if (sendEquipment) {
+            sendSelectedHotbarSlot(user, inventoryContainer, clientPlayer);
+        }
+        if (isBow(user.get(ItemRewriter.class), inventoryContainer.getSelectedHotbarItem())) {
+            ExperimentalPacketFactory.sendBedrockPlayerAction(
+                    user,
+                    clientPlayer.runtimeId(),
+                    PlayerActionType.StartItemUseOn,
+                    AIR_USE_BLOCK_POSITION,
+                    AIR_USE_BLOCK_POSITION,
+                    AIR_USE_BLOCK_FACE
+            );
+        }
+        final PacketWrapper transactionPacket = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, user);
+        transactionPacket.write(inventoryTransactionRewriter.getInventoryTransactionType(), createUseItemTransaction(inventoryContainer, clientPlayer));
+        transactionPacket.sendToServer(BedrockProtocol.class);
+    }
+
+    private static void finishCrossbowCharge(final UserConnection user, final InventoryTransactionRewriter inventoryTransactionRewriter, final InventoryContainer inventoryContainer, final ClientPlayerEntity clientPlayer) {
+        sendUseItemTransaction(user, inventoryTransactionRewriter, inventoryContainer, clientPlayer, false);
+        final ReleaseItemSnapshot releaseSnapshot = createReleaseItemSnapshot(inventoryContainer, clientPlayer);
+        user.getChannel().eventLoop().schedule(() -> sendReleaseItemTransaction(user, inventoryTransactionRewriter, releaseSnapshot, ItemReleaseInventoryTransaction_ActionType.Release), FINISH_USE_RELEASE_DELAY_MS, TimeUnit.MILLISECONDS);
+    }
+
+    private static void finishConsumableUse(final UserConnection user, final InventoryTransactionRewriter inventoryTransactionRewriter, final InventoryContainer inventoryContainer, final ClientPlayerEntity clientPlayer) {
+        sendUseItemTransaction(user, inventoryTransactionRewriter, inventoryContainer, clientPlayer, false);
+        final ReleaseItemSnapshot releaseSnapshot = createReleaseItemSnapshot(inventoryContainer, clientPlayer);
+        user.getChannel().eventLoop().schedule(() -> sendReleaseItemTransaction(user, inventoryTransactionRewriter, releaseSnapshot, ItemReleaseInventoryTransaction_ActionType.Release), FINISH_USE_RELEASE_DELAY_MS, TimeUnit.MILLISECONDS);
+    }
+
+    private static void sendSelectedHotbarSlot(final UserConnection user, final InventoryContainer inventoryContainer, final ClientPlayerEntity clientPlayer) {
+        final BedrockItem selectedItem = inventoryContainer.getSelectedHotbarItem();
+        sendMobEquipment(user, inventoryContainer, clientPlayer, inventoryContainer.getSelectedHotbarSlot(), selectedItem);
+    }
+
+    private static void sendMobEquipment(final UserConnection user, final InventoryContainer inventoryContainer, final ClientPlayerEntity clientPlayer, final byte slot, final BedrockItem item) {
+        final PacketWrapper mobEquipmentPacket = PacketWrapper.create(ServerboundBedrockPackets.MOB_EQUIPMENT, user);
+        mobEquipmentPacket.write(BedrockTypes.UNSIGNED_VAR_LONG, clientPlayer.runtimeId()); // entity runtime id
+        mobEquipmentPacket.write(user.get(ItemRewriter.class).newItemType(), item); // item
+        mobEquipmentPacket.write(Types.BYTE, slot); // slot
+        mobEquipmentPacket.write(Types.BYTE, slot); // selected slot
+        mobEquipmentPacket.write(Types.BYTE, inventoryContainer.containerId()); // container id
+        mobEquipmentPacket.sendToServer(BedrockProtocol.class);
+    }
+
     // --- Existing experimental features ---
 
     private static final int MAP_FLAGS_ALL = ClientboundMapItemDataPacket_Type.Creation.getValue() | ClientboundMapItemDataPacket_Type.DecorationUpdate.getValue() | ClientboundMapItemDataPacket_Type.TextureUpdate.getValue();
@@ -242,32 +431,43 @@ public class ExperimentalFeatures {
             final PlayerActionAction action = PlayerActionAction.values()[wrapper.passthrough(Types.VAR_INT)]; // action
             wrapper.passthrough(Types.BLOCK_POSITION1_14); // block position
             wrapper.passthrough(Types.UNSIGNED_BYTE); // face
-            wrapper.passthrough(Types.VAR_INT); // sequence number
+            final int sequence = wrapper.passthrough(Types.VAR_INT); // sequence number
 
             if (action == PlayerActionAction.RELEASE_USE_ITEM) {
                 final InventoryContainer inventoryContainer = inventoryTracker.getInventoryContainer();
                 final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
-                entityTracker.getClientPlayer().setUsingItem(false);
+                final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
 
                 wrapper.clearPacket();
-                wrapper.setPacketType(ServerboundBedrockPackets.INVENTORY_TRANSACTION);
-
-                BedrockInventoryTransaction inventoryTransaction = new BedrockInventoryTransaction(
-                        0, // legacy request id
-                        null,
-                        null,
-                        ComplexInventoryTransaction_Type.ItemReleaseTransaction,
-                        new InventoryTransactionData.ReleaseItemTransactionData(
-                                ItemReleaseInventoryTransaction_ActionType.Release,
-                                inventoryContainer.getSelectedHotbarSlot(),
-                                inventoryContainer.getSelectedHotbarItem(),
-                                wrapper.user().get(EntityTracker.class).getClientPlayer().position()
-                        )
-                );
-                wrapper.write(inventoryTransactionRewriter.getInventoryTransactionType(), inventoryTransaction);
-
-                wrapper.sendToServer(BedrockProtocol.class);
                 wrapper.cancel();
+                if (sequence > 0) {
+                    PacketFactory.sendJavaBlockChangedAck(wrapper.user(), sequence);
+                }
+
+                if (!clientPlayer.isUsingItem()) {
+                    PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryContainer);
+                    return;
+                }
+
+                final BedrockItem selectedItem = inventoryContainer.getSelectedHotbarItem();
+                final ItemReleaseInventoryTransaction_ActionType releaseAction = releaseActionForItem(
+                        wrapper.user().get(ItemRewriter.class),
+                        selectedItem,
+                        clientPlayer.usingItemTicks()
+                );
+                if (isCrossbow(wrapper.user().get(ItemRewriter.class), selectedItem) && clientPlayer.usingItemTicks() >= CROSSBOW_CHARGE_TICKS) {
+                    finishCrossbowCharge(wrapper.user(), inventoryTransactionRewriter, inventoryContainer, clientPlayer);
+                    clientPlayer.setUsingItem(false);
+                    return;
+                }
+                if (releaseAction == ItemReleaseInventoryTransaction_ActionType.Use) {
+                    finishConsumableUse(wrapper.user(), inventoryTransactionRewriter, inventoryContainer, clientPlayer);
+                    clientPlayer.setUsingItem(false);
+                    return;
+                }
+                clientPlayer.setUsingItem(false);
+
+                sendReleaseItemTransaction(wrapper.user(), inventoryTransactionRewriter, inventoryContainer, clientPlayer, releaseAction);
             } else if (action == PlayerActionAction.DROP_ITEM || action == PlayerActionAction.DROP_ALL_ITEMS) {
                 final BedrockItem currentItem = inventoryTracker.getInventoryContainer().getSelectedHotbarItem();
 
@@ -349,14 +549,44 @@ public class ExperimentalFeatures {
 
         });
 
-        // TODO: Track when the player start using item and send the StartUsingItem input data to the server.
+        ProtocolUtil.prependServerbound(protocol, ServerboundPackets26_1.CLIENT_TICK_END, wrapper -> {
+            final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
+            final InventoryContainer inventoryContainer = inventoryTracker.getInventoryContainer();
+            final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
+            final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
+            if (!clientPlayer.isUsingItem()) {
+                return;
+            }
+
+            final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
+            final BedrockItem selectedItem = inventoryContainer.getSelectedHotbarItem();
+            if (!isContinuousUseItem(itemRewriter, selectedItem)) {
+                clientPlayer.setUsingItem(false);
+                return;
+            }
+
+            final ItemReleaseInventoryTransaction_ActionType actionType = releaseActionForItem(itemRewriter, selectedItem, clientPlayer.usingItemTicks());
+            if (isCrossbow(itemRewriter, selectedItem) && clientPlayer.usingItemTicks() >= CROSSBOW_AUTO_FINISH_TICKS) {
+                if (clientPlayer.isCrossbowChargeFinishSent()) {
+                    return;
+                }
+                finishCrossbowCharge(wrapper.user(), wrapper.user().get(InventoryTransactionRewriter.class), inventoryContainer, clientPlayer);
+                clientPlayer.setCrossbowChargeFinishSent(true);
+                return;
+            }
+            if (actionType == ItemReleaseInventoryTransaction_ActionType.Use) {
+                finishConsumableUse(wrapper.user(), wrapper.user().get(InventoryTransactionRewriter.class), inventoryContainer, clientPlayer);
+                clientPlayer.setUsingItem(false);
+            }
+        });
+
         protocol.registerServerbound(ServerboundPackets26_1.USE_ITEM, ServerboundBedrockPackets.INVENTORY_TRANSACTION, wrapper -> {
             final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
             final InventoryContainer inventoryContainer = wrapper.user().get(InventoryTracker.class).getInventoryContainer();
             final InventoryTransactionRewriter inventoryTransactionRewriter = wrapper.user().get(InventoryTransactionRewriter.class);
 
             final int hand = wrapper.read(Types.VAR_INT); // hand
-            wrapper.read(Types.VAR_INT); // sequence
+            final int sequence = wrapper.read(Types.VAR_INT); // sequence
             wrapper.read(Types.FLOAT); // yaw
             wrapper.read(Types.FLOAT); // pitch
 
@@ -364,34 +594,38 @@ public class ExperimentalFeatures {
             // TODO: We need to handle cases where the item changes, or it affect player movement (eg: eating/blocking/etc)
             if (hand != InteractionHand.MAIN_HAND.ordinal()) {
                 wrapper.cancel();
+                if (sequence > 0) {
+                    PacketFactory.sendJavaBlockChangedAck(wrapper.user(), sequence);
+                }
                 return;
             }
 
             // Mark as using item and send StartUsingItem flag in the current tick's PlayerAuthInput
             final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
-            clientPlayer.setUsingItem(true);
-            clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StartUsingItem);
+            final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
+            final BedrockItem selectedItem = inventoryContainer.getSelectedHotbarItem();
+            if (isContinuousUseItem(itemRewriter, selectedItem)) {
+                clientPlayer.setUsingItem(true);
+                clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StartUsingItem);
+                clientPlayer.setAuthInputItemInteraction(createUseItemTransaction(inventoryContainer, clientPlayer));
+                if (shouldSendStandaloneUseTransaction(itemRewriter, selectedItem)) {
+                    sendUseItemTransaction(wrapper.user(), inventoryTransactionRewriter, inventoryContainer, clientPlayer);
+                }
+                wrapper.clearPacket();
+                wrapper.cancel();
+                if (sequence > 0) {
+                    PacketFactory.sendJavaBlockChangedAck(wrapper.user(), sequence);
+                }
+                return;
+            }
 
-            BedrockInventoryTransaction inventoryTransaction = new BedrockInventoryTransaction(
-                    0, // legacy request id
-                    null,
-                    null,
-                    ComplexInventoryTransaction_Type.ItemUseTransaction,
-                    new InventoryTransactionData.UseItemTransactionData(
-                            ItemUseInventoryTransaction_ActionType.Use,
-                            ItemUseInventoryTransaction_TriggerType.Unknown,
-                            new BlockPosition(0, 0, 0), // block position
-                            255, // block face
-                            inventoryContainer.getSelectedHotbarSlot(),
-                            inventoryContainer.getSelectedHotbarItem(),
-                            entityTracker.getClientPlayer().position(),
-                            Position3f.ZERO, // click position
-                            0, // block runtime id
-                            ItemUseInventoryTransaction_PredictedResult.Failure,
-                            (byte) 0 // TODO: client cooldown state
-                    )
-            );
-            wrapper.write(inventoryTransactionRewriter.getInventoryTransactionType(), inventoryTransaction);
+            if (isChargedCrossbow(itemRewriter, selectedItem)) {
+                sendSelectedHotbarSlot(wrapper.user(), inventoryContainer, clientPlayer);
+            }
+            wrapper.write(inventoryTransactionRewriter.getInventoryTransactionType(), createUseItemTransaction(inventoryContainer, clientPlayer));
+            if (sequence > 0) {
+                PacketFactory.sendJavaBlockChangedAck(wrapper.user(), sequence);
+            }
         });
 
         // Handle COMPLETED_USING_ITEM from server (sent when item use completes, e.g. eating)
@@ -430,13 +664,31 @@ public class ExperimentalFeatures {
             // Sending ack immediately would clear the Java client's prediction before any BLOCK_UPDATE arrives,
             // causing the placed block to flicker (disappear then reappear).
             final int sequence = wrapper.read(Types.VAR_INT);
-            final BlockPosition expectedPos = insideBlock ? position : position.getRelative(face);
-            wrapper.user().get(BlockPlacementAckTracker.class).addPendingAck(expectedPos, sequence);
 
             // The player can only interact using the main hand on Bedrock!
             if (hand != InteractionHand.MAIN_HAND) {
                 return;
             }
+
+            final InventoryContainer inventoryContainer = inventoryTracker.getInventoryContainer();
+            final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
+            final BedrockItem selectedItem = inventoryContainer.getSelectedHotbarItem();
+            if (isContinuousUseItem(itemRewriter, selectedItem)) {
+                clientPlayer.setUsingItem(true);
+                clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StartUsingItem);
+                clientPlayer.setAuthInputItemInteraction(createUseItemTransaction(inventoryContainer, clientPlayer));
+                if (shouldSendStandaloneUseTransaction(itemRewriter, selectedItem)) {
+                    sendUseItemTransaction(wrapper.user(), inventoryTransactionRewriter, inventoryContainer, clientPlayer);
+                }
+
+                if (sequence > 0) {
+                    PacketFactory.sendJavaBlockChangedAck(wrapper.user(), sequence);
+                }
+                return;
+            }
+
+            final BlockPosition expectedPos = insideBlock ? position : position.getRelative(face);
+            wrapper.user().get(BlockPlacementAckTracker.class).addPendingAck(expectedPos, sequence);
 
             // The bedrock client will send a start item use on action to the server first.
             ExperimentalPacketFactory.sendBedrockPlayerAction(
@@ -451,7 +703,7 @@ public class ExperimentalFeatures {
             // This is the main packet that the bedrock client use to interact with block.The rest of the
             final PacketWrapper transactionPacket = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, wrapper.user());
 
-            BedrockItem predictedToItem = inventoryTracker.getInventoryContainer().getSelectedHotbarItem().copy();
+            BedrockItem predictedToItem = inventoryContainer.getSelectedHotbarItem().copy();
             // This is not entirely correct, but at least it's more accurate than not sending actions or sending the original item data.
             if (predictedToItem.blockRuntimeId() != 0 && clientPlayer.javaGameMode() != GameMode.CREATIVE) {
                 predictedToItem.setAmount(predictedToItem.amount() - 1);
@@ -466,8 +718,8 @@ public class ExperimentalFeatures {
                     List.of(
                             new InventoryActionData(
                                     new InventorySource(InventorySourceType.ContainerInventory, ContainerID.CONTAINER_ID_INVENTORY.getValue(), InventorySource_InventorySourceFlags.NoFlag),
-                                    inventoryTracker.getInventoryContainer().getSelectedHotbarSlot(),
-                                    inventoryTracker.getInventoryContainer().getSelectedHotbarItem(),
+                                    inventoryContainer.getSelectedHotbarSlot(),
+                                    inventoryContainer.getSelectedHotbarItem(),
                                     predictedToItem
                             )
                     ),
@@ -477,8 +729,8 @@ public class ExperimentalFeatures {
                             ItemUseInventoryTransaction_TriggerType.PlayerInput,
                             position,
                             faceInt,
-                            inventoryTracker.getInventoryContainer().getSelectedHotbarSlot(),
-                            inventoryTracker.getInventoryContainer().getSelectedHotbarItem(),
+                            inventoryContainer.getSelectedHotbarSlot(),
+                            inventoryContainer.getSelectedHotbarItem(),
                             clientPlayer.position(),
                             clickPosition,
                             chunkTracker.getBlockState(position),
