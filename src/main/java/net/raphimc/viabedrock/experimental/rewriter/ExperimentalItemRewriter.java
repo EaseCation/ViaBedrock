@@ -32,10 +32,13 @@ import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.data.JavaRegistries;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.Enchant_Type;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
+import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 
 import java.util.logging.Level;
 
 public class ExperimentalItemRewriter {
+
+    private static final StructuredDataKey<Item[]> CHARGED_PROJECTILES = new StructuredDataKey<>("charged_projectiles", VersionedTypes.V26_1.itemArray());
 
     // BedrockTag can be null
     public static void handleItem(final UserConnection user, final BedrockItem bedrockItem, final CompoundTag bedrockTag, final Item javaItem) {
@@ -106,6 +109,32 @@ public class ExperimentalItemRewriter {
                 javaItem.dataContainer().set(StructuredDataKey.ENCHANTMENTS1_21_5, javaEnchantments);
             }
 
+            if (bedrockTag.get("chargedItem") instanceof CompoundTag chargedItemTag) {
+                final Item chargedProjectile = chargedProjectile(user, chargedItemTag);
+                if (chargedProjectile != null) {
+                    javaItem.dataContainer().set(CHARGED_PROJECTILES, new Item[]{chargedProjectile});
+                }
+            }
+
         }
+    }
+
+    private static Item chargedProjectile(final UserConnection user, final CompoundTag chargedItemTag) {
+        final String identifier = chargedItemTag.getString("Name", null);
+        if (identifier == null) {
+            return null;
+        }
+
+        final ItemRewriter itemRewriter = user.get(ItemRewriter.class);
+        final Integer bedrockId = itemRewriter.getItems().get(identifier);
+        if (bedrockId == null) {
+            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown charged projectile item: " + identifier);
+            return null;
+        }
+
+        final int count = chargedItemTag.get("Count") instanceof NumberTag countTag ? countTag.asInt() : 1;
+        final int damage = chargedItemTag.get("Damage") instanceof NumberTag damageTag ? damageTag.asInt() : 0;
+        final BedrockItem projectile = new BedrockItem(bedrockId, (short) damage, (byte) count);
+        return itemRewriter.javaItem(projectile);
     }
 }

@@ -121,17 +121,6 @@ public class ClientAuthInventoryModule implements FeatureModule {
             // Check if this is a crafting operation (has SOURCE_TODO actions)
             final boolean isCraftingAction = hasCraftingActions(actions);
 
-            // Apply mirror updates (optimistic) — client-authoritative: assume server will accept
-            applyMirrorUpdates(actions, inventoryTracker);
-
-            // Resync client for operations where Java client predicts differently
-            if (action == ContainerInput.QUICK_MOVE || isCraftingAction) {
-                if (containerId != ContainerID.CONTAINER_ID_INVENTORY.getValue()) {
-                    PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getInventoryContainer());
-                }
-                PacketFactory.sendJavaContainerSetContent(wrapper.user(), container);
-            }
-
             // Send NormalTransaction to Bedrock server
             final InventoryTransactionRewriter txRewriter = wrapper.user().get(InventoryTransactionRewriter.class);
             final PacketWrapper txPacket = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, wrapper.user());
@@ -146,6 +135,26 @@ public class ClientAuthInventoryModule implements FeatureModule {
                     ));
 
             txPacket.sendToServer(BedrockProtocol.class);
+
+            // The Java client predicts clicks locally, but Bedrock/Nukkit remains
+            // authoritative and may reject plugin-locked/menu slots. Do not commit the
+            // prediction to our mirror; reset Java immediately and request the server's
+            // authoritative contents so fake hotbar items cannot be used later.
+            if (containerId != ContainerID.CONTAINER_ID_INVENTORY.getValue()) {
+                PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getInventoryContainer());
+            }
+            PacketFactory.sendJavaContainerSetContent(wrapper.user(), container);
+
+            final PacketWrapper mismatchPacket = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, wrapper.user());
+            mismatchPacket.write(txRewriter.getInventoryTransactionType(),
+                    new BedrockInventoryTransaction(
+                            0,
+                            null,
+                            null,
+                            ComplexInventoryTransaction_Type.InventoryMismatch,
+                            new InventoryTransactionData.MismatchTransactionData()
+                    ));
+            mismatchPacket.sendToServer(BedrockProtocol.class);
         });
     }
 

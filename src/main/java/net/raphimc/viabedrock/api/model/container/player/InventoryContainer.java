@@ -116,11 +116,6 @@ public class InventoryContainer extends Container {
     @Override
     protected void onSlotChanged(final int slot, final BedrockItem oldItem, final BedrockItem newItem) {
         super.onSlotChanged(slot, oldItem, newItem);
-        if (slot == this.selectedHotbarSlot) {
-            final PacketWrapper mobEquipment = PacketWrapper.create(ServerboundBedrockPackets.MOB_EQUIPMENT, this.user);
-            this.onSelectedHotbarSlotChanged(oldItem, newItem, mobEquipment);
-            mobEquipment.sendToServer(BedrockProtocol.class);
-        }
     }
 
     private void onSelectedHotbarSlotChanged(final BedrockItem oldItem, final BedrockItem newItem, final PacketWrapper mobEquipment) {
