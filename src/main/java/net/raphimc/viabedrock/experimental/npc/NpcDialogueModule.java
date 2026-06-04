@@ -18,6 +18,7 @@
 package net.raphimc.viabedrock.experimental.npc;
 
 import com.viaversion.nbt.tag.CompoundTag;
+import com.viaversion.viaversion.api.minecraft.Holder;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.libs.mcstructs.converter.impl.v1_21_5.NbtConverter_v1_21_5;
@@ -154,8 +155,7 @@ public class NpcDialogueModule implements FeatureModule {
 
             try {
                 final PacketWrapper showDialog = PacketWrapper.create(ClientboundPackets26_1.SHOW_DIALOG, wrapper.user());
-                showDialog.write(Types.VAR_INT, 0); // registry id
-                showDialog.write(Types.TAG, DialogSerializer.V1_21_6.getDirectCodec().serialize(NbtConverter_v1_21_5.INSTANCE, dialog).get()); // dialog data
+                showDialog.write(Types.TRUSTED_COMPOUND_TAG_HOLDER, Holder.of((CompoundTag) DialogSerializer.V1_21_6.getDirectCodec().serialize(NbtConverter_v1_21_5.INSTANCE, dialog).get())); // dialog data
                 showDialog.send(BedrockProtocol.class);
             } catch (Throwable e) {
                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error serializing NPC dialogue dialog", e);
