@@ -18,6 +18,7 @@
 package net.raphimc.viabedrock.protocol.packet;
 
 import com.viaversion.viaversion.api.Via;
+import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.protocol.packet.State;
 import com.viaversion.viaversion.api.protocol.remapper.PacketHandler;
@@ -29,6 +30,7 @@ import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 import net.raphimc.viabedrock.api.util.TextUtil;
 import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
+import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
 import net.raphimc.viabedrock.experimental.resourcepack.JavaPackCache;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
@@ -175,10 +177,7 @@ public class ResourcePackPackets {
             }
 
             if (loadStateTracker == null || !loadStateTracker.hasJavaClientAccepted()) {
-                final PacketWrapper resourcePackClientResponse = wrapper.create(ServerboundBedrockPackets.RESOURCE_PACK_CLIENT_RESPONSE);
-                resourcePackClientResponse.write(Types.BYTE, (byte) ResourcePackResponse.ResourcePackStackFinished.getValue()); // status
-                resourcePackClientResponse.write(BedrockTypes.SHORT_LE_STRING_ARRAY, new String[0]); // downloading packs
-                resourcePackClientResponse.sendToServer(BedrockProtocol.class);
+                delayResourcePackStackFinished(wrapper.user());
             }
         });
         protocol.registerClientbound(ClientboundBedrockPackets.RESOURCE_PACK_DATA_INFO, null, wrapper -> {
@@ -233,13 +232,13 @@ public class ResourcePackPackets {
                     if (resourcePackStorage != null) {
                         resourcePackStorage.setLoadedOnJavaClient();
                     }
-                    wrapper.write(Types.BYTE, (byte) ResourcePackResponse.ResourcePackStackFinished.getValue()); // status
-                    wrapper.write(BedrockTypes.SHORT_LE_STRING_ARRAY, new String[0]); // downloading packs
+                    wrapper.cancel();
+                    delayResourcePackStackFinished(wrapper.user());
                 }
                 case FAILED_DOWNLOAD, FAILED_RELOAD, DISCARDED -> {
                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Client resource pack download/load failed");
-                    wrapper.write(Types.BYTE, (byte) ResourcePackResponse.ResourcePackStackFinished.getValue()); // status
-                    wrapper.write(BedrockTypes.SHORT_LE_STRING_ARRAY, new String[0]); // downloading packs
+                    wrapper.cancel();
+                    delayResourcePackStackFinished(wrapper.user());
                 }
                 case DECLINED, INVALID_URL -> {
                     wrapper.write(Types.BYTE, (byte) ResourcePackResponse.DownloadingFinished.getValue()); // status
@@ -268,6 +267,21 @@ public class ResourcePackPackets {
                 default -> throw new IllegalStateException("Unhandled ResourcePackAction: " + action);
             }
         });
+    }
+
+    private static void delayResourcePackStackFinished(final UserConnection user) {
+        user.get(CustomMappingSyncStorage.class).delayResourcePackStackFinishedIfNeeded(() -> sendResourcePackStackFinished(user));
+    }
+
+    private static void sendResourcePackStackFinished(final UserConnection user) {
+        try {
+            final PacketWrapper resourcePackClientResponse = PacketWrapper.create(ServerboundBedrockPackets.RESOURCE_PACK_CLIENT_RESPONSE, user);
+            resourcePackClientResponse.write(Types.BYTE, (byte) ResourcePackResponse.ResourcePackStackFinished.getValue()); // status
+            resourcePackClientResponse.write(BedrockTypes.SHORT_LE_STRING_ARRAY, new String[0]); // downloading packs
+            resourcePackClientResponse.sendToServer(BedrockProtocol.class);
+        } catch (Throwable e) {
+            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to send ResourcePackStackFinished to Bedrock server", e);
+        }
     }
 
 }

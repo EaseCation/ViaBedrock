@@ -55,8 +55,11 @@ public final class CustomMappingSyncStorage extends StoredObject {
     private JoinPackets.PendingStartGame pendingStartGame;
     private long deadlineNanos;
     private ScheduledFuture<?> timeoutTask;
+    private TimeoutKind timeoutKind;
     private boolean finishStarted;
     private boolean channelProbeSent;
+    private Runnable pendingResourcePackStackFinished;
+    private boolean resourcePackStackFinishedReleased;
     private boolean blockStatesAreFinalOutput;
     private boolean blockEntityTypesAreFinalOutput;
 
@@ -76,23 +79,64 @@ public final class CustomMappingSyncStorage extends StoredObject {
         return this.access.hasCustomMappings();
     }
 
+    public void delayResourcePackStackFinishedIfNeeded(final Runnable continuation) {
+        if (this.resourcePackStackFinishedReleased) {
+            ViaBedrock.getPlatform().getLogger().fine("Ignoring duplicate ResourcePackStackFinished continuation; already released in custom mapping sync state " + this.state);
+            return;
+        }
+        if (this.state == State.KICKED) {
+            ViaBedrock.getPlatform().getLogger().warning("Ignoring ResourcePackStackFinished continuation because custom mapping sync kicked the connection");
+            return;
+        }
+        if (this.pendingResourcePackStackFinished != null) {
+            ViaBedrock.getPlatform().getLogger().fine("Ignoring duplicate ResourcePackStackFinished continuation while custom mapping sync is pending in state " + this.state);
+            return;
+        }
+        if (!shouldGateResourcePackStackFinished()) {
+            runResourcePackStackFinishedOnce(continuation);
+            return;
+        }
+        this.pendingResourcePackStackFinished = continuation;
+        ViaBedrock.getPlatform().getLogger().info("Delaying ResourcePackStackFinished until BedrockLoader custom mapping sync probe completes");
+        probeChannelIfNeeded();
+        if (this.state == State.SNAPSHOT_READY || this.state == State.UNSUPPORTED_SAFE || this.state == State.FAILED_SAFE) {
+            releaseResourcePackStackFinished();
+        }
+    }
+
+    public void releaseResourcePackStackFinished() {
+        if (this.user().getChannel() != null && !this.user().getChannel().eventLoop().inEventLoop()) {
+            this.user().getChannel().eventLoop().execute(this::releaseResourcePackStackFinished);
+            return;
+        }
+        if (this.resourcePackStackFinishedReleased) return;
+        final Runnable continuation = this.pendingResourcePackStackFinished;
+        if (continuation == null) return;
+        this.pendingResourcePackStackFinished = null;
+        ViaBedrock.getPlatform().getLogger().info("Releasing delayed ResourcePackStackFinished; custom mapping sync state=" + this.state);
+        runResourcePackStackFinishedOnce(continuation);
+    }
+
     public void probeChannelIfNeeded() {
-        if (this.state != State.UNSEEN || !ViaBedrock.getConfig().isCustomMappingSyncEnabled()) return;
+        if (this.state != State.UNSEEN || !isSyncEnabled()) return;
+        this.state = State.PROBING_CHANNEL;
         sendChannelProbeIfNeeded();
+        startTimeout(TimeoutKind.CHANNEL_PROBE);
     }
 
     public void beginRequestIfNeeded() {
-        if (this.state != State.UNSEEN) return;
-        if (!ViaBedrock.getConfig().isCustomMappingSyncEnabled()) {
+        if (this.state != State.UNSEEN && this.state != State.PROBING_CHANNEL) return;
+        if (!isSyncEnabled()) {
             this.state = State.UNSUPPORTED_SAFE;
             this.access = CustomMappingAccess.safe();
             sendResult(STATUS_UNSUPPORTED_SAFE, "unsupported_safe: disabled by ViaBedrock config");
+            releaseResourcePackStackFinished();
+            tryFinishCustomMapping();
             return;
         }
         this.requestId = ThreadLocalRandom.current().nextLong();
         this.state = State.REQUESTED;
-        cancelTimeout();
-        startTimeout();
+        startTimeout(TimeoutKind.SNAPSHOT_REQUEST);
         advertiseServerboundChannel();
         final ByteArrayOutputStream out = new ByteArrayOutputStream();
         writeVarInt(out, MSG_REQUEST);
@@ -117,7 +161,12 @@ public final class CustomMappingSyncStorage extends StoredObject {
         if (this.pendingStartGame != null || this.finishStarted) return;
         this.pendingStartGame = pendingStartGame;
         ViaBedrock.getPlatform().getLogger().info("Bedrock START_GAME received; custom mapping sync state=" + this.state);
-        sendChannelProbeIfNeeded();
+        if (this.state == State.UNSEEN) {
+            ViaBedrock.getPlatform().getLogger().warning("Bedrock START_GAME arrived before custom mapping sync completed; waiting for sync result or timeout");
+            probeChannelIfNeeded();
+        } else if (this.state == State.PROBING_CHANNEL || this.state == State.REQUESTED) {
+            ViaBedrock.getPlatform().getLogger().warning("Bedrock START_GAME arrived while custom mapping sync is pending; waiting for sync result or timeout");
+        }
         tryFinishCustomMapping();
     }
 
@@ -125,23 +174,19 @@ public final class CustomMappingSyncStorage extends StoredObject {
         if (this.pendingStartGame == null || this.finishStarted) return;
         if (this.state == State.REQUESTED && hasTimedOut()) {
             fail("Timed out waiting for BedrockLoader custom mapping snapshot", null);
+        } else if (this.state == State.PROBING_CHANNEL && hasTimedOut()) {
+            unsupportedSafe("BedrockLoader custom mapping sync channel probe timed out");
         }
         switch (this.state) {
             case UNSEEN -> {
-                if (ViaBedrock.getConfig().isCustomMappingSyncEnabled()) {
-                    sendChannelProbeIfNeeded();
-                    this.state = State.UNSUPPORTED_SAFE;
-                    this.access = CustomMappingAccess.safe();
-                    ViaBedrock.getPlatform().getLogger().warning("BedrockLoader custom mapping sync channel was not registered before START_GAME; using safe fallback");
-                    sendResult(STATUS_UNSUPPORTED_SAFE, "unsupported_safe: BedrockLoader mapping sync channel was not registered before START_GAME");
-                    finishPendingStartGame();
+                if (isSyncEnabled()) {
+                    probeChannelIfNeeded();
                     return;
                 }
-                this.state = State.UNSUPPORTED_SAFE;
-                this.access = CustomMappingAccess.safe();
-                ViaBedrock.getPlatform().getLogger().warning("BedrockLoader custom mapping sync is disabled; using safe fallback");
-                sendResult(STATUS_UNSUPPORTED_SAFE, "unsupported_safe: BedrockLoader mapping sync channel was not registered");
+                unsupportedSafe("BedrockLoader custom mapping sync is disabled");
                 finishPendingStartGame();
+            }
+            case PROBING_CHANNEL -> {
             }
             case SNAPSHOT_READY, UNSUPPORTED_SAFE, FAILED_SAFE -> finishPendingStartGame();
             case REQUESTED, KICKED, INSTALLED -> {
@@ -158,7 +203,10 @@ public final class CustomMappingSyncStorage extends StoredObject {
             final int messageType = reader.readVarInt();
             final long receivedRequestId = reader.readLong();
             if (receivedRequestId != this.requestId) throw new IllegalArgumentException("Request id mismatch");
-            if (this.state != State.REQUESTED) throw new IllegalStateException("Unexpected custom mapping payload in state " + this.state);
+            if (this.state != State.REQUESTED) {
+                ViaBedrock.getPlatform().getLogger().fine("Ignoring late BedrockLoader custom mapping payload in state " + this.state);
+                return true;
+            }
             if (messageType == MSG_SNAPSHOT) {
                 final boolean hasBlocks = reader.readBool();
                 final boolean hasBlockEntities = reader.readBool();
@@ -169,7 +217,9 @@ public final class CustomMappingSyncStorage extends StoredObject {
                 if (!hasBlocks && !hasBlockEntities && uncompressedLength == 0 && compressedLength == 0) {
                     this.profile = SnapshotProfile.empty();
                     this.state = State.SNAPSHOT_READY;
+                    cancelTimeout();
                     ViaBedrock.getPlatform().getLogger().info("Received empty BedrockLoader custom mapping snapshot");
+                    releaseResourcePackStackFinished();
                     tryFinishCustomMapping();
                     return true;
                 }
@@ -181,7 +231,9 @@ public final class CustomMappingSyncStorage extends StoredObject {
                 }
                 this.profile = profileFromBody(inflate(compressed, uncompressedLength));
                 this.state = State.SNAPSHOT_READY;
+                cancelTimeout();
                 ViaBedrock.getPlatform().getLogger().info("Received BedrockLoader custom mapping snapshot; uncompressedBytes=" + uncompressedLength + ", compressedBytes=" + compressedLength);
+                releaseResourcePackStackFinished();
                 tryFinishCustomMapping();
                 return true;
             } else if (messageType == MSG_CHUNK) {
@@ -199,7 +251,9 @@ public final class CustomMappingSyncStorage extends StoredObject {
                 if (compressed != null) {
                     this.profile = profileFromBody(inflate(compressed, uncompressedLength));
                     this.state = State.SNAPSHOT_READY;
+                    cancelTimeout();
                     ViaBedrock.getPlatform().getLogger().info("Received chunked BedrockLoader custom mapping snapshot; chunks=" + chunkCount + ", uncompressedBytes=" + uncompressedLength + ", compressedBytes=" + compressedLength);
+                    releaseResourcePackStackFinished();
                     tryFinishCustomMapping();
                 }
                 return true;
@@ -383,13 +437,19 @@ public final class CustomMappingSyncStorage extends StoredObject {
         JoinPackets.finishCustomMappingStartGame(this.user(), pending);
     }
 
-    private void startTimeout() {
+    private void startTimeout(final TimeoutKind kind) {
+        cancelTimeout();
+        this.timeoutKind = kind;
         final int timeoutMs = Math.max(0, ViaBedrock.getConfig().getCustomMappingSyncTimeoutMs());
         this.deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs);
         if (this.user().getChannel() == null) return;
         this.timeoutTask = this.user().getChannel().eventLoop().schedule(() -> {
             if (this.user().getChannel() == null || !this.user().getChannel().isActive()) return;
-            tryFinishCustomMapping();
+            if (this.state == State.PROBING_CHANNEL && this.timeoutKind == TimeoutKind.CHANNEL_PROBE) {
+                unsupportedSafe("BedrockLoader custom mapping sync channel probe timed out");
+            } else if (this.state == State.REQUESTED && this.timeoutKind == TimeoutKind.SNAPSHOT_REQUEST) {
+                fail("Timed out waiting for BedrockLoader custom mapping snapshot", null);
+            }
         }, timeoutMs, TimeUnit.MILLISECONDS);
     }
 
@@ -417,6 +477,8 @@ public final class CustomMappingSyncStorage extends StoredObject {
             this.timeoutTask.cancel(false);
             this.timeoutTask = null;
         }
+        this.timeoutKind = null;
+        this.deadlineNanos = 0L;
     }
 
     private void clearConnectionState() {
@@ -425,6 +487,7 @@ public final class CustomMappingSyncStorage extends StoredObject {
         this.access = CustomMappingAccess.safe();
         this.chunks = null;
         this.pendingStartGame = null;
+        this.pendingResourcePackStackFinished = null;
         this.blockStatesAreFinalOutput = false;
         this.blockEntityTypesAreFinalOutput = false;
         clearCustomRegistryStorage();
@@ -491,7 +554,51 @@ public final class CustomMappingSyncStorage extends StoredObject {
         } else {
             ViaBedrock.getPlatform().getLogger().log(Level.WARNING, message, e);
         }
+        releaseResourcePackStackFinished();
         tryFinishCustomMapping();
+    }
+
+    private boolean shouldGateResourcePackStackFinished() {
+        return isSyncEnabled()
+                && !this.resourcePackStackFinishedReleased
+                && this.state != State.SNAPSHOT_READY
+                && this.state != State.UNSUPPORTED_SAFE
+                && this.state != State.FAILED_SAFE
+                && this.state != State.KICKED
+                && this.state != State.INSTALLED;
+    }
+
+    private boolean isSyncEnabled() {
+        return ViaBedrock.getConfig().shouldEnableExperimentalFeatures() && ViaBedrock.getConfig().isCustomMappingSyncEnabled();
+    }
+
+    private void unsupportedSafe(final String message) {
+        if (this.state == State.UNSUPPORTED_SAFE || this.state == State.FAILED_SAFE || this.state == State.KICKED || this.state == State.INSTALLED) return;
+        this.profile = null;
+        this.access = CustomMappingAccess.safe();
+        this.chunks = null;
+        this.state = State.UNSUPPORTED_SAFE;
+        cancelTimeout();
+        ViaBedrock.getPlatform().getLogger().warning(message + "; using safe fallback");
+        sendResult(STATUS_UNSUPPORTED_SAFE, "unsupported_safe: " + message);
+        releaseResourcePackStackFinished();
+        tryFinishCustomMapping();
+    }
+
+    private void runOnEventLoop(final Runnable runnable) {
+        if (this.user().getChannel() != null && !this.user().getChannel().eventLoop().inEventLoop()) {
+            this.user().getChannel().eventLoop().execute(runnable);
+            return;
+        }
+        runnable.run();
+    }
+
+    private void runResourcePackStackFinishedOnce(final Runnable continuation) {
+        runOnEventLoop(() -> {
+            if (this.resourcePackStackFinishedReleased) return;
+            this.resourcePackStackFinishedReleased = true;
+            continuation.run();
+        });
     }
 
     private void sendResult(final int status, final String message) {
@@ -515,7 +622,9 @@ public final class CustomMappingSyncStorage extends StoredObject {
         }
     }
 
-    private enum State { UNSEEN, REQUESTED, SNAPSHOT_READY, INSTALLED, UNSUPPORTED_SAFE, FAILED_SAFE, KICKED }
+    private enum State { UNSEEN, PROBING_CHANNEL, REQUESTED, SNAPSHOT_READY, INSTALLED, UNSUPPORTED_SAFE, FAILED_SAFE, KICKED }
+
+    private enum TimeoutKind { CHANNEL_PROBE, SNAPSHOT_REQUEST }
 
     private static final int STATUS_INSTALLED = 0;
     private static final int STATUS_UNSUPPORTED_SAFE = 1;
