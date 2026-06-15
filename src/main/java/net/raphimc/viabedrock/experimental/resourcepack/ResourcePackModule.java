@@ -18,14 +18,31 @@
 package net.raphimc.viabedrock.experimental.resourcepack;
 
 import com.viaversion.viaversion.api.connection.UserConnection;
+import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.experimental.FeatureModule;
 import net.raphimc.viabedrock.protocol.rewriter.ResourcePackRewriter;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
+
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.logging.Level;
 
 /**
  * Registers fork-specific resource pack rewriters and handles post-pack-stack initialization.
  */
 public class ResourcePackModule implements FeatureModule {
+
+    // initRuntimeData() builds a BedrockMotion PackManager (loading dozens of packs) and per-bone
+    // entity models - several seconds of CPU work. It used to run synchronously on the Bedrock IO
+    // thread (Netty NIO Client IO #N) inside the RESOURCE_PACK_STACK handler, which blocked that
+    // thread from answering the server's keep-alive and caused the connection to be timed out on the
+    // first (cache-cold) join. Offload it here so the IO thread keeps processing packets; consumers
+    // (CustomEntity) already null-check the converterData entries and degrade gracefully until ready.
+    private static final ExecutorService RUNTIME_DATA_EXECUTOR = Executors.newCachedThreadPool(r -> {
+        final Thread t = new Thread(r, "ViaBedrock RuntimeData Executor");
+        t.setDaemon(true);
+        return t;
+    });
 
     public ResourcePackModule() {
         ResourcePackRewriter.registerRewriter(new UITextureResourceRewriter());
@@ -34,7 +51,16 @@ public class ResourcePackModule implements FeatureModule {
     @Override
     public void onResourcePackStackSet(final UserConnection user) {
         final ResourcePackStorage resourcePackStorage = user.get(ResourcePackStorage.class);
-        ResourcePackRewriter.initRuntimeData(resourcePackStorage);
+        RUNTIME_DATA_EXECUTOR.execute(() -> {
+            final long start = System.nanoTime();
+            try {
+                ResourcePackRewriter.initRuntimeData(resourcePackStorage);
+                ViaBedrock.getPlatform().getLogger().info(
+                        "Initialized entity runtime data in " + ((System.nanoTime() - start) / 1_000_000L) + "ms (async)");
+            } catch (Throwable e) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to initialize entity runtime data", e);
+            }
+        });
     }
 
 }
