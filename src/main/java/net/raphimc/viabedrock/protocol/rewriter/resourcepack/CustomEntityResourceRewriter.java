@@ -102,7 +102,7 @@ public class CustomEntityResourceRewriter extends ItemModelResourceRewriter {
                     }
                 }
             }
-            this.putItemDefinition(javaContent, entityEntry.getKey(), javaModelDefinitions);
+            this.putItemDefinition(javaContent, entityEntry.getKey(), javaModelDefinitions, resourcePackStorage.isSupportsFreeRotation());
         }
     }
 

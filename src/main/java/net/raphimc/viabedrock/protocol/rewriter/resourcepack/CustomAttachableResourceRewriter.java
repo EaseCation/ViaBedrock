@@ -97,7 +97,7 @@ public class CustomAttachableResourceRewriter extends ItemModelResourceRewriter 
                 javaModelDefinitions.put(modelKey, itemModel);
                 resourcePackStorage.getConverterData().put("ca_" + attachableEntry.getKey() + '_' + modelKey, true);
             }
-            this.putItemDefinition(javaContent, attachableEntry.getKey(), javaModelDefinitions);
+            this.putItemDefinition(javaContent, attachableEntry.getKey(), javaModelDefinitions, resourcePackStorage.isSupportsFreeRotation());
         }
     }
 

@@ -98,7 +98,8 @@ public class ResourcePackPackets {
                         for (int i = 0; i < infos.length; i++) {
                             keys[i] = infos[i].key();
                         }
-                        final String cacheKey = JavaPackCache.computeCacheKey(keys);
+                        final boolean supportsFreeRotation = wrapper.user().getProtocolInfo().protocolVersion().newerThanOrEqualTo(ProtocolVersion.v1_21_11);
+                        final String cacheKey = JavaPackCache.computeCacheKey(keys, supportsFreeRotation);
                         final JavaPackCache cache = ViaBedrock.getJavaPackCache();
 
                         final UUID httpToken = UUID.randomUUID();
@@ -172,7 +173,9 @@ public class ResourcePackPackets {
                         ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing resource pack: " + key);
                     }
                 }
-                wrapper.user().put(new ResourcePackStorage(resourcePacks));
+                final ResourcePackStorage resourcePackStorage = new ResourcePackStorage(resourcePacks);
+                resourcePackStorage.setSupportsFreeRotation(wrapper.user().getProtocolInfo().protocolVersion().newerThanOrEqualTo(ProtocolVersion.v1_21_11));
+                wrapper.user().put(resourcePackStorage);
                 ExperimentalFeatures.dispatchResourcePackStackSet(wrapper.user());
             }
 

@@ -93,7 +93,7 @@ public class ResourcePackHttpServer {
                                     try {
                                         String cacheKey = connInfo.cacheKey();
                                         if (cacheKey == null) {
-                                            cacheKey = JavaPackCache.computeCacheKey(resourcePackStorage.getPackStackTopToBottom());
+                                            cacheKey = JavaPackCache.computeCacheKey(resourcePackStorage.getPackStackTopToBottom(), resourcePackStorage.isSupportsFreeRotation());
                                         }
 
                                         final JavaPackCache cache = ViaBedrock.getJavaPackCache();

@@ -62,7 +62,7 @@ public class CustomItemTextureResourceRewriter extends ItemModelResourceRewriter
                 itemModel.add("textures", layer0);
                 javaModelDefinitions.put(String.valueOf(i), itemModel);
             }
-            this.putItemDefinition(javaContent, itemEntry.getKey(), javaModelDefinitions);
+            this.putItemDefinition(javaContent, itemEntry.getKey(), javaModelDefinitions, resourcePackStorage.isSupportsFreeRotation());
         }
     }
 

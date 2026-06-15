@@ -31,6 +31,11 @@ public class ResourcePackStorage implements StorableObject {
     private final Set<ResourcePack> packStackTopToBottom = Collections.newSetFromMap(new LinkedHashMap<>(128, 0.75F, false));
 
     private boolean loadedOnJavaClient;
+    // Whether the connected Java client supports the free model element rotation format (MC >= 1.21.11).
+    // Written once during resource pack negotiation (netty thread), read later during pack conversion
+    // (HTTP thread) -> volatile for cross-thread visibility. Defaults to false (conservative: emit the
+    // legacy single-axis-compatible output, never the format that fails to load on older clients).
+    private volatile boolean supportsFreeRotation = false;
     private final Map<String, Object> converterData = new ConcurrentHashMap<>();
 
     private final TextDefinitions texts;
@@ -88,6 +93,14 @@ public class ResourcePackStorage implements StorableObject {
 
     public void setLoadedOnJavaClient() {
         this.loadedOnJavaClient = true;
+    }
+
+    public boolean isSupportsFreeRotation() {
+        return this.supportsFreeRotation;
+    }
+
+    public void setSupportsFreeRotation(final boolean supportsFreeRotation) {
+        this.supportsFreeRotation = supportsFreeRotation;
     }
 
     public Map<String, Object> getConverterData() {
