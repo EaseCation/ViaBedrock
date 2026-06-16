@@ -119,7 +119,13 @@ public class ChunkTracker extends StoredObject {
         this.biomePaletteBits = MathUtil.ceilLog2(biomeRegistry.size());
 
         final ChunkTracker oldChunkTracker = user.get(ChunkTracker.class);
-        this.radius = oldChunkTracker != null ? oldChunkTracker.radius : user.get(ClientSettingsStorage.class).viewDistance();
+        if (oldChunkTracker != null) {
+            this.centerX = oldChunkTracker.centerX;
+            this.centerZ = oldChunkTracker.centerZ;
+            this.radius = oldChunkTracker.radius;
+        } else {
+            this.radius = user.get(ClientSettingsStorage.class).viewDistance();
+        }
 
         ExperimentalFeatures.dispatchChunkTrackerCreated(this);
     }
@@ -780,9 +786,12 @@ public class ChunkTracker extends StoredObject {
         }
     }
 
-    public void resetLevelChunksLoadStart() {
+    public void resetJavaChunkLoading() {
+        final ChunkPosition playerChunk = this.playerChunk();
         this.levelChunksLoadStartSent = false;
         this.javaSentChunks.clear();
+        this.sendCurrentCacheSettingsToJava();
+        this.markPlayerNeighborhoodDirty(playerChunk);
     }
 
     private Long pollNextDirtyChunk() {
@@ -896,14 +905,29 @@ public class ChunkTracker extends StoredObject {
     }
 
     private Long playerChunkKey() {
+        return this.playerChunk().chunkKey();
+    }
+
+    private ChunkPosition playerChunk() {
         final EntityTracker entityTracker = this.user().get(EntityTracker.class);
         if (entityTracker == null) {
-            return null;
+            return new ChunkPosition(this.centerX, this.centerZ);
         }
         final Position3f playerPosition = entityTracker.getClientPlayer().position();
         final int playerChunkX = (int) Math.floor(playerPosition.x()) >> 4;
         final int playerChunkZ = (int) Math.floor(playerPosition.z()) >> 4;
-        return ChunkPosition.chunkKey(playerChunkX, playerChunkZ);
+        return new ChunkPosition(playerChunkX, playerChunkZ);
+    }
+
+    private void markPlayerNeighborhoodDirty(final ChunkPosition playerChunk) {
+        for (int chunkZ = playerChunk.chunkZ() - 1; chunkZ <= playerChunk.chunkZ() + 1; chunkZ++) {
+            for (int chunkX = playerChunk.chunkX() - 1; chunkX <= playerChunk.chunkX() + 1; chunkX++) {
+                final long key = ChunkPosition.chunkKey(chunkX, chunkZ);
+                if (this.chunks.containsKey(key)) {
+                    this.dirtyChunks.add(key);
+                }
+            }
+        }
     }
 
     private boolean playerCompileNeighborhoodSent() {

@@ -109,7 +109,7 @@ public class ClientPlayerPackets {
                         clientPlayer.setHealth(clientPlayer.attributes().get("minecraft:health").maxValue());
                         clientPlayer.sendPlayerActionPacketToServer(PlayerActionType.Respawn, -1);
                         wrapper.write(Types.VAR_INT, chunkTracker.getDimension().ordinal()); // dimension id
-                        wrapper.write(Types.STRING, chunkTracker.getDimension().getKey()); // dimension name
+                        wrapper.write(Types.STRING, chunkTracker.getDimensionKey()); // dimension name
                         wrapper.write(Types.LONG, 0L); // hashed seed
                         wrapper.write(Types.BYTE, (byte) clientPlayer.javaGameMode().ordinal()); // game mode
                         wrapper.write(Types.BYTE, (byte) -1); // previous game mode
@@ -122,7 +122,8 @@ public class ClientPlayerPackets {
                         wrapper.send(BedrockProtocol.class);
                         clientPlayer.sendAttribute("minecraft:health"); // Ensure health is synced
                         clientPlayer.setAbilities(clientPlayer.abilities()); // Java client always resets abilities on respawn. Resend them
-                        chunkTracker.resetLevelChunksLoadStart();
+                        chunkTracker.resetJavaChunkLoading();
+                        clientPlayer.setDimensionChangeInfo(null);
                         if (gameRulesStorage.getGameRule("keepInventory")) {
                             PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getInventoryContainer()); // Java client always resets inventory on respawn. Resend it
                         }
@@ -155,7 +156,6 @@ public class ClientPlayerPackets {
                     clientPlayer.sendPlayerActionPacketToServer(PlayerActionType.ChangeDimensionAck);
                     PacketFactory.sendBedrockLoadingScreen(wrapper.user(), ServerboundLoadingScreenPacketType.EndLoadingScreen, clientPlayer.dimensionChangeInfo().loadingScreenId());
                     clientPlayer.sendPlayerPositionPacketToClient(Relative.NONE);
-                    wrapper.user().get(ChunkTracker.class).resetLevelChunksLoadStart();
                     clientPlayer.setDimensionChangeInfo(null);
                 }
             }
@@ -617,5 +617,4 @@ public class ClientPlayerPackets {
             }
         });
     }
-
 }
