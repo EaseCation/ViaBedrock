@@ -41,7 +41,6 @@ import net.raphimc.viabedrock.experimental.model.map.MapObject;
 import net.raphimc.viabedrock.experimental.model.map.MapTrackedObject;
 import net.raphimc.viabedrock.experimental.block.CustomBlockMappingModule;
 import net.raphimc.viabedrock.experimental.camera.CameraModule;
-import net.raphimc.viabedrock.experimental.eccamera.ECCameraModule;
 import net.raphimc.viabedrock.experimental.inventory.CraftingDataModule;
 import net.raphimc.viabedrock.experimental.inventory.ClientAuthInventoryModule;
 import net.raphimc.viabedrock.experimental.pyrpc.PyRpcDispatcherModule;
@@ -236,7 +235,6 @@ public class ExperimentalFeatures {
 
         registerModule(new PyRpcDispatcherModule());  // Must be first (owns PY_RPC handler)
         registerModule(new ModUIClientModule());      // PY_RPC consumer
-        registerModule(new ECCameraModule());         // PY_RPC consumer
         registerModule(new CameraModule());
         registerModule(new AlternateDimensionModule());
         registerModule(new CustomEntityTypeResolver());
