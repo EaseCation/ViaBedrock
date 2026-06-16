@@ -19,6 +19,7 @@ package net.raphimc.viabedrock.experimental.rewriter;
 
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.minecraft.EulerAngle;
+import com.viaversion.viaversion.api.minecraft.VillagerData;
 import com.viaversion.viaversion.api.minecraft.entities.EntityTypes1_21_11;
 import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
@@ -303,6 +304,11 @@ public class EntityMetadataRewriter {
                         int javaVariant = variant;
                         javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.VARIANT), VersionedTypes.V26_1.entityDataTypes().varIntType, javaVariant));
                     }
+                    case VILLAGER -> {
+                        // Bedrock encodes the villager profession in VARIANT (region/biome in MARK_VARIANT,
+                        // trade level in TRADE_TIER). All three combine into one Java VILLAGER_DATA field.
+                        applyVillagerData(entity, javaEntityData);
+                    }
                     default -> {
                         if (variant != 0 && !(entity instanceof CustomEntity)) { // Custom entity variants are consumed by the custom renderer.
                             ViaBedrock.getPlatform().getLogger().warning("Received non-zero VARIANT " + variant + " for unsupported entity " + entity.type());
@@ -310,6 +316,15 @@ public class EntityMetadataRewriter {
                     }
                 }
 
+            }
+            case MARK_VARIANT, TRADE_TIER -> {
+                // Villager region/biome (MARK_VARIANT) and trade level (TRADE_TIER) also feed the combined
+                // Java VILLAGER_DATA field. Other entities using these IDs are not translated yet.
+                if (entity.javaType().is(EntityTypes1_21_11.VILLAGER)) {
+                    applyVillagerData(entity, javaEntityData);
+                } else {
+                    return false;
+                }
             }
             case COLOR_INDEX -> {
                 int javaColorIndex = readNumber(entityData).intValue();
@@ -769,6 +784,40 @@ public class EntityMetadataRewriter {
         }
 
         return true;
+    }
+
+    // Bedrock villager VARIANT (profession) -> Java profession registry id. Inverse of Geyser's
+    // VillagerEntity#VILLAGER_PROFESSIONS (Java->Bedrock). Index = Bedrock value, value = Java id.
+    private static final int[] BEDROCK_TO_JAVA_PROFESSION = {0, 5, 6, 12, 7, 9, 3, 4, 1, 14, 13, 2, 8, 10, 11};
+    // Bedrock villager MARK_VARIANT (region/biome) -> Java villager type registry id. Inverse of Geyser's
+    // VillagerEntity#VILLAGER_REGIONS.
+    private static final int[] BEDROCK_TO_JAVA_REGION = {2, 0, 1, 3, 4, 5, 6};
+
+    /**
+     * Combines the Bedrock villager fields VARIANT (profession), MARK_VARIANT (region/biome) and TRADE_TIER
+     * (trade level) into a single Java VILLAGER_DATA entry. Reads sibling fields from the entity's stored
+     * data so a change to any one of them rebuilds the complete value (Entity#updateEntityData stores the
+     * whole batch before translating, so the latest values are always visible here).
+     */
+    private static void applyVillagerData(final Entity entity, final List<EntityData> javaEntityData) {
+        final EntityData variantData = entity.entityData().get(ActorDataIDs.VARIANT);
+        final EntityData markVariantData = entity.entityData().get(ActorDataIDs.MARK_VARIANT);
+        final EntityData tradeTierData = entity.entityData().get(ActorDataIDs.TRADE_TIER);
+
+        final int bedrockProfession = variantData != null ? readNumber(variantData).intValue() : 0;
+        final int bedrockRegion = markVariantData != null ? readNumber(markVariantData).intValue() : 0;
+        final int bedrockTradeTier = tradeTierData != null ? readNumber(tradeTierData).intValue() : 0;
+
+        final int profession = bedrockProfession >= 0 && bedrockProfession < BEDROCK_TO_JAVA_PROFESSION.length
+                ? BEDROCK_TO_JAVA_PROFESSION[bedrockProfession] : 0;
+        final int type = bedrockRegion >= 0 && bedrockRegion < BEDROCK_TO_JAVA_REGION.length
+                ? BEDROCK_TO_JAVA_REGION[bedrockRegion] : 0;
+        final int level = bedrockTradeTier + 1; // Java trade levels are 1-based, Bedrock 0-based
+
+        final int index = entity.getJavaEntityDataIndex(EntityDataFields.VILLAGER_DATA);
+        // Idempotent: if several villager fields arrive in one batch, keep a single VILLAGER_DATA entry.
+        javaEntityData.removeIf(d -> d.id() == index);
+        javaEntityData.add(new EntityData(index, VersionedTypes.V26_1.entityDataTypes().villagerDataType, new VillagerData(type, profession, level)));
     }
 
     private static Number readNumber(EntityData data) {
