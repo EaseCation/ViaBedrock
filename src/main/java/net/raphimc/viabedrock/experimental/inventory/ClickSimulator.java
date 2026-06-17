@@ -203,47 +203,41 @@ public class ClickSimulator {
         final BedrockItem sourceItem = sourceRef.container().getItem(sourceRef.slot());
         if (sourceItem.isEmpty()) return Collections.emptyList();
 
-        // Determine target slot ranges based on source location
-        final List<int[]> targetRanges = getQuickMoveTargets(javaContainerId, javaSlot, tracker);
+        // Ordered list of target Java menu slots, in the exact order Java's ScreenHandler#insertItem visits them
+        final List<Integer> targetSlots = getQuickMoveTargetSlots(javaContainerId, javaSlot, tracker);
 
         int remaining = sourceItem.amount();
         final List<InventoryActionData> actions = new ArrayList<>();
 
         // Round 1: Fill existing stacks of same type
-        for (int[] range : targetRanges) {
+        for (int targetJavaSlot : targetSlots) {
             if (remaining <= 0) break;
-            for (int targetJavaSlot = range[0]; targetJavaSlot <= range[1]; targetJavaSlot++) {
-                if (remaining <= 0) break;
-                final BedrockSlotRef targetRef = SlotMapper.resolve(javaContainerId == 0 ? 0 : javaContainerId, targetJavaSlot, tracker);
-                if (targetRef == null) continue;
-                final BedrockItem targetItem = targetRef.container().getItem(targetRef.slot());
-                if (targetItem.isEmpty() || !canStack(targetItem, sourceItem)) continue;
-                if (targetItem.amount() >= MAX_STACK) continue;
+            final BedrockSlotRef targetRef = SlotMapper.resolve(javaContainerId, targetJavaSlot, tracker);
+            if (targetRef == null) continue;
+            final BedrockItem targetItem = targetRef.container().getItem(targetRef.slot());
+            if (targetItem.isEmpty() || !canStack(targetItem, sourceItem)) continue;
+            if (targetItem.amount() >= MAX_STACK) continue;
 
-                int addAmount = Math.min(remaining, MAX_STACK - targetItem.amount());
-                BedrockItem newTarget = targetItem.copy();
-                newTarget.setAmount(targetItem.amount() + addAmount);
-                actions.add(slotAction(targetRef, targetItem, newTarget));
-                remaining -= addAmount;
-            }
+            int addAmount = Math.min(remaining, MAX_STACK - targetItem.amount());
+            BedrockItem newTarget = targetItem.copy();
+            newTarget.setAmount(targetItem.amount() + addAmount);
+            actions.add(slotAction(targetRef, targetItem, newTarget));
+            remaining -= addAmount;
         }
 
         // Round 2: Fill empty slots
-        for (int[] range : targetRanges) {
+        for (int targetJavaSlot : targetSlots) {
             if (remaining <= 0) break;
-            for (int targetJavaSlot = range[0]; targetJavaSlot <= range[1]; targetJavaSlot++) {
-                if (remaining <= 0) break;
-                final BedrockSlotRef targetRef = SlotMapper.resolve(javaContainerId == 0 ? 0 : javaContainerId, targetJavaSlot, tracker);
-                if (targetRef == null) continue;
-                final BedrockItem targetItem = targetRef.container().getItem(targetRef.slot());
-                if (!targetItem.isEmpty()) continue;
+            final BedrockSlotRef targetRef = SlotMapper.resolve(javaContainerId, targetJavaSlot, tracker);
+            if (targetRef == null) continue;
+            final BedrockItem targetItem = targetRef.container().getItem(targetRef.slot());
+            if (!targetItem.isEmpty()) continue;
 
-                int addAmount = Math.min(remaining, MAX_STACK);
-                BedrockItem newTarget = sourceItem.copy();
-                newTarget.setAmount(addAmount);
-                actions.add(slotAction(targetRef, targetItem, newTarget));
-                remaining -= addAmount;
-            }
+            int addAmount = Math.min(remaining, MAX_STACK);
+            BedrockItem newTarget = sourceItem.copy();
+            newTarget.setAmount(addAmount);
+            actions.add(slotAction(targetRef, targetItem, newTarget));
+            remaining -= addAmount;
         }
 
         if (actions.isEmpty()) return Collections.emptyList();
@@ -256,21 +250,28 @@ public class ClickSimulator {
         return actions;
     }
 
-    private static List<int[]> getQuickMoveTargets(int javaContainerId, int javaSlot, InventoryTracker tracker) {
+    /**
+     * Returns the target Java menu slots for a shift-click, in the exact visiting order of the
+     * corresponding vanilla {@code ScreenHandler#quickMove}/{@code insertItem} call. Java replicates
+     * its own click locally, so matching this order avoids the client prediction being corrected.
+     * Slot layout (matches {@link SlotMapper}): container {@code [0,N)}, main inventory {@code [N,N+27)},
+     * hotbar {@code [N+27,N+36)}.
+     */
+    private static List<Integer> getQuickMoveTargetSlots(int javaContainerId, int javaSlot, InventoryTracker tracker) {
         if (javaContainerId != 0) {
             final Container currentContainer = tracker.getCurrentContainer();
 
             if (currentContainer instanceof CraftingTableContainer) {
                 // Crafting table: slot 0=output, 1-9=grid, 10-36=main inv, 37-45=hotbar
                 if (javaSlot >= 1 && javaSlot <= 9) {
-                    // Grid → main inventory + hotbar
-                    return List.of(new int[]{10, 36}, new int[]{37, 45});
+                    // Grid → main inventory then hotbar (insertItem(10, 46, false))
+                    return ascending(10, 45);
                 } else if (javaSlot >= 37) {
                     // Hotbar → main inventory
-                    return List.of(new int[]{10, 36});
+                    return ascending(10, 36);
                 } else if (javaSlot >= 10) {
                     // Main inventory → hotbar
-                    return List.of(new int[]{37, 45});
+                    return ascending(37, 45);
                 }
                 return Collections.emptyList();
             }
@@ -279,35 +280,52 @@ public class ClickSimulator {
             final int containerSize = currentContainer != null ? currentContainer.size() : 27;
 
             if (javaSlot < containerSize) {
-                // Source is in container → target is player inventory (9-35 then 0-8)
-                return List.of(new int[]{containerSize, containerSize + 26}, new int[]{containerSize + 27, containerSize + 35});
-            } else if (javaSlot >= containerSize + 27) {
-                // Source is in hotbar → target is container then main inventory
-                return List.of(new int[]{0, containerSize - 1}, new int[]{containerSize, containerSize + 26});
+                // Source is in container → player inventory, insertItem(N, N+36, reverse=true):
+                // highest menu slot first, i.e. hotbar (slot 8→0) then main inventory (slot 35→9)
+                return descending(containerSize, containerSize + 35);
             } else {
-                // Source is in main inventory → target is container then hotbar
-                return List.of(new int[]{0, containerSize - 1}, new int[]{containerSize + 27, containerSize + 35});
+                // Source is in player inventory → container only, insertItem(0, N, false).
+                // Vanilla has no player-area fallback: if the container is full the item stays put.
+                return ascending(0, containerSize - 1);
             }
         } else {
             // Player Inventory Window
             if (javaSlot >= 9 && javaSlot <= 35) {
-                // Main inventory → hotbar
-                return List.of(new int[]{36, 44});
+                // Main inventory → hotbar (insertItem(36, 45, false))
+                return ascending(36, 44);
             } else if (javaSlot >= 36 && javaSlot <= 44) {
-                // Hotbar → main inventory
-                return List.of(new int[]{9, 35});
+                // Hotbar → main inventory (insertItem(9, 36, false))
+                return ascending(9, 35);
             } else if (javaSlot >= 5 && javaSlot <= 8) {
-                // Armor → main inventory + hotbar
-                return List.of(new int[]{9, 35}, new int[]{36, 44});
+                // Armor → main inventory then hotbar (insertItem(9, 45, false))
+                return ascending(9, 44);
             } else if (javaSlot == 45) {
-                // Offhand → main inventory + hotbar
-                return List.of(new int[]{9, 35}, new int[]{36, 44});
+                // Offhand → main inventory then hotbar (insertItem(9, 45, false))
+                return ascending(9, 44);
             } else if (javaSlot >= 1 && javaSlot <= 4) {
-                // Crafting input → main inventory + hotbar
-                return List.of(new int[]{9, 35}, new int[]{36, 44});
+                // Crafting input → main inventory then hotbar (insertItem(9, 45, false))
+                return ascending(9, 44);
             }
             return Collections.emptyList();
         }
+    }
+
+    /** Inclusive slot range [from, to] in ascending order (vanilla insertItem with reverse=false). */
+    private static List<Integer> ascending(int from, int to) {
+        final List<Integer> slots = new ArrayList<>(Math.max(0, to - from + 1));
+        for (int slot = from; slot <= to; slot++) {
+            slots.add(slot);
+        }
+        return slots;
+    }
+
+    /** Inclusive slot range [from, to] in descending order (vanilla insertItem with reverse=true). */
+    private static List<Integer> descending(int from, int to) {
+        final List<Integer> slots = new ArrayList<>(Math.max(0, to - from + 1));
+        for (int slot = to; slot >= from; slot--) {
+            slots.add(slot);
+        }
+        return slots;
     }
 
     // --- SWAP (mode=2) ---
