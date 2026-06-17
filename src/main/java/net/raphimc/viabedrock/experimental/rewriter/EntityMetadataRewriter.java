@@ -83,6 +83,15 @@ public class EntityMetadataRewriter {
 
                 javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SHARED_FLAGS), VersionedTypes.V26_1.entityDataTypes().byteType, javaBitMask));
 
+                // Bedrock only exposes sneaking as an actor flag, but the Java client derives a player's
+                // *visual* crouch from the POSE entity data (Pose.CROUCHING), not the sharedflags sneaking
+                // bit (that bit only affects eye height / nameplate). Without setting POSE, remote Bedrock
+                // players never visually crouch on the Java side. Toggle the pose for players accordingly.
+                if (entity.javaType().is(EntityTypes1_21_11.PLAYER)) {
+                    final int javaPose = bedrockFlags.contains(ActorFlags.SNEAKING) ? 5 : 0; // Pose.CROUCHING : Pose.STANDING
+                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.POSE), VersionedTypes.V26_1.entityDataTypes().poseType, javaPose));
+                }
+
                 javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SILENT), VersionedTypes.V26_1.entityDataTypes().booleanType, bedrockFlags.contains(ActorFlags.SILENT)));
                 javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.NO_GRAVITY), VersionedTypes.V26_1.entityDataTypes().booleanType, !bedrockFlags.contains(ActorFlags.HAS_GRAVITY)));
 
