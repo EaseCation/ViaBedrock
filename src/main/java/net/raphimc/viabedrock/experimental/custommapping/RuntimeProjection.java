@@ -24,7 +24,7 @@ public record RuntimeProjection(
             builder.addBlockEntityType(type.bedrockIdentifier(), type.javaIdentifier(), blockEntityTypesAreFinalOutput ? type.targetJavaRawId() : type.sourceJavaRawId(), type.rule());
         }
         for (ProjectedBlockState state : this.blockStates) {
-            builder.addBlockState(state.runtimeId(), state.bedrockIdentifier(), blockStatesAreFinalOutput ? state.targetJavaRawId() : state.sourceJavaRawId(), state.fallbackSourceJavaRawId(), state.emit(), state.filter(), state.rule());
+            builder.addBlockState(state.runtimeId(), state.bedrockIdentifier(), blockStatesAreFinalOutput ? state.targetJavaRawId() : state.sourceJavaRawId(), state.fallbackSourceJavaRawId(), state.emit(), state.filter(), state.secondsToDestroy(), state.rule());
         }
         return builder.build();
     }
@@ -41,6 +41,7 @@ public record RuntimeProjection(
             int fallbackSourceJavaRawId,
             int emit,
             int filter,
+            float secondsToDestroy,
             CustomMappingAccess.BlockEntityRule rule) {
     }
 }

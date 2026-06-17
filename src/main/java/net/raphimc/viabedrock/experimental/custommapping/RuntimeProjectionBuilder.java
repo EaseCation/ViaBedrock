@@ -66,6 +66,7 @@ public final class RuntimeProjectionBuilder {
                 mapping.fallbackSourceJavaRawId(),
                 mapping.emit(),
                 mapping.filter(),
+                mapping.secondsToDestroy(),
                 mapping.rule()));
         return sourceJavaRawId;
     }

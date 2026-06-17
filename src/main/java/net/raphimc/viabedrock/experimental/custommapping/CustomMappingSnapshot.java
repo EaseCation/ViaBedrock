@@ -154,6 +154,7 @@ public record CustomMappingSnapshot(
             String fallbackJavaState,
             int emit,
             int filter,
+            float secondsToDestroy,
             CustomMappingAccess.BlockEntityRule blockEntityRule) {
     }
 
@@ -172,7 +173,10 @@ public record CustomMappingSnapshot(
             final int maxJavaBlockStateId) {
         final Reader r = new Reader(body, maxSnapshotBytes);
         final int schemaVersion = r.readNonNegativeVarInt("schema version");
-        if (schemaVersion != 2) throw new IllegalArgumentException("Unsupported BedrockLoader custom mapping schema " + schemaVersion + " (expected 2)");
+        // Schema 3 adds a per-block-state seconds_to_destroy float after the block entity rule (for instant-break
+        // detection). Schema 2 is still accepted for forward/backward compatibility during rollout; its block states
+        // are read without that field and default to NaN (treated as "unknown", i.e. not instant).
+        if (schemaVersion != 2 && schemaVersion != 3) throw new IllegalArgumentException("Unsupported BedrockLoader custom mapping schema " + schemaVersion + " (expected 2 or 3)");
         final int javaProtocolVersion = r.readNonNegativeVarInt("java protocol");
         final int flags = r.readNonNegativeVarInt("flags");
 
@@ -248,6 +252,7 @@ public record CustomMappingSnapshot(
             final int emit = r.readUnsignedByte();
             final int filter = r.readUnsignedByte();
             final CustomMappingAccess.BlockEntityRule rule = rule(r.readUnsignedByte());
+            final float secondsToDestroy = schemaVersion >= 3 ? r.readFloat() : Float.NaN;
             if (emit > 15 || filter > 15) throw new IllegalArgumentException("Invalid light semantics");
 
             if (targetJavaRawId > maxJavaBlockStateId) throw new IllegalArgumentException("Target Java raw id exceeds configured maximum");
@@ -260,7 +265,7 @@ public record CustomMappingSnapshot(
 
             final TypedBedrockState typedState = new TypedBedrockState(identifier, properties);
             if (!seenStates.add(typedState)) throw new IllegalArgumentException("Duplicate bedrock block state");
-            blockStates.add(new BlockStateEntry(typedState, targetJavaRawId, fallbackJavaState, emit, filter, rule));
+            blockStates.add(new BlockStateEntry(typedState, targetJavaRawId, fallbackJavaState, emit, filter, secondsToDestroy, rule));
         }
 
         final int blockEntityCount = r.readNonNegativeVarInt("custom block entity type count");
@@ -382,6 +387,11 @@ public record CustomMappingSnapshot(
 
         int readUnsignedByte() {
             return this.buf.readUnsignedByte();
+        }
+
+        float readFloat() {
+            if (this.buf.readableBytes() < 4) throw new IllegalArgumentException("Truncated float");
+            return this.buf.readFloat();
         }
 
         boolean readBool() {

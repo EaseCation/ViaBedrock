@@ -74,7 +74,7 @@ public final class SnapshotProfile {
                 rule = CustomMappingAccess.BlockEntityRule.DROP;
             }
 
-            states.put(state.bedrockState(), new BlockStateMapping(state.targetJavaRawId(), fallbackSourceJavaRawId, emit, filter, rule));
+            states.put(state.bedrockState(), new BlockStateMapping(state.targetJavaRawId(), fallbackSourceJavaRawId, emit, filter, state.secondsToDestroy(), rule));
         }
 
         if (!diagnostics.isEmpty()) {
@@ -123,7 +123,7 @@ public final class SnapshotProfile {
         return this.cacheKey;
     }
 
-    public record BlockStateMapping(int targetJavaRawId, int fallbackSourceJavaRawId, int emit, int filter, CustomMappingAccess.BlockEntityRule rule) {
+    public record BlockStateMapping(int targetJavaRawId, int fallbackSourceJavaRawId, int emit, int filter, float secondsToDestroy, CustomMappingAccess.BlockEntityRule rule) {
     }
 
     public record BlockEntityTypeMapping(String bedrockIdentifier, String javaIdentifier, int sourceJavaRawId, int targetJavaRawId, CustomMappingAccess.BlockEntityRule rule) {

@@ -32,6 +32,7 @@ public final class CustomMappingAccess {
     private final Int2IntMap javaToFallback;
     private final Int2IntMap javaEmit;
     private final Int2IntMap javaFilter;
+    private final Int2ObjectMap<Float> javaSecondsToDestroy;
     private final Int2ObjectMap<BlockEntityRule> runtimeBlockEntityRules;
     private final Int2ObjectMap<String> runtimeIdentifiers;
     private final IntSet allowedJavaBlockStates;
@@ -50,6 +51,7 @@ public final class CustomMappingAccess {
         this.javaToFallback = builder.javaToFallback;
         this.javaEmit = builder.javaEmit;
         this.javaFilter = builder.javaFilter;
+        this.javaSecondsToDestroy = builder.javaSecondsToDestroy;
         this.runtimeBlockEntityRules = builder.runtimeBlockEntityRules;
         this.runtimeIdentifiers = builder.runtimeIdentifiers;
         this.allowedJavaBlockStates = builder.allowedJavaBlockStates;
@@ -191,6 +193,15 @@ public final class CustomMappingAccess {
         return BedrockProtocol.MAPPINGS.getFilterLight(this.vanillaFallbackJavaBlockState(javaBlockStateId, "light filter"));
     }
 
+    /**
+     * @return the custom block's {@code seconds_to_destroy} (synced from BedrockLoader), or {@link Float#NaN}
+     * if the Java block state is not a known custom block. {@code 0.0F} means the block breaks instantly.
+     */
+    public float secondsToDestroy(final int javaBlockStateId) {
+        final Float seconds = this.javaSecondsToDestroy.get(javaBlockStateId);
+        return seconds != null ? seconds : Float.NaN;
+    }
+
     public int maxJavaBlockStateId() {
         return this.maxJavaBlockStateId;
     }
@@ -239,6 +250,7 @@ public final class CustomMappingAccess {
         private final Int2IntOpenHashMap javaToFallback = new Int2IntOpenHashMap();
         private final Int2IntOpenHashMap javaEmit = new Int2IntOpenHashMap();
         private final Int2IntOpenHashMap javaFilter = new Int2IntOpenHashMap();
+        private final Int2ObjectOpenHashMap<Float> javaSecondsToDestroy = new Int2ObjectOpenHashMap<>();
         private final Int2ObjectOpenHashMap<BlockEntityRule> runtimeBlockEntityRules = new Int2ObjectOpenHashMap<>();
         private final Int2ObjectOpenHashMap<String> runtimeIdentifiers = new Int2ObjectOpenHashMap<>();
         private final IntOpenHashSet allowedJavaBlockStates = new IntOpenHashSet();
@@ -256,12 +268,13 @@ public final class CustomMappingAccess {
             this.javaFilter.defaultReturnValue(-1);
         }
 
-        public void addBlockState(final int runtimeId, final String bedrockIdentifier, final int sourceJavaRawId, final int fallbackSourceJavaRawId, final int emit, final int filter, final BlockEntityRule rule) {
+        public void addBlockState(final int runtimeId, final String bedrockIdentifier, final int sourceJavaRawId, final int fallbackSourceJavaRawId, final int emit, final int filter, final float secondsToDestroy, final BlockEntityRule rule) {
             this.runtimeToJava.put(runtimeId, sourceJavaRawId);
             this.runtimeToFallback.put(runtimeId, fallbackSourceJavaRawId);
             this.javaToFallback.put(sourceJavaRawId, fallbackSourceJavaRawId);
             this.javaEmit.put(sourceJavaRawId, emit);
             this.javaFilter.put(sourceJavaRawId, filter);
+            this.javaSecondsToDestroy.put(sourceJavaRawId, Float.valueOf(secondsToDestroy));
             this.allowedJavaBlockStates.add(sourceJavaRawId);
             this.runtimeBlockEntityRules.put(runtimeId, rule);
             this.runtimeIdentifiers.put(runtimeId, bedrockIdentifier);
