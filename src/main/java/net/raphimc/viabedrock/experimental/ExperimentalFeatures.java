@@ -17,6 +17,7 @@
  */
 package net.raphimc.viabedrock.experimental;
 
+import com.viaversion.viaversion.api.Via;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.minecraft.BlockFace;
 import com.viaversion.viaversion.api.minecraft.BlockPosition;
@@ -54,6 +55,8 @@ import net.raphimc.viabedrock.experimental.rewriter.InventoryTransactionRewriter
 import net.raphimc.viabedrock.experimental.storage.BlockPlacementAckTracker;
 import net.raphimc.viabedrock.experimental.storage.MapTracker;
 import net.raphimc.viabedrock.experimental.storage.MultilineNametagTracker;
+import net.raphimc.viabedrock.experimental.storage.ScriptDebugTextTracker;
+import net.raphimc.viabedrock.experimental.task.ScriptDebugTextTickTask;
 import net.raphimc.viabedrock.experimental.util.JavaMapPaletteUtil;
 import net.raphimc.viabedrock.experimental.util.ProtocolUtil;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
@@ -421,6 +424,7 @@ public class ExperimentalFeatures {
         }
 
         MultilineNametagTracker.registerHandlers(protocol);
+        ScriptDebugTextTracker.registerHandlers(protocol);
 
         ProtocolUtil.prependServerbound(protocol, ServerboundPackets26_1.PLAYER_ACTION, wrapper -> {
             final InventoryTransactionRewriter inventoryTransactionRewriter = wrapper.user().get(InventoryTransactionRewriter.class);
@@ -972,12 +976,14 @@ public class ExperimentalFeatures {
     }
 
     public static void registerTasks() {
+        Via.getPlatform().runRepeatingSync(new ScriptDebugTextTickTask(), 1L);
     }
 
     public static void registerStorages(final UserConnection user) {
         user.put(new InventoryTransactionRewriter(user));
         user.put(new MapTracker(user));
         user.put(new MultilineNametagTracker(user));
+        user.put(new ScriptDebugTextTracker(user));
         user.put(new BlockPlacementAckTracker(user));
 
         // Dispatch to feature modules
