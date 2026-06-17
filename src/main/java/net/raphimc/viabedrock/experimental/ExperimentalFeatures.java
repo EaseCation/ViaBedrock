@@ -28,6 +28,7 @@ import com.viaversion.viaversion.libs.fastutil.longs.LongList;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ServerboundPackets26_1;
 import net.raphimc.viabedrock.ViaBedrock;
+import net.raphimc.viabedrock.api.model.BlockState;
 import net.raphimc.viabedrock.api.model.container.Container;
 import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
 import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
@@ -72,6 +73,7 @@ import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.PlayerActionAction;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
 import net.raphimc.viabedrock.protocol.model.Position3f;
+import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
@@ -326,6 +328,222 @@ public class ExperimentalFeatures {
                         ItemUseInventoryTransaction_PredictedResult.Success,
                         DEFAULT_COOLDOWN_STATE
                 )
+        );
+    }
+
+    // --- Empty bucket / glass bottle fluid interaction (Java USE_ITEM -> Bedrock CLICK_BLOCK) ---
+
+    private static final String EMPTY_BUCKET_IDENTIFIER = "minecraft:bucket";
+    private static final String GLASS_BOTTLE_IDENTIFIER = "minecraft:glass_bottle";
+    private static final double FLUID_REACH_SURVIVAL = 4.5D;
+    private static final double FLUID_REACH_CREATIVE = 5.0D;
+
+    private enum Fluid {
+        WATER,
+        LAVA
+    }
+
+    private record FluidHitResult(BlockPosition pos, int faceInt, BlockFace face, Position3f clickPosition) {
+    }
+
+    /**
+     * Java sends a plain USE_ITEM (click air) when an empty bucket / glass bottle is used on a fluid: the
+     * crosshair ray misses non-pickable fluids, so the client falls back to {@code BucketItem#use}, which
+     * does its own SOURCE_ONLY fluid ray trace server-side. A Bedrock server (client authoritative) instead
+     * expects the client to resolve the targeted fluid source and send a CLICK_BLOCK ItemUseTransaction.
+     * Returns the set of fluids the held item can pick up, or {@code null} if it is not such an item.
+     */
+    private static Set<Fluid> fluidInteractionItem(final ItemRewriter itemRewriter, final BedrockItem item) {
+        final String identifier = itemRewriter.bedrockIdentifier(item);
+        if (EMPTY_BUCKET_IDENTIFIER.equals(identifier)) {
+            return Set.of(Fluid.WATER, Fluid.LAVA);
+        }
+        if (GLASS_BOTTLE_IDENTIFIER.equals(identifier)) {
+            return Set.of(Fluid.WATER);
+        }
+        return null;
+    }
+
+    private static boolean isLiquidSource(final BlockStateRewriter blockStateRewriter, final int bedrockBlockStateId, final Set<Fluid> accepted) {
+        final BlockState state = blockStateRewriter.blockState(bedrockBlockStateId);
+        if (state == null) {
+            return false;
+        }
+        final String identifier = state.identifier();
+        // Bedrock represents both still and flowing liquids with a liquid_depth property; depth 0 is the full
+        // "source" level. Pooled liquids on servers are frequently flowing_water/flowing_lava even at depth 0,
+        // and Nukkit's ItemBucket fills any block where isLava()/isWaterSource() && isLiquidSource() (== depth 0),
+        // so we must accept the flowing_* identifiers too (not just water/lava).
+        final boolean isWater = "water".equals(identifier) || "flowing_water".equals(identifier);
+        final boolean isLava = "lava".equals(identifier) || "flowing_lava".equals(identifier);
+        final boolean matches = (isWater && accepted.contains(Fluid.WATER))
+                || (isLava && accepted.contains(Fluid.LAVA));
+        if (!matches) {
+            return false;
+        }
+        final String liquidDepth = state.properties().get("liquid_depth");
+        return liquidDepth == null || "0".equals(liquidDepth); // depth 0 = full source block, matching Java SOURCE_ONLY and Nukkit getDamage()==0
+    }
+
+    /**
+     * Voxel ray trace (Amanatides &amp; Woo) from the player's eye along their look direction, returning the
+     * first accepted fluid source block within reach, or {@code null} if none is hit.
+     */
+    private static FluidHitResult raytraceFluidSource(final UserConnection user, final ClientPlayerEntity clientPlayer, final float yaw, final float pitch, final Set<Fluid> accepted) {
+        final ChunkTracker chunkTracker = user.get(ChunkTracker.class);
+        final BlockStateRewriter blockStateRewriter = user.get(BlockStateRewriter.class);
+
+        // NOTE: ClientPlayerEntity.position() already stores the EYE position (feet y + eyeOffset), so we must
+        // NOT add eyeOffset again here.
+        final Position3f eye = clientPlayer.position();
+        final double yawRad = Math.toRadians(yaw);
+        final double pitchRad = Math.toRadians(pitch);
+        final double dx = -Math.sin(yawRad) * Math.cos(pitchRad);
+        final double dy = -Math.sin(pitchRad);
+        final double dz = Math.cos(yawRad) * Math.cos(pitchRad);
+        final double reach = clientPlayer.javaGameMode() == GameMode.CREATIVE ? FLUID_REACH_CREATIVE : FLUID_REACH_SURVIVAL;
+
+        final double ox = eye.x();
+        final double oy = eye.y();
+        final double oz = eye.z();
+
+        int bx = (int) Math.floor(ox);
+        int by = (int) Math.floor(oy);
+        int bz = (int) Math.floor(oz);
+
+        final int stepX = dx > 0 ? 1 : (dx < 0 ? -1 : 0);
+        final int stepY = dy > 0 ? 1 : (dy < 0 ? -1 : 0);
+        final int stepZ = dz > 0 ? 1 : (dz < 0 ? -1 : 0);
+
+        final double tDeltaX = dx != 0 ? Math.abs(1.0 / dx) : Double.MAX_VALUE;
+        final double tDeltaY = dy != 0 ? Math.abs(1.0 / dy) : Double.MAX_VALUE;
+        final double tDeltaZ = dz != 0 ? Math.abs(1.0 / dz) : Double.MAX_VALUE;
+
+        double tMaxX = dx != 0 ? ((dx > 0 ? bx + 1 : bx) - ox) / dx : Double.MAX_VALUE;
+        double tMaxY = dy != 0 ? ((dy > 0 ? by + 1 : by) - oy) / dy : Double.MAX_VALUE;
+        double tMaxZ = dz != 0 ? ((dz > 0 ? bz + 1 : bz) - oz) / dz : Double.MAX_VALUE;
+
+        int crossedAxis = -1; // 0=x, 1=y, 2=z, -1 = origin block (eye already inside it)
+        int crossedStep = 0;
+        double entryT = 0.0;
+
+        for (int i = 0; i < 256; i++) {
+            final BlockPosition pos = new BlockPosition(bx, by, bz);
+            if (isLiquidSource(blockStateRewriter, chunkTracker.getBlockState(pos), accepted)) {
+                final Direction direction = switch (crossedAxis) {
+                    case 0 -> crossedStep > 0 ? Direction.WEST : Direction.EAST;
+                    case 1 -> crossedStep > 0 ? Direction.DOWN : Direction.UP;
+                    case 2 -> crossedStep > 0 ? Direction.NORTH : Direction.SOUTH;
+                    default -> Direction.UP; // eye inside the source; face is only cosmetic for the fill
+                };
+                final Position3f clickPosition = new Position3f(
+                        clamp01((float) (ox + dx * entryT - bx)),
+                        clamp01((float) (oy + dy * entryT - by)),
+                        clamp01((float) (oz + dz * entryT - bz))
+                );
+                return new FluidHitResult(pos, direction.verticalId(), direction.blockFace(), clickPosition);
+            }
+
+            if (tMaxX <= tMaxY && tMaxX <= tMaxZ) {
+                if (tMaxX > reach) break;
+                entryT = tMaxX;
+                bx += stepX;
+                tMaxX += tDeltaX;
+                crossedAxis = 0;
+                crossedStep = stepX;
+            } else if (tMaxY <= tMaxZ) {
+                if (tMaxY > reach) break;
+                entryT = tMaxY;
+                by += stepY;
+                tMaxY += tDeltaY;
+                crossedAxis = 1;
+                crossedStep = stepY;
+            } else {
+                if (tMaxZ > reach) break;
+                entryT = tMaxZ;
+                bz += stepZ;
+                tMaxZ += tDeltaZ;
+                crossedAxis = 2;
+                crossedStep = stepZ;
+            }
+        }
+        return null;
+    }
+
+    private static float clamp01(final float value) {
+        if (value < 0F) return 0F;
+        if (value > 1F) return 1F;
+        return value;
+    }
+
+    /**
+     * Builds and sends the CLICK_BLOCK ItemUseTransaction (preceded/followed by Start/StopItemUseOn) that a
+     * Bedrock client emits when interacting with a block. Shared by the USE_ITEM_ON handler and the empty
+     * bucket / glass bottle fluid branch of USE_ITEM.
+     */
+    private static void sendItemUseOnBlock(final UserConnection user, final ClientPlayerEntity clientPlayer, final InventoryContainer inventoryContainer, final InventoryTransactionRewriter inventoryTransactionRewriter, final ChunkTracker chunkTracker, final BlockPosition position, final int faceInt, final BlockFace face, final Position3f clickPosition, final boolean insideBlock, final int sequence) {
+        final BlockPosition expectedPos = insideBlock ? position : position.getRelative(face);
+        user.get(BlockPlacementAckTracker.class).addPendingAck(expectedPos, sequence);
+
+        // The bedrock client will send a start item use on action to the server first.
+        ExperimentalPacketFactory.sendBedrockPlayerAction(
+                user,
+                clientPlayer.runtimeId(),
+                PlayerActionType.StartItemUseOn,
+                position,
+                insideBlock ? position : position.getRelative(face),
+                faceInt
+        );
+
+        // This is the main packet that the bedrock client use to interact with block.
+        final PacketWrapper transactionPacket = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, user);
+
+        BedrockItem predictedToItem = inventoryContainer.getSelectedHotbarItem().copy();
+        // This is not entirely correct, but at least it's more accurate than not sending actions or sending the original item data.
+        if (predictedToItem.blockRuntimeId() != 0 && clientPlayer.javaGameMode() != GameMode.CREATIVE) {
+            predictedToItem.setAmount(predictedToItem.amount() - 1);
+        }
+        if (predictedToItem.amount() <= 0) {
+            predictedToItem = BedrockItem.empty();
+        }
+
+        final BedrockInventoryTransaction inventoryTransaction = new BedrockInventoryTransaction(
+                0, // legacy request id
+                null,
+                List.of(
+                        new InventoryActionData(
+                                new InventorySource(InventorySourceType.ContainerInventory, ContainerID.CONTAINER_ID_INVENTORY.getValue(), InventorySource_InventorySourceFlags.NoFlag),
+                                inventoryContainer.getSelectedHotbarSlot(),
+                                inventoryContainer.getSelectedHotbarItem(),
+                                predictedToItem
+                        )
+                ),
+                ComplexInventoryTransaction_Type.ItemUseTransaction,
+                new InventoryTransactionData.UseItemTransactionData(
+                        ItemUseInventoryTransaction_ActionType.Place,
+                        ItemUseInventoryTransaction_TriggerType.PlayerInput,
+                        position,
+                        faceInt,
+                        inventoryContainer.getSelectedHotbarSlot(),
+                        inventoryContainer.getSelectedHotbarItem(),
+                        clientPlayer.position(),
+                        clickPosition,
+                        chunkTracker.getBlockState(position),
+                        ItemUseInventoryTransaction_PredictedResult.Success,
+                        (byte) 0 // TODO: client cooldown state
+                )
+        );
+        transactionPacket.write(inventoryTransactionRewriter.getInventoryTransactionType(), inventoryTransaction);
+        transactionPacket.sendToServer(BedrockProtocol.class);
+
+        // Bedrock sends a stop item use on after the transaction packet
+        ExperimentalPacketFactory.sendBedrockPlayerAction(
+                user,
+                clientPlayer.runtimeId(),
+                PlayerActionType.StopItemUseOn,
+                position,
+                new BlockPosition(0, 0, 0),
+                0
         );
     }
 
@@ -589,8 +807,8 @@ public class ExperimentalFeatures {
 
             final int hand = wrapper.read(Types.VAR_INT); // hand
             final int sequence = wrapper.read(Types.VAR_INT); // sequence
-            wrapper.read(Types.FLOAT); // yaw
-            wrapper.read(Types.FLOAT); // pitch
+            final float yaw = wrapper.read(Types.FLOAT); // yaw
+            final float pitch = wrapper.read(Types.FLOAT); // pitch
 
             // Bedrock can't hold the majority of item in offhand and can't use any either.
             // TODO: We need to handle cases where the item changes, or it affect player movement (eg: eating/blocking/etc)
@@ -619,6 +837,23 @@ public class ExperimentalFeatures {
                     PacketFactory.sendJavaBlockChangedAck(wrapper.user(), sequence);
                 }
                 return;
+            }
+
+            // Empty bucket / glass bottle on a fluid: Java sends a plain USE_ITEM (click air) and relies on a
+            // server-side SOURCE_ONLY ray trace, which a client authoritative Bedrock server (e.g. Nukkit's
+            // ItemBucket/ItemGlassBottle, which only implement onActivate) never performs. Resolve the targeted
+            // fluid source here and translate to a CLICK_BLOCK ItemUseTransaction like a real Bedrock client.
+            final Set<Fluid> acceptedFluids = fluidInteractionItem(itemRewriter, selectedItem);
+            if (acceptedFluids != null) {
+                final FluidHitResult hit = raytraceFluidSource(wrapper.user(), clientPlayer, yaw, pitch, acceptedFluids);
+                if (hit != null) {
+                    wrapper.cancel();
+                    // insideBlock=true so the deferred ack is keyed on the fluid block itself (water/lava -> air),
+                    // which is exactly where the server's block update lands when the fluid is picked up.
+                    sendItemUseOnBlock(wrapper.user(), clientPlayer, inventoryContainer, inventoryTransactionRewriter, wrapper.user().get(ChunkTracker.class), hit.pos(), hit.faceInt(), hit.face(), hit.clickPosition(), true, sequence);
+                    return;
+                }
+                // No fluid source hit: fall through to the normal click-air use (Java would also no-op here).
             }
 
             if (isChargedCrossbow(itemRewriter, selectedItem)) {
@@ -689,70 +924,7 @@ public class ExperimentalFeatures {
                 return;
             }
 
-            final BlockPosition expectedPos = insideBlock ? position : position.getRelative(face);
-            wrapper.user().get(BlockPlacementAckTracker.class).addPendingAck(expectedPos, sequence);
-
-            // The bedrock client will send a start item use on action to the server first.
-            ExperimentalPacketFactory.sendBedrockPlayerAction(
-                    wrapper.user(),
-                    clientPlayer.runtimeId(),
-                    PlayerActionType.StartItemUseOn,
-                    position,
-                    insideBlock ? position : position.getRelative(face),
-                    faceInt
-            );
-
-            // This is the main packet that the bedrock client use to interact with block.The rest of the
-            final PacketWrapper transactionPacket = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, wrapper.user());
-
-            BedrockItem predictedToItem = inventoryContainer.getSelectedHotbarItem().copy();
-            // This is not entirely correct, but at least it's more accurate than not sending actions or sending the original item data.
-            if (predictedToItem.blockRuntimeId() != 0 && clientPlayer.javaGameMode() != GameMode.CREATIVE) {
-                predictedToItem.setAmount(predictedToItem.amount() - 1);
-            }
-            if (predictedToItem.amount() <= 0) {
-                predictedToItem = BedrockItem.empty();
-            }
-
-            BedrockInventoryTransaction inventoryTransaction = new BedrockInventoryTransaction(
-                    0, // legacy request id
-                    null,
-                    List.of(
-                            new InventoryActionData(
-                                    new InventorySource(InventorySourceType.ContainerInventory, ContainerID.CONTAINER_ID_INVENTORY.getValue(), InventorySource_InventorySourceFlags.NoFlag),
-                                    inventoryContainer.getSelectedHotbarSlot(),
-                                    inventoryContainer.getSelectedHotbarItem(),
-                                    predictedToItem
-                            )
-                    ),
-                    ComplexInventoryTransaction_Type.ItemUseTransaction,
-                    new InventoryTransactionData.UseItemTransactionData(
-                            ItemUseInventoryTransaction_ActionType.Place,
-                            ItemUseInventoryTransaction_TriggerType.PlayerInput,
-                            position,
-                            faceInt,
-                            inventoryContainer.getSelectedHotbarSlot(),
-                            inventoryContainer.getSelectedHotbarItem(),
-                            clientPlayer.position(),
-                            clickPosition,
-                            chunkTracker.getBlockState(position),
-                            ItemUseInventoryTransaction_PredictedResult.Success,
-                            (byte) 0 // TODO: client cooldown state
-                    )
-            );
-            transactionPacket.write(inventoryTransactionRewriter.getInventoryTransactionType(), inventoryTransaction);
-
-            transactionPacket.sendToServer(BedrockProtocol.class);
-
-            // Bedrock sends a stop item use on after the transaction packet
-            ExperimentalPacketFactory.sendBedrockPlayerAction(
-                    wrapper.user(),
-                    clientPlayer.runtimeId(),
-                    PlayerActionType.StopItemUseOn,
-                    position,
-                    new BlockPosition(0, 0, 0),
-                    0
-            );
+            sendItemUseOnBlock(wrapper.user(), clientPlayer, inventoryContainer, inventoryTransactionRewriter, chunkTracker, position, faceInt, face, clickPosition, insideBlock, sequence);
         });
         protocol.registerClientbound(ClientboundBedrockPackets.INVENTORY_TRANSACTION, null, wrapper -> {
             final InventoryTransactionRewriter inventoryTransactionRewriter = wrapper.user().get(InventoryTransactionRewriter.class);
