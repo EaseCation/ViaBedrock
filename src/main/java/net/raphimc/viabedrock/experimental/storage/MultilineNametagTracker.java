@@ -198,10 +198,9 @@ public class MultilineNametagTracker extends StoredObject {
 
         String name = getEntityName(entity);
         if (name != null) {
-            // Strip trailing newlines to avoid empty bottom line
-            while (name.endsWith("\n")) {
-                name = name.substring(0, name.length() - 1);
-            }
+            // Trim leading and trailing blank lines (incl. formatting-only lines) so the floating
+            // display has no empty top/bottom rows. Interior lines are kept for genuine multiline names.
+            name = TextUtil.trimBlankLines(name);
             if (name.isEmpty()) name = null;
         }
         final boolean isMultiline = isMultilineName(name);

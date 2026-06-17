@@ -694,7 +694,10 @@ public class EntityMetadataRewriter {
                 }
             }
             case NAME, NAME_RAW_TEXT -> {
-                String name = (String) entityData.getValue();
+                // Trim blank lines so a single-line CUSTOM_NAME never carries leading/trailing newlines
+                // (rendered as missing-glyph boxes). For multiline always-show entities the multiline
+                // tracker spawns a TEXT_DISPLAY and filters this CUSTOM_NAME out of the packet.
+                String name = TextUtil.trimBlankLines((String) entityData.getValue());
                 if (name != null && !TextUtil.stripFormatting(name).isEmpty()) {
                     Tag nbtName = TextUtil.stringToNbt(name);
                     javaEntityData.add(new EntityData(

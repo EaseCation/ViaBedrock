@@ -30,6 +30,7 @@ import com.viaversion.viaversion.libs.mcstructs.text.utils.TextUtils;
 import net.lenni0451.mcstructs_bedrock.text.BedrockTextFormatting;
 import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 
+import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
@@ -73,6 +74,26 @@ public class TextUtil {
 
     public static Tag stringToNbt(final String text) {
         return textComponentToNbt(stringToTextComponent(text));
+    }
+
+    /**
+     * Trims leading and trailing blank lines from a (potentially multiline) nametag string.
+     * A line is considered blank when it contains no visible content after formatting codes are
+     * stripped ({@link #stripFormatting(String)} yields an empty string). Interior lines (including
+     * interior blank lines) are preserved so genuine multiline layouts keep their spacing.
+     *
+     * @return the trimmed string (may still be multiline), {@code ""} if every line is blank, or the
+     * input unchanged when it is {@code null} or contains no newline.
+     */
+    public static String trimBlankLines(final String text) {
+        if (text == null || text.indexOf('\n') < 0) return text;
+        final String[] lines = text.split("\n", -1); // keep trailing empty segments
+        int start = 0;
+        int end = lines.length;
+        while (start < end && stripFormatting(lines[start]).isEmpty()) start++;
+        while (end > start && stripFormatting(lines[end - 1]).isEmpty()) end--;
+        if (start >= end) return "";
+        return String.join("\n", Arrays.copyOfRange(lines, start, end));
     }
 
     public static String stripFormatting(final String text) {
