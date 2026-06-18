@@ -193,7 +193,14 @@ public class OtherPlayerPackets {
             wrapper.read(BedrockTypes.STRING); // old skin name
             wrapper.read(Types.BOOLEAN); // trusted skin
 
-            Via.getManager().getProviders().get(SkinProvider.class).setSkin(wrapper.user(), uuid, skin);
+            // Mirror the PLAYER_LIST remap: the local player's Bedrock UUID differs from its javaUuid, so a
+            // runtime skin update addressed by the Bedrock UUID must be remapped to javaUuid. Otherwise the
+            // mod keys the skin by javaUuid and the local player's own skin change would never be applied.
+            final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
+            final UUID targetUuid = (clientPlayer != null && uuid.equals(clientPlayer.bedrockUuid()))
+                    ? clientPlayer.javaUuid() : uuid;
+
+            Via.getManager().getProviders().get(SkinProvider.class).setSkin(wrapper.user(), targetUuid, skin);
         });
         protocol.registerClientbound(ClientboundBedrockPackets.UPDATE_ABILITIES, ClientboundPackets26_1.PLAYER_ABILITIES, wrapper -> {
             final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);

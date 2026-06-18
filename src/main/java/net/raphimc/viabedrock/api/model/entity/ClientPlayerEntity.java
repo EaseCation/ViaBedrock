@@ -84,6 +84,11 @@ public class ClientPlayerEntity extends PlayerEntity {
     private int usingItemStartAge = -1;
     private boolean crossbowChargeFinishSent;
 
+    // The UUID the Bedrock server assigned to the local player in the player list. It differs from
+    // javaUuid (see HudPackets PLAYER_LIST remap), and is the UUID the server uses to address the
+    // local player in PLAYER_SKIN. Captured in HudPackets so PLAYER_SKIN can remap it to javaUuid.
+    private UUID bedrockUuid;
+
     public ClientPlayerEntity(final UserConnection user, final long runtimeId, final UUID javaUuid, final PlayerAbilities abilities) {
         super(user, runtimeId, 0, javaUuid, abilities);
         this.attributes.put("minecraft:movement", new EntityAttribute("minecraft:movement", 0.7F, 0F, Float.MAX_VALUE));
@@ -102,6 +107,14 @@ public class ClientPlayerEntity extends PlayerEntity {
         this.prevPosition = this.position;
         this.prevOnGround = this.onGround;
         this.prevInputFlags = this.inputFlags;
+    }
+
+    public UUID bedrockUuid() {
+        return this.bedrockUuid;
+    }
+
+    public void setBedrockUuid(final UUID bedrockUuid) {
+        this.bedrockUuid = bedrockUuid;
     }
 
     public void sendPlayerPositionPacketToClient(final Set<Relative> relatives) {

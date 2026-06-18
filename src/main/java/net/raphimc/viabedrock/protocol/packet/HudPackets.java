@@ -81,6 +81,9 @@ public class HudPackets {
                         // Remap local player UUID: Bedrock server assigns a different UUID than the Java UUID generated during login
                         if (entityTracker.getClientPlayer() != null
                                 && entityTracker.getClientPlayer().uniqueId() == entityUniqueIds[i]) {
+                            // Capture the server-assigned UUID before overwriting it, so the PLAYER_SKIN handler
+                            // (which only has the UUID, not the entityUniqueId) can recognise the local player.
+                            entityTracker.getClientPlayer().setBedrockUuid(uuids[i]);
                             uuids[i] = entityTracker.getClientPlayer().javaUuid();
                         }
 
