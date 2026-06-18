@@ -30,10 +30,12 @@ import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import com.viaversion.viaversion.util.Key;
 import net.raphimc.viabedrock.ViaBedrock;
+import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
 import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
 import net.raphimc.viabedrock.api.model.entity.CustomEntity;
 import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.api.model.entity.LivingEntity;
+import net.raphimc.viabedrock.api.model.entity.PlayerEntity;
 import net.raphimc.viabedrock.api.resourcepack.definition.EntityDefinitions;
 import net.raphimc.viabedrock.api.util.MathUtil;
 import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
@@ -51,6 +53,7 @@ import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
 import net.raphimc.viabedrock.protocol.data.generated.java.RegistryKeys;
 import net.raphimc.viabedrock.protocol.model.*;
 import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
+import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
@@ -584,6 +587,36 @@ public class EntityPackets {
                 case MagicCriticalHit -> AnimateAction.MAGIC_CRITICAL_HIT;
                 default -> throw new IllegalStateException("Unhandled AnimatePacket_Action: " + action);
             }).ordinal()); // action
+        });
+        protocol.registerClientbound(ClientboundBedrockPackets.ANIMATE_ENTITY, null, wrapper -> {
+            // Java has no MoLang animation system; a server-triggered named animation only makes sense for entities
+            // rendered by the ViaBedrockUtility mod: custom entities, and humanoids on the player render path (real
+            // players and player-type NPCs such as leaderboard NPCs). Read the packet, then forward
+            // "entity uuid + animation name" to the mod so it can play the animation.
+            final String animation = wrapper.read(BedrockTypes.STRING); // animation
+            wrapper.read(BedrockTypes.STRING); // next state
+            wrapper.read(BedrockTypes.STRING); // stop expression
+            wrapper.read(Types.INT); // stop expression version (big-endian int)
+            wrapper.read(BedrockTypes.STRING); // controller
+            wrapper.read(BedrockTypes.FLOAT_LE); // blend out time
+            final int count = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // runtime entity id count
+            final long[] runtimeIds = new long[count];
+            for (int i = 0; i < count; i++) {
+                runtimeIds[i] = wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // runtime entity id
+            }
+            wrapper.cancel();
+
+            final ChannelStorage channelStorage = wrapper.user().get(ChannelStorage.class);
+            if (channelStorage == null || !channelStorage.hasChannel(ViaBedrockUtilityInterface.CONFIRM_CHANNEL)) {
+                return; // No ViaBedrockUtility mod: nothing can render the animation on this path
+            }
+            final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
+            for (final long runtimeId : runtimeIds) {
+                final Entity entity = entityTracker.getEntityByRid(runtimeId);
+                if (entity instanceof CustomEntity || entity instanceof PlayerEntity) {
+                    ViaBedrockUtilityInterface.sendAnimateEntity(wrapper.user(), entity.javaUuid(), animation);
+                }
+            }
         });
         protocol.registerClientbound(ClientboundBedrockPackets.MOB_ARMOR_EQUIPMENT, ClientboundPackets26_1.SET_EQUIPMENT, wrapper -> {
             final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);

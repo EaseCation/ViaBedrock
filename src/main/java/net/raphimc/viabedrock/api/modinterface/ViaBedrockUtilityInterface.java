@@ -223,4 +223,13 @@ public class ViaBedrockUtilityInterface {
         }
         pluginMessage.scheduleSend(BedrockProtocol.class);
     }
+
+    public static void sendAnimateEntity(final UserConnection user, final UUID uuid, final String animationName) {
+        final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets26_1.CUSTOM_PAYLOAD, user);
+        pluginMessage.write(Types.STRING, CHANNEL); // Channel
+        pluginMessage.write(Types.INT, PayloadType.ANIMATE.ordinal()); // Type
+        pluginMessage.write(Types.UUID, uuid);
+        writeString(pluginMessage, animationName);
+        pluginMessage.scheduleSend(BedrockProtocol.class);
+    }
 }
