@@ -791,6 +791,7 @@ public class ChunkTracker extends StoredObject {
         final ChunkPosition playerChunk = this.playerChunk();
         this.levelChunksLoadStartSent = false;
         this.javaSentChunks.clear();
+        this.setCenter(playerChunk.chunkX(), playerChunk.chunkZ());
         this.sendCurrentCacheSettingsToJava();
         this.markPlayerNeighborhoodDirty(playerChunk);
     }

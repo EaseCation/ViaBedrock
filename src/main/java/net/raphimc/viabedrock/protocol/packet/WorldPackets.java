@@ -178,7 +178,8 @@ public class WorldPackets {
             final String resolvedKey = ExperimentalFeatures.dispatchResolveDimensionKey(dimension, oldChunkTracker);
             final String dimensionKey = resolvedKey != null ? resolvedKey : dimension.getKey();
 
-            wrapper.user().put(new ChunkTracker(wrapper.user(), dimension, dimensionKey));
+            final ChunkTracker chunkTracker = new ChunkTracker(wrapper.user(), dimension, dimensionKey);
+            wrapper.user().put(chunkTracker);
             final EntityTracker oldEntityTracker = wrapper.user().get(EntityTracker.class);
             final ClientPlayerEntity clientPlayer = oldEntityTracker.getClientPlayer();
             oldEntityTracker.prepareForRespawn();
@@ -209,6 +210,7 @@ public class WorldPackets {
             wrapper.write(Types.BYTE, (byte) (RespawnKeepFlag.ATTRIBUTE_MODIFIERS.getBit() | RespawnKeepFlag.ENTITY_DATA.getBit())); // keep data mask
             wrapper.send(BedrockProtocol.class);
             wrapper.cancel();
+            chunkTracker.resetJavaChunkLoading();
             clientPlayer.sendPlayerPositionPacketToClient(Relative.NONE);
             clientPlayer.sendAttribute("minecraft:health"); // Java client always resets health on respawn, but Bedrock client keeps health when switching dimensions
             clientPlayer.sendEffects(); // Java client always resets effects on respawn. Resend them
