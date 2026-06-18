@@ -40,6 +40,8 @@ public class MapObject {
     private int yOffset;
     private int[] colors;
 
+    private long lastRequestedMs = 0L;
+
     private final int java_id;
 
     public MapObject(long id, int java_id) {
@@ -166,5 +168,17 @@ public class MapObject {
 
     public void setColors(int[] colors) {
         this.colors = colors;
+    }
+
+    public boolean hasTexture() {
+        return this.colors != null && this.colors.length > 0;
+    }
+
+    public long getLastRequestedMs() {
+        return lastRequestedMs;
+    }
+
+    public void setLastRequestedMs(long lastRequestedMs) {
+        this.lastRequestedMs = lastRequestedMs;
     }
 }

@@ -23,22 +23,27 @@ import com.viaversion.viaversion.api.minecraft.data.StructuredData;
 import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
 import com.viaversion.viaversion.api.minecraft.item.Item;
 import com.viaversion.viaversion.api.minecraft.item.data.Enchantments;
+import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.util.RegistryUtil;
 import net.raphimc.viabedrock.experimental.model.map.MapObject;
 import net.raphimc.viabedrock.experimental.storage.MapTracker;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
+import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.JavaRegistries;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.Enchant_Type;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
 import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
+import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.util.logging.Level;
 
 public class ExperimentalItemRewriter {
 
     private static final StructuredDataKey<Item[]> CHARGED_PROJECTILES = new StructuredDataKey<>("charged_projectiles", VersionedTypes.V26_1.itemArray());
+
+    private static final long MAP_INFO_REQUEST_THROTTLE_MS = 1000L;
 
     // BedrockTag can be null
     public static void handleItem(final UserConnection user, final BedrockItem bedrockItem, final CompoundTag bedrockTag, final Item javaItem) {
@@ -62,6 +67,16 @@ public class ExperimentalItemRewriter {
                 }
 
                 javaItem.dataContainer().set(StructuredDataKey.MAP_ID, map.getJavaId());
+
+                // Bedrock servers (e.g. Nukkit) only send MAP_ITEM_DATA in response to a MapInfoRequest.
+                // Request the texture if we don't have it yet, throttled to avoid spamming the server.
+                if (!map.hasTexture()) {
+                    final long now = System.currentTimeMillis();
+                    if (now - map.getLastRequestedMs() > MAP_INFO_REQUEST_THROTTLE_MS) {
+                        map.setLastRequestedMs(now);
+                        requestMapInfo(user, uuid);
+                    }
+                }
             }
 
             if (bedrockTag.get("ench") instanceof ListTag<?> enchantments) {
@@ -117,6 +132,13 @@ public class ExperimentalItemRewriter {
             }
 
         }
+    }
+
+    private static void requestMapInfo(final UserConnection user, final long bedrockMapId) {
+        final PacketWrapper mapInfoRequest = PacketWrapper.create(ServerboundBedrockPackets.MAP_INFO_REQUEST, user);
+        mapInfoRequest.write(BedrockTypes.VAR_LONG, bedrockMapId); // map id
+        mapInfoRequest.write(BedrockTypes.UNSIGNED_INT_LE, 0L); // client pixels (uint32 length-prefixed, empty)
+        mapInfoRequest.sendToServer(BedrockProtocol.class);
     }
 
     private static Item chargedProjectile(final UserConnection user, final CompoundTag chargedItemTag) {

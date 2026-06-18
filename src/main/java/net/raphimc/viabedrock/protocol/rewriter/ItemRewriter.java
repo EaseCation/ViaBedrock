@@ -21,6 +21,7 @@ import com.google.common.collect.BiMap;
 import com.google.common.collect.HashBiMap;
 import com.viaversion.nbt.tag.CompoundTag;
 import com.viaversion.nbt.tag.ListTag;
+import com.viaversion.nbt.tag.NumberTag;
 import com.viaversion.nbt.tag.StringTag;
 import com.viaversion.nbt.tag.Tag;
 import com.viaversion.viaversion.api.Via;
@@ -262,6 +263,27 @@ public class ItemRewriter extends StoredObject {
         final CompoundTag javaTag = new CompoundTag();
         javaTag.putString("id", "minecraft:stone");
         return javaTag; // TODO: Support converting nbt items
+    }
+
+    public Item javaItemFromNbt(final CompoundTag itemTag) {
+        if (itemTag == null) return StructuredItem.empty();
+
+        final String name = itemTag.getString("Name", null);
+        if (name == null) return StructuredItem.empty();
+
+        final Integer id = this.items.get(name);
+        if (id == null) {
+            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown nbt item identifier: " + name);
+            return StructuredItem.empty();
+        }
+
+        final int count = itemTag.get("Count") instanceof NumberTag countTag ? countTag.asInt() : 1;
+        final int damage = itemTag.get("Damage") instanceof NumberTag damageTag ? damageTag.asInt() : 0;
+        final BedrockItem bedrockItem = new BedrockItem(id, (short) damage, (byte) count);
+        if (itemTag.get("tag") instanceof CompoundTag tag) {
+            bedrockItem.setTag(tag);
+        }
+        return this.javaItem(bedrockItem);
     }
 
     public Item[] javaItems(final BedrockItem[] bedrockItems) {

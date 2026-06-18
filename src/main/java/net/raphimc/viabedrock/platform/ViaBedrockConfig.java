@@ -94,6 +94,13 @@ public interface ViaBedrockConfig extends Config {
      */
     int getJavaSkinFetchTimeout();
 
+    /**
+     * @return If true, applies Floyd-Steinberg dithering when converting Bedrock map pixels (true ARGB) to the
+     * limited Java map color palette. This trades hard color banding for fine noise, which greatly improves
+     * smooth gradients such as faces/portraits. Requires experimental features.
+     */
+    boolean shouldDitherMaps();
+
     boolean isCustomMappingSyncEnabled();
 
     int getCustomMappingSyncTimeoutMs();

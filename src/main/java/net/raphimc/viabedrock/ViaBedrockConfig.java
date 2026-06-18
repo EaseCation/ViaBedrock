@@ -42,6 +42,7 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
     private String viaProxyAuthSecret;
     private boolean enableServerEntityAnimation;
     private int javaSkinFetchTimeout;
+    private boolean ditherMaps;
     private boolean customMappingSyncEnabled;
     private int customMappingSyncTimeoutMs;
     private int customMappingSyncMaxSnapshotBytes;
@@ -78,6 +79,7 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
         this.viaProxyAuthSecret = this.getString("viaproxy-auth-secret", "");
         this.enableServerEntityAnimation = this.getBoolean("enable-server-entity-animation", true);
         this.javaSkinFetchTimeout = this.getInt("java-skin-fetch-timeout", 1000);
+        this.ditherMaps = this.getBoolean("dither-maps", true);
         final ConfigSection customMappingSync = this.getSection("customMappingSync");
         this.customMappingSyncEnabled = getBoolean(customMappingSync, "enabled", true);
         this.customMappingSyncTimeoutMs = getInt(customMappingSync, "timeoutMs", 10000);
@@ -181,6 +183,11 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
     @Override
     public int getJavaSkinFetchTimeout() {
         return this.javaSkinFetchTimeout;
+    }
+
+    @Override
+    public boolean shouldDitherMaps() {
+        return this.ditherMaps;
     }
 
     @Override

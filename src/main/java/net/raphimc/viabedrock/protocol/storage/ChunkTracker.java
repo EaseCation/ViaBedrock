@@ -516,7 +516,8 @@ public class ChunkTracker extends StoredObject {
                     return new IntObjectImmutablePair<>(remappedBlockState, javaBlockEntity);
                 }
             } else if (CustomBlockTags.ITEM_FRAME.equals(tag)) {
-                entityTracker.spawnItemFrame(blockPosition, blockStateRewriter.blockState(blockState));
+                final BedrockBlockEntity frameBlockEntity = this.getBlockEntity(blockPosition);
+                entityTracker.spawnItemFrame(blockPosition, blockStateRewriter.blockState(blockState), frameBlockEntity != null ? frameBlockEntity.tag() : null);
             }
         }
 
@@ -999,7 +1000,8 @@ public class ChunkTracker extends StoredObject {
                                         remappedChunk.blockEntities().add(javaBlockEntity);
                                     }
                                 } else if (tag.equals(CustomBlockTags.ITEM_FRAME)) {
-                                    this.user().get(EntityTracker.class).spawnItemFrame(position, blockStateRewriter.blockState(layer0.idAt(x, y, z)));
+                                    final BedrockBlockEntity frameBlockEntity = chunk.getBlockEntityAt(position);
+                                    this.user().get(EntityTracker.class).spawnItemFrame(position, blockStateRewriter.blockState(layer0.idAt(x, y, z)), frameBlockEntity != null ? frameBlockEntity.tag() : null);
                                 }
                             }
                         }

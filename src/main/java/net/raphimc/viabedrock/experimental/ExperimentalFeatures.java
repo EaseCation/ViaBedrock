@@ -1128,7 +1128,7 @@ public class ExperimentalFeatures {
             wrapper.write(Types.BYTE, mapObject.getScale()); // scale
             wrapper.write(Types.BOOLEAN, mapObject.isLocked()); // locked
 
-            wrapper.write(Types.BOOLEAN, false); // Icons (Prefixed Optional, TODO: Implement)
+            writeMapIcons(wrapper, mapObject.getDecorations()); // Icons (Prefixed Optional)
             wrapper.write(Types.UNSIGNED_BYTE, (short) mapObject.getWidth()); // width
             if (mapObject.getWidth() > 0) {
                 wrapper.write(Types.UNSIGNED_BYTE, (short) mapObject.getHeight()); // height
@@ -1136,7 +1136,10 @@ public class ExperimentalFeatures {
                 wrapper.write(Types.BYTE, (byte) mapObject.getYOffset()); // yOffset
 
                 wrapper.write(Types.VAR_INT, mapObject.getColors().length);
-                for (short color : JavaMapPaletteUtil.convertToJavaPalette(mapObject.getColors())) {
+                final short[] javaColors = ViaBedrock.getConfig().shouldDitherMaps()
+                        ? JavaMapPaletteUtil.convertToJavaPaletteDithered(mapObject.getColors(), mapObject.getWidth(), mapObject.getHeight())
+                        : JavaMapPaletteUtil.convertToJavaPalette(mapObject.getColors());
+                for (short color : javaColors) {
                     wrapper.write(Types.UNSIGNED_BYTE, color);
                 }
 
@@ -1149,6 +1152,71 @@ public class ExperimentalFeatures {
 
     public static void registerTasks() {
         Via.getPlatform().runRepeatingSync(new ScriptDebugTextTickTask(), 1L);
+    }
+
+    // Maps a Bedrock MapDecoration_Type value (index) to a Java minecraft:map_decoration_type registry id.
+    // The Java registry is a built-in (non-synced) registry, so the indices follow vanilla 1.21 order. -1 = don't draw.
+    private static final int[] BEDROCK_TO_JAVA_MAP_DECORATION = buildMapDecorationTable();
+
+    private static int[] buildMapDecorationTable() {
+        final int[] table = new int[25];
+        table[0] = 0;    // MarkerWhite      -> player
+        table[1] = 1;    // MarkerGreen      -> frame
+        table[2] = 2;    // MarkerRed        -> red_marker
+        table[3] = 3;    // MarkerBlue       -> blue_marker
+        table[4] = 4;    // XWhite           -> target_x
+        table[5] = 5;    // TriangleRed      -> target_point
+        table[6] = 6;    // SquareWhite      -> player_off_map
+        table[7] = 7;    // MarkerSign       -> player_off_limits
+        table[8] = 16;   // MarkerPink       -> banner_pink
+        table[9] = 11;   // MarkerOrange     -> banner_orange
+        table[10] = 14;  // MarkerYellow     -> banner_yellow
+        table[11] = 19;  // MarkerTeal       -> banner_cyan
+        table[12] = 23;  // TriangleGreen    -> banner_green
+        table[13] = 7;   // SmallSquareWhite -> player_off_limits
+        table[14] = 8;   // Mansion          -> mansion
+        table[15] = 9;   // Monument         -> monument
+        table[16] = -1;  // NoDraw           -> (skip)
+        table[17] = 27;  // VillageDesert    -> village_desert
+        table[18] = 28;  // VillagePlains    -> village_plains
+        table[19] = 29;  // VillageSavanna   -> village_savanna
+        table[20] = 30;  // VillageSnowy     -> village_snowy
+        table[21] = 31;  // VillageTaiga     -> village_taiga
+        table[22] = 32;  // JungleTemple     -> jungle_temple
+        table[23] = 33;  // WitchHut         -> swamp_hut
+        table[24] = 34;  // TrialChambers    -> trial_chambers
+        return table;
+    }
+
+    private static int javaMapDecorationType(final int bedrockType) {
+        if (bedrockType < 0 || bedrockType >= BEDROCK_TO_JAVA_MAP_DECORATION.length) {
+            return 0; // unknown -> fall back to player marker rather than dropping silently
+        }
+        return BEDROCK_TO_JAVA_MAP_DECORATION[bedrockType];
+    }
+
+    private static void writeMapIcons(final PacketWrapper wrapper, final List<MapDecoration> decorations) {
+        final List<MapDecoration> visible = new ArrayList<>();
+        for (final MapDecoration decoration : decorations) {
+            if (javaMapDecorationType(decoration.image()) != -1) {
+                visible.add(decoration);
+            }
+        }
+
+        if (visible.isEmpty()) {
+            wrapper.write(Types.BOOLEAN, false); // no icons
+            return;
+        }
+
+        wrapper.write(Types.BOOLEAN, true); // has icons
+        wrapper.write(Types.VAR_INT, visible.size());
+        for (final MapDecoration decoration : visible) {
+            wrapper.write(Types.VAR_INT, javaMapDecorationType(decoration.image())); // type
+            wrapper.write(Types.BYTE, (byte) decoration.xOffset()); // x
+            wrapper.write(Types.BYTE, (byte) decoration.yOffset()); // z
+            wrapper.write(Types.BYTE, (byte) (decoration.rotation() & 15)); // rotation
+            wrapper.write(Types.BOOLEAN, false); // no custom display name
+        }
     }
 
     public static void registerStorages(final UserConnection user) {

@@ -504,6 +504,14 @@ public class WorldPackets {
                     final BedrockBlockEntity bedrockBlockEntity = new BedrockBlockEntity(wrapper.get(Types.BLOCK_POSITION1_14, 0), (CompoundTag) tag);
                     chunkTracker.addBlockEntity(bedrockBlockEntity);
 
+                    // Item frames are translated to Java entities, not block entities. Update the frame's displayed item/rotation.
+                    final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
+                    if (entityTracker.getItemFrameId(bedrockBlockEntity.position()) != -1) {
+                        entityTracker.updateItemFrameContents(bedrockBlockEntity.position(), bedrockBlockEntity.tag());
+                        wrapper.cancel();
+                        return;
+                    }
+
                     final BlockEntity javaBlockEntity = BlockEntityRewriter.toJava(wrapper.user(), chunkTracker.getBlockState(bedrockBlockEntity.position()), bedrockBlockEntity);
                     if (javaBlockEntity instanceof BlockEntityWithBlockState blockEntityWithBlockState) {
                         PacketFactory.sendJavaBlockUpdate(wrapper.user(), bedrockBlockEntity.position(), blockEntityWithBlockState.blockState());

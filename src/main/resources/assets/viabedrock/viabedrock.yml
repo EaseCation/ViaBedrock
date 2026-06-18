@@ -33,6 +33,11 @@ enable-server-entity-animation: true
 # time is typically much shorter than this value.
 java-skin-fetch-timeout: 1000
 
+# If true, applies Floyd-Steinberg dithering when converting Bedrock map pixels to the limited Java map color
+# palette. This trades hard color banding for fine noise and greatly improves smooth gradients (faces/portraits).
+# Set to false for crisp nearest-color output (better for flat-color / text / UI maps). Requires experimental features.
+dither-maps: true
+
 # BedrockLoader custom block mapping sync options.
 # Requires enable-experimental-features: true; the experimental feature switch is the top-level gate.
 customMappingSync:

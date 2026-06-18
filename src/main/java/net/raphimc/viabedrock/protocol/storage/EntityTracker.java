@@ -17,14 +17,20 @@
  */
 package net.raphimc.viabedrock.protocol.storage;
 
+import com.viaversion.nbt.tag.CompoundTag;
+import com.viaversion.nbt.tag.NumberTag;
 import com.viaversion.viaversion.api.connection.StoredObject;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.minecraft.BlockPosition;
 import com.viaversion.viaversion.api.minecraft.ChunkPosition;
 import com.viaversion.viaversion.api.minecraft.Vector3d;
+import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
 import com.viaversion.viaversion.api.minecraft.entities.EntityTypes1_21_11;
+import com.viaversion.viaversion.api.minecraft.item.Item;
+import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Types;
+import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
 import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectMap;
 import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectOpenHashMap;
 import com.viaversion.viaversion.libs.fastutil.longs.Long2ObjectMap;
@@ -37,6 +43,8 @@ import net.raphimc.viabedrock.api.model.BlockState;
 import net.raphimc.viabedrock.api.model.entity.*;
 import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
+import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
+import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -146,7 +154,7 @@ public class EntityTracker extends StoredObject {
         entity.remove();
     }
 
-    public void spawnItemFrame(final BlockPosition position, final BlockState blockState) {
+    public void spawnItemFrame(final BlockPosition position, final BlockState blockState, final CompoundTag blockEntityTag) {
         this.removeItemFrame(position);
 
         if (!blockState.identifier().equals("frame") && !blockState.identifier().equals("glow_frame")) {
@@ -169,6 +177,55 @@ public class EntityTracker extends StoredObject {
         spawnEntity.write(Types.BYTE, (byte) 0); // head yaw
         spawnEntity.write(Types.VAR_INT, Integer.valueOf(blockState.properties().get("facing_direction"))); // data
         spawnEntity.send(BedrockProtocol.class);
+
+        // Populate the displayed item / rotation from the block entity supplied by the caller.
+        // The caller passes it directly (from the local chunk during chunk load, or from the chunk map on a block
+        // update) because looking it up via ChunkTracker here is unreliable during chunk load: the chunk being
+        // remapped is not registered in the chunk map yet, so the lookup would return null and the frame would
+        // render empty. If the block entity instead arrives later as a separate BLOCK_ENTITY_DATA packet,
+        // updateItemFrameContents is called again from that handler.
+        if (blockEntityTag != null) {
+            this.updateItemFrameContents(position, blockEntityTag);
+        }
+    }
+
+    public void updateItemFrameContents(final BlockPosition position, final CompoundTag tag) {
+        final int javaId = this.getItemFrameId(position);
+        if (javaId == -1) {
+            return;
+        }
+
+        // ITEM_FRAME and GLOW_ITEM_FRAME share the same entity data layout.
+        final List<String> dataFields = BedrockProtocol.MAPPINGS.getJavaEntityDataFields().get(EntityTypes1_21_11.ITEM_FRAME);
+
+        final Item javaItem;
+        if (tag != null && tag.get("Item") instanceof CompoundTag itemTag) {
+            javaItem = this.user().get(ItemRewriter.class).javaItemFromNbt(itemTag);
+        } else {
+            javaItem = StructuredItem.empty();
+        }
+
+        int rotation = 0;
+        if (tag != null && tag.get("ItemRotation") instanceof NumberTag rotationTag) {
+            rotation = bedrockItemFrameRotationToJava(rotationTag.asFloat());
+        }
+
+        final List<EntityData> entityData = new ArrayList<>();
+        entityData.add(new EntityData(dataFields.indexOf(EntityDataFields.ITEM), VersionedTypes.V26_1.entityDataTypes.itemType, javaItem));
+        entityData.add(new EntityData(dataFields.indexOf(EntityDataFields.ROTATION), VersionedTypes.V26_1.entityDataTypes.varIntType, rotation));
+
+        final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets26_1.SET_ENTITY_DATA, this.user());
+        setEntityData.write(Types.VAR_INT, javaId); // entity id
+        setEntityData.write(VersionedTypes.V26_1.entityDataList, entityData); // entity data
+        setEntityData.send(BedrockProtocol.class);
+    }
+
+    private static int bedrockItemFrameRotationToJava(final float bedrockRotation) {
+        int rotation = Math.round(bedrockRotation);
+        if (rotation >= 8) { // some servers store the rotation in degrees (0, 45, ..., 315)
+            rotation = Math.round(bedrockRotation / 45F);
+        }
+        return ((rotation % 8) + 8) % 8;
     }
 
     public void removeItemFrame(final BlockPosition position) {
