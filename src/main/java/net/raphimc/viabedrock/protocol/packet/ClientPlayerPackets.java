@@ -37,6 +37,7 @@ import net.raphimc.viabedrock.api.util.EnumUtil;
 import net.raphimc.viabedrock.api.util.InstantBreakBlocks;
 import net.raphimc.viabedrock.api.util.MathUtil;
 import net.raphimc.viabedrock.api.util.PacketFactory;
+import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
 import net.raphimc.viabedrock.experimental.model.inventory.BedrockInventoryTransaction;
 import net.raphimc.viabedrock.experimental.rewriter.InventoryTransactionRewriter;
@@ -415,6 +416,9 @@ public class ClientPlayerPackets {
             final int entityId = wrapper.read(Types.VAR_INT); // entity id
             final Entity entity = entityTracker.getEntityByJid(entityId);
             if (entity == null) {
+                // Item frames are blocks on Bedrock exposed to the Java client as fake entities; translate the
+                // right-click into the block interaction the server expects (place / rotate the held item).
+                ExperimentalFeatures.tryHandleItemFrameInteract(wrapper.user(), entityId);
                 wrapper.cancel();
                 return;
             }

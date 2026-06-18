@@ -62,9 +62,17 @@ public class EntityTracker extends StoredObject {
     private final Long2ObjectMap<Long> runtimeIdToUniqueId = new Long2ObjectOpenHashMap<>();
     private final Int2ObjectMap<Long> javaIdToUniqueId = new Int2ObjectOpenHashMap<>();
     private final Object2IntMap<BlockPosition> itemFrames = new Object2IntOpenHashMap<>();
+    private final Int2ObjectMap<ItemFrameInfo> itemFrameInfoById = new Int2ObjectOpenHashMap<>();
 
     public EntityTracker(final UserConnection user) {
         super(user);
+    }
+
+    /**
+     * Reverse-lookup data for an item frame fake entity. Item frames are blocks on Bedrock but fake Java entities,
+     * so a Java entity interaction has to be mapped back to the block position (and front face) to reach the server.
+     */
+    public record ItemFrameInfo(BlockPosition position, int facingDirection) {
     }
 
     public Entity addEntity(final long uniqueId, final long runtimeId, final String type, final EntityTypes1_21_11 javaType) {
@@ -162,7 +170,9 @@ public class EntityTracker extends StoredObject {
         }
 
         final int javaId = this.getNextJavaEntityId();
+        final int facingDirection = Integer.parseInt(blockState.properties().get("facing_direction"));
         this.itemFrames.put(position, javaId);
+        this.itemFrameInfoById.put(javaId, new ItemFrameInfo(position, facingDirection));
 
         final PacketWrapper spawnEntity = PacketWrapper.create(ClientboundPackets26_1.ADD_ENTITY, this.user());
         spawnEntity.write(Types.VAR_INT, javaId); // entity id
@@ -175,7 +185,7 @@ public class EntityTracker extends StoredObject {
         spawnEntity.write(Types.BYTE, (byte) 0); // pitch
         spawnEntity.write(Types.BYTE, (byte) 0); // yaw
         spawnEntity.write(Types.BYTE, (byte) 0); // head yaw
-        spawnEntity.write(Types.VAR_INT, Integer.valueOf(blockState.properties().get("facing_direction"))); // data
+        spawnEntity.write(Types.VAR_INT, facingDirection); // data
         spawnEntity.send(BedrockProtocol.class);
 
         // Populate the displayed item / rotation from the block entity supplied by the caller.
@@ -233,13 +243,20 @@ public class EntityTracker extends StoredObject {
             return;
         }
 
+        final int javaId = this.itemFrames.removeInt(position);
+        this.itemFrameInfoById.remove(javaId);
+
         final PacketWrapper removeEntities = PacketWrapper.create(ClientboundPackets26_1.REMOVE_ENTITIES, this.user());
-        removeEntities.write(Types.VAR_INT_ARRAY_PRIMITIVE, new int[]{this.itemFrames.removeInt(position)}); // entity ids
+        removeEntities.write(Types.VAR_INT_ARRAY_PRIMITIVE, new int[]{javaId}); // entity ids
         removeEntities.send(BedrockProtocol.class);
     }
 
     public int getItemFrameId(final BlockPosition position) {
         return this.itemFrames.getOrDefault(position, -1);
+    }
+
+    public ItemFrameInfo getItemFrameInfo(final int javaId) {
+        return this.itemFrameInfoById.get(javaId);
     }
 
     public void removeItemFrame(final ChunkPosition chunkPos) {

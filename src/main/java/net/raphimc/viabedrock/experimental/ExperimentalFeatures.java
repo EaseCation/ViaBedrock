@@ -477,13 +477,50 @@ public class ExperimentalFeatures {
     }
 
     /**
+     * Translates a Java right-click on a fake item frame entity into the Bedrock block interaction the server expects.
+     * Item frames are blocks on Bedrock (handled by {@code BlockItemFrame.onActivate}: empty frame -> place held item,
+     * filled frame -> rotate), but ViaBedrock exposes them to the Java client as entities, so the entity interaction
+     * never reaches the server on its own. Returns false (no-op) when experimental features are off or the interacted
+     * entity is not a tracked item frame, letting the caller fall back to its default handling.
+     */
+    public static boolean tryHandleItemFrameInteract(final UserConnection user, final int javaEntityId) {
+        if (!ViaBedrock.getConfig().shouldEnableExperimentalFeatures()) {
+            return false;
+        }
+        final EntityTracker entityTracker = user.get(EntityTracker.class);
+        final EntityTracker.ItemFrameInfo info = entityTracker.getItemFrameInfo(javaEntityId);
+        if (info == null) {
+            return false;
+        }
+
+        final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
+        final InventoryContainer inventoryContainer = user.get(InventoryTracker.class).getInventoryContainer();
+        final ChunkTracker chunkTracker = user.get(ChunkTracker.class);
+        final InventoryTransactionRewriter inventoryTransactionRewriter = user.get(InventoryTransactionRewriter.class);
+
+        final int faceInt = info.facingDirection();
+        final Direction direction = Direction.getFromVerticalId(faceInt);
+        final BlockFace face = direction != null ? direction.blockFace() : BlockFace.NORTH;
+        // Center of the block. Nukkit's BlockItemFrame.onActivate doesn't depend on the precise click position.
+        final Position3f clickPosition = new Position3f(0.5F, 0.5F, 0.5F);
+
+        sendItemUseOnBlock(user, clientPlayer, inventoryContainer, inventoryTransactionRewriter, chunkTracker,
+                info.position(), faceInt, face, clickPosition, false, 0); // sequence 0: entity interaction, no Java ack
+        return true;
+    }
+
+    /**
      * Builds and sends the CLICK_BLOCK ItemUseTransaction (preceded/followed by Start/StopItemUseOn) that a
      * Bedrock client emits when interacting with a block. Shared by the USE_ITEM_ON handler and the empty
      * bucket / glass bottle fluid branch of USE_ITEM.
      */
     private static void sendItemUseOnBlock(final UserConnection user, final ClientPlayerEntity clientPlayer, final InventoryContainer inventoryContainer, final InventoryTransactionRewriter inventoryTransactionRewriter, final ChunkTracker chunkTracker, final BlockPosition position, final int faceInt, final BlockFace face, final Position3f clickPosition, final boolean insideBlock, final int sequence) {
         final BlockPosition expectedPos = insideBlock ? position : position.getRelative(face);
-        user.get(BlockPlacementAckTracker.class).addPendingAck(expectedPos, sequence);
+        // sequence 0 means there is no Java block-change to acknowledge (e.g. item frame entity interaction). Registering
+        // a pending ack for it would leave a phantom sequence-0 ack that flushExpired emits after the timeout.
+        if (sequence > 0) {
+            user.get(BlockPlacementAckTracker.class).addPendingAck(expectedPos, sequence);
+        }
 
         // The bedrock client will send a start item use on action to the server first.
         ExperimentalPacketFactory.sendBedrockPlayerAction(
