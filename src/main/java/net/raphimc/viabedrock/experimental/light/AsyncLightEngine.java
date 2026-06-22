@@ -23,12 +23,14 @@ import com.viaversion.viaversion.api.minecraft.chunks.*;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
+import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.experimental.custommapping.CustomMappingAccess;
 import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
 import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
 
 import java.util.*;
+import java.util.logging.Level;
 
 /**
  * Async light computation engine implementing ChunkLightProvider.
@@ -39,6 +41,8 @@ import java.util.*;
  */
 public class AsyncLightEngine implements ChunkLightProvider {
 
+    private static final long NO_GENERATION = -1L;
+    private static final long FNV_OFFSET = 0xcbf29ce484222325L;
     private static final int MAX_LIGHT_UPDATES_PER_TICK = 8;
     private static final int[][] SHOULD_ENQUEUE_OFFSETS = {{-1, 0, 0}, {1, 0, 0}, {0, 0, -1}, {0, 0, 1}};
     private static final int[][] SPREAD_DIRS = {{-1, 0, 0}, {1, 0, 0}, {0, -1, 0}, {0, 1, 0}, {0, 0, -1}, {0, 0, 1}};
@@ -46,12 +50,8 @@ public class AsyncLightEngine implements ChunkLightProvider {
 
     private final UserConnection user;
 
-    private final Set<Long> sentChunks = new HashSet<>();
-    private final Map<Long, ChunkSection[]> cachedSections = new HashMap<>();
-    private final Map<Long, byte[][]> cachedSkyLight = new HashMap<>();
-    private final Map<Long, byte[][]> cachedBlockLight = new HashMap<>();
+    private final Map<Long, ChunkLightState> chunkStates = new HashMap<>();
     private final Set<Long> pendingLightUpdates = new HashSet<>();
-    private final Set<Long> pendingAsyncLight = new HashSet<>();
 
     public AsyncLightEngine(final UserConnection user) {
         this.user = user;
@@ -59,85 +59,167 @@ public class AsyncLightEngine implements ChunkLightProvider {
 
     @Override
     public boolean processAndSendChunk(final ChunkTracker tracker, final int chunkX, final int chunkZ, final Chunk chunk) {
-        final int sectionCount = chunk.getSections().length;
-        final int lightSectionCount = sectionCount + 2;
+        final int lightSectionCount = chunk.getSections().length + 2;
         final long chunkKey = ChunkPosition.chunkKey(chunkX, chunkZ);
 
-        // Strip disallowed custom data BEFORE hash while keeping connection-local allowed custom states.
+        // Strip disallowed custom data before taking the immutable light snapshot.
         if (!tracker.stripCustomBlockData(chunk)) {
             return true;
         }
 
         // Sending the chunk runs it through ViaVersion, which mutates palette ids in-place.
         // Keep an immutable-to-us snapshot with ViaBedrock/source ids for async light calculations.
-        final ChunkSection[] lightSections = copySectionsForLight(chunk.getSections());
+        final SectionSnapshot sectionSnapshot = copySectionsForLight(chunk.getSections());
 
-        // Cache remapped sections for neighbor light calculations
-        this.cachedSections.put(chunkKey, lightSections);
+        final ChunkLightState state = this.chunkStates.computeIfAbsent(chunkKey, key -> new ChunkLightState());
+        state.sections = sectionSnapshot.sections();
+        state.sectionsHash = sectionSnapshot.hash();
+        state.generation++;
+        state.lightDependencyGeneration = 0L;
+        state.sentToClient = true;
+        state.realSkyLight = null;
+        state.realBlockLight = null;
+        state.realSkyLightHash = 0L;
+        state.realBlockLightHash = 0L;
+        this.pendingLightUpdates.remove(chunkKey);
 
-        // Collect neighbor data for cross-chunk light propagation
-        final ChunkSection[][] neighborSections = collectNeighborSections(chunkX, chunkZ);
-        final byte[][][] neighborCachedSkyLight = collectNeighborCachedSkyLight(chunkX, chunkZ);
-        final byte[][][] neighborCachedBlockLight = collectNeighborCachedBlockLight(chunkX, chunkZ);
-
-        // Try global light cache first
-        final CustomMappingAccess access = this.user.get(CustomMappingSyncStorage.class).access();
-        final long lightCacheKey = computeCombinedLightCacheKey(access.lightProfileKey(), lightSections, neighborSections, neighborCachedSkyLight, neighborCachedBlockLight);
-        final GlobalLightCache.LightCacheEntry cached = GlobalLightCache.getInstance().get(lightCacheKey);
-
-        final byte[][] skyLight;
-        final byte[][] blockLight;
-
+        final LightJobInput input = this.createLightJobInput(chunkX, chunkZ, chunkKey, state, state.generation);
+        final GlobalLightCache.RealLight cached = GlobalLightCache.getInstance().getRealLight(input.cacheKey());
         if (cached != null) {
-            // Cache hit: use real light
-            skyLight = cached.skyLight();
-            blockLight = cached.blockLight();
-            this.cachedSkyLight.put(chunkKey, skyLight);
-            this.cachedBlockLight.put(chunkKey, blockLight);
-
-            tracker.sendChunkWithLight(chunk, skyLight, blockLight, lightSectionCount);
-            this.sentChunks.add(chunkKey);
+            final LightComputation result = new LightComputation(cached.skyLight(), cached.blockLight(), cached.skyLightHash(), cached.blockLightHash());
+            this.installRealLight(state, result);
+            tracker.sendChunkWithLight(chunk, result.skyLight(), result.blockLight(), lightSectionCount);
             this.markNeighborLightDirty(chunkX, chunkZ);
-        } else {
-            // Cache miss: send with placeholder light, compute async
-            skyLight = generatePlaceholderSkyLight(lightSectionCount);
-            blockLight = new byte[lightSectionCount][];
-            this.cachedSkyLight.put(chunkKey, skyLight);
-            this.cachedBlockLight.put(chunkKey, blockLight);
-
-            tracker.sendChunkWithLight(chunk, skyLight, blockLight, lightSectionCount);
-            this.sentChunks.add(chunkKey);
-            // Don't markNeighborLightDirty here — placeholder light would pollute neighbor calculations
-
-            // Submit async light computation
-            this.pendingAsyncLight.add(chunkKey);
-            GlobalLightCache.getInstance().submitAsync(() -> {
-                final byte[][] realSkyLight = computeSkyLight(lightSections, neighborSections, neighborCachedSkyLight, access);
-                final byte[][] realBlockLight = computeBlockLight(lightSections, neighborSections, neighborCachedBlockLight, access);
-                GlobalLightCache.getInstance().put(lightCacheKey, realSkyLight, realBlockLight);
-
-                user.getChannel().eventLoop().execute(() -> {
-                    if (!user.getChannel().isActive()) return;
-                    if (!this.sentChunks.contains(chunkKey)) return;
-                    if (this.cachedSections.get(chunkKey) != lightSections) return; // chunk was overwritten
-                    this.pendingAsyncLight.remove(chunkKey);
-                    this.cachedSkyLight.put(chunkKey, realSkyLight);
-                    this.cachedBlockLight.put(chunkKey, realBlockLight);
-                    this.sendLightUpdate(chunkX, chunkZ, realSkyLight, realBlockLight);
-                    this.markNeighborLightDirty(chunkX, chunkZ);
-                });
-            });
+            return true;
         }
+
+        tracker.sendChunkWithLight(chunk, generatePlaceholderSkyLight(lightSectionCount), new byte[lightSectionCount][], lightSectionCount);
+        this.scheduleLightComputation(input, state);
 
         return true;
     }
 
-    private static ChunkSection[] copySectionsForLight(final ChunkSection[] sections) {
-        final ChunkSection[] copy = new ChunkSection[sections.length];
-        for (int i = 0; i < sections.length; i++) {
-            copy[i] = copySectionForLight(sections[i]);
+    private void scheduleLightComputation(final int chunkX, final int chunkZ, final long chunkKey, final ChunkLightState state) {
+        final long generation = state.generation;
+        final LightJobInput input = this.createLightJobInput(chunkX, chunkZ, chunkKey, state, generation);
+        this.scheduleLightComputation(input, state);
+    }
+
+    private void scheduleLightComputation(final LightJobInput input, final ChunkLightState state) {
+        final long generation = input.generation();
+        if (state.computingGeneration == generation) {
+            return;
         }
-        return copy;
+        state.computingGeneration = generation;
+
+        GlobalLightCache.getInstance().submitAsync(() -> {
+            try {
+                final LightComputation result = computeRealLight(input);
+                this.user.getChannel().eventLoop().execute(() -> this.completeLightComputation(input, result));
+            } catch (final Throwable e) {
+                this.user.getChannel().eventLoop().execute(() -> this.failLightComputation(input, e));
+            }
+        });
+    }
+
+    private LightJobInput createLightJobInput(final int chunkX, final int chunkZ, final long chunkKey, final ChunkLightState state, final long generation) {
+        final ChunkSection[][] neighborSections = this.collectNeighborSections(chunkX, chunkZ);
+        final byte[][][] neighborSkyLight = this.collectNeighborRealSkyLight(chunkX, chunkZ);
+        final byte[][][] neighborBlockLight = this.collectNeighborRealBlockLight(chunkX, chunkZ);
+        final long[] neighborSectionHashes = this.collectNeighborSectionHashes(chunkX, chunkZ);
+        final long[] neighborSkyLightHashes = this.collectNeighborRealSkyLightHashes(chunkX, chunkZ);
+        final long[] neighborBlockLightHashes = this.collectNeighborRealBlockLightHashes(chunkX, chunkZ);
+        final CustomMappingAccess access = this.user.get(CustomMappingSyncStorage.class).access();
+        final long cacheKey = computeLightCacheKey(
+                access.lightProfileKey(),
+                state.sectionsHash,
+                neighborSectionHashes,
+                neighborSkyLightHashes,
+                neighborBlockLightHashes);
+
+        return new LightJobInput(
+                chunkKey,
+                chunkX,
+                chunkZ,
+                generation,
+                state.lightDependencyGeneration,
+                cacheKey,
+                state.sections,
+                neighborSections,
+                neighborSkyLight,
+                neighborBlockLight,
+                access);
+    }
+
+    private static LightComputation computeRealLight(final LightJobInput input) {
+        final GlobalLightCache.RealLight cached = GlobalLightCache.getInstance().getRealLight(input.cacheKey());
+        if (cached != null) {
+            return new LightComputation(cached.skyLight(), cached.blockLight(), cached.skyLightHash(), cached.blockLightHash());
+        }
+
+        final byte[][] skyLight = computeSkyLight(input.sections(), input.neighborSections(), input.neighborSkyLight(), input.access());
+        final byte[][] blockLight = computeBlockLight(input.sections(), input.neighborSections(), input.neighborBlockLight(), input.access());
+        final long skyLightHash = hashLightData(FNV_OFFSET, skyLight);
+        final long blockLightHash = hashLightData(FNV_OFFSET, blockLight);
+        GlobalLightCache.getInstance().putRealLight(input.cacheKey(), skyLight, blockLight, skyLightHash, blockLightHash);
+        return new LightComputation(skyLight, blockLight, skyLightHash, blockLightHash);
+    }
+
+    private void completeLightComputation(final LightJobInput input, final LightComputation result) {
+        if (!this.user.getChannel().isActive()) return;
+
+        final ChunkLightState state = this.chunkStates.get(input.chunkKey());
+        if (!this.isSameChunkGeneration(state, input)) {
+            return;
+        }
+
+        state.computingGeneration = NO_GENERATION;
+        if (state.lightDependencyGeneration != input.lightDependencyGeneration()) {
+            this.scheduleLightComputation(input.chunkX(), input.chunkZ(), input.chunkKey(), state);
+            return;
+        }
+
+        final boolean changed = hasLightChanged(state.realSkyLight, state.realSkyLightHash, result.skyLight(), result.skyLightHash())
+                || hasLightChanged(state.realBlockLight, state.realBlockLightHash, result.blockLight(), result.blockLightHash());
+        this.installRealLight(state, result);
+
+        if (changed) {
+            this.sendLightUpdate(input.chunkX(), input.chunkZ(), result.skyLight(), result.blockLight());
+            this.markNeighborLightDirty(input.chunkX(), input.chunkZ());
+        }
+    }
+
+    private void failLightComputation(final LightJobInput input, final Throwable e) {
+        final ChunkLightState state = this.chunkStates.get(input.chunkKey());
+        if (this.isSameChunkGeneration(state, input)) {
+            state.computingGeneration = NO_GENERATION;
+        }
+        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error computing async chunk light", e);
+    }
+
+    private boolean isSameChunkGeneration(final ChunkLightState state, final LightJobInput input) {
+        return state != null
+                && state.sentToClient
+                && state.generation == input.generation()
+                && state.sections == input.sections();
+    }
+
+    private void installRealLight(final ChunkLightState state, final LightComputation result) {
+        state.realSkyLight = result.skyLight();
+        state.realBlockLight = result.blockLight();
+        state.realSkyLightHash = result.skyLightHash();
+        state.realBlockLightHash = result.blockLightHash();
+    }
+
+    private static SectionSnapshot copySectionsForLight(final ChunkSection[] sections) {
+        final ChunkSection[] copy = new ChunkSection[sections.length];
+        long hash = fnv1a(FNV_OFFSET, sections.length);
+        for (int i = 0; i < sections.length; i++) {
+            final ChunkSection section = sections[i];
+            copy[i] = copySectionForLight(section);
+            hash = hashSection(hash, section);
+        }
+        return new SectionSnapshot(copy, hash);
     }
 
     private static ChunkSection copySectionForLight(final ChunkSection section) {
@@ -172,12 +254,8 @@ public class AsyncLightEngine implements ChunkLightProvider {
 
     @Override
     public void onChunkUnload(final long chunkKey) {
-        this.sentChunks.remove(chunkKey);
-        this.cachedSections.remove(chunkKey);
-        this.cachedSkyLight.remove(chunkKey);
-        this.cachedBlockLight.remove(chunkKey);
+        this.chunkStates.remove(chunkKey);
         this.pendingLightUpdates.remove(chunkKey);
-        this.pendingAsyncLight.remove(chunkKey);
     }
 
     @Override
@@ -206,8 +284,8 @@ public class AsyncLightEngine implements ChunkLightProvider {
     }
 
     // neighborSections: [0]=-X, [1]=+X, [2]=-Z, [3]=+Z; elements may be null
-    // neighborCachedSkyLight: cached sky light from already-sent neighbors; elements may be null
-    private static byte[][] computeSkyLight(final ChunkSection[] sections, final ChunkSection[][] neighborSections, final byte[][][] neighborCachedSkyLight, final CustomMappingAccess mappings) {
+    // neighborRealSkyLight: completed real sky light from already-sent neighbors; elements may be null
+    private static byte[][] computeSkyLight(final ChunkSection[] sections, final ChunkSection[][] neighborSections, final byte[][][] neighborRealSkyLight, final CustomMappingAccess mappings) {
         final int sectionCount = sections.length;
         final int lightSectionCount = sectionCount + 2;
 
@@ -280,7 +358,7 @@ public class AsyncLightEngine implements ChunkLightProvider {
         final IntQueue queue = new IntQueue();
 
         // Inject neighbor cached sky light at borders
-        injectNeighborLight(lightData, sections, neighborCachedSkyLight, queue, mappings);
+        injectNeighborLight(lightData, sections, neighborRealSkyLight, queue, mappings);
 
         // Seed the queue from internal positions
         for (int sIdx = 0; sIdx < sectionCount; sIdx++) {
@@ -319,13 +397,13 @@ public class AsyncLightEngine implements ChunkLightProvider {
     }
 
     /**
-     * Inject neighbor cached light values at chunk borders as BFS seeds.
-     * neighborCachedLight: [0]=-X, [1]=+X, [2]=-Z, [3]=+Z; elements may be null.
+     * Inject completed real neighbor light values at chunk borders as BFS seeds.
+     * neighborRealLight: [0]=-X, [1]=+X, [2]=-Z, [3]=+Z; elements may be null.
      * Each element is byte[][] with the same lightSectionCount layout as lightData.
      */
     private static void injectNeighborLight(final byte[][] lightData, final ChunkSection[] sections,
-            final byte[][][] neighborCachedLight, final IntQueue queue, final CustomMappingAccess mappings) {
-        if (neighborCachedLight == null) return;
+            final byte[][][] neighborRealLight, final IntQueue queue, final CustomMappingAccess mappings) {
+        if (neighborRealLight == null) return;
         final int sectionCount = sections.length;
 
         // Direction definitions: [neighborIdx, neighborBorderCoord, targetBorderCoord, isXAxis]
@@ -344,10 +422,10 @@ public class AsyncLightEngine implements ChunkLightProvider {
             final int targetBorder = dir[2];
             final boolean isXAxis = dir[3] == 1;
 
-            if (neighborCachedLight[neighborIdx] == null) continue;
+            if (neighborRealLight[neighborIdx] == null) continue;
 
             for (int sIdx = 0; sIdx < sectionCount; sIdx++) {
-                final byte[] neighborLight = neighborCachedLight[neighborIdx][sIdx + 1]; // +1 for below-bottom offset
+                final byte[] neighborLight = neighborRealLight[neighborIdx][sIdx + 1]; // +1 for below-bottom offset
                 if (neighborLight == null) continue;
 
                 final DataPalette currentPalette = sections[sIdx].palette(PaletteType.BLOCKS);
@@ -442,8 +520,8 @@ public class AsyncLightEngine implements ChunkLightProvider {
     }
 
     // neighborSections: [0]=-X, [1]=+X, [2]=-Z, [3]=+Z; elements may be null
-    // neighborCachedBlockLight: cached block light from already-sent neighbors; elements may be null
-    private static byte[][] computeBlockLight(final ChunkSection[] sections, final ChunkSection[][] neighborSections, final byte[][][] neighborCachedBlockLight, final CustomMappingAccess mappings) {
+    // neighborRealBlockLight: completed real block light from already-sent neighbors; elements may be null
+    private static byte[][] computeBlockLight(final ChunkSection[] sections, final ChunkSection[][] neighborSections, final byte[][][] neighborRealBlockLight, final CustomMappingAccess mappings) {
         final int sectionCount = sections.length;
         final int lightSectionCount = sectionCount + 2;
 
@@ -483,7 +561,7 @@ public class AsyncLightEngine implements ChunkLightProvider {
         }
 
         // Inject neighbor cached block light at borders
-        injectNeighborLight(lightData, sections, neighborCachedBlockLight, queue, mappings);
+        injectNeighborLight(lightData, sections, neighborRealBlockLight, queue, mappings);
 
         if (queue.isEmpty()) {
             return lightData;
@@ -503,27 +581,63 @@ public class AsyncLightEngine implements ChunkLightProvider {
             final int nx = chunkX + NEIGHBOR_OFFSETS[i][0];
             final int nz = chunkZ + NEIGHBOR_OFFSETS[i][1];
             final long neighborKey = ChunkPosition.chunkKey(nx, nz);
-            neighborSections[i] = this.cachedSections.get(neighborKey);
+            final ChunkLightState state = this.chunkStates.get(neighborKey);
+            neighborSections[i] = state != null ? state.sections : null;
         }
         return neighborSections;
     }
 
-    private byte[][][] collectNeighborCachedSkyLight(final int chunkX, final int chunkZ) {
+    private byte[][][] collectNeighborRealSkyLight(final int chunkX, final int chunkZ) {
         final byte[][][] result = new byte[4][][];
         for (int i = 0; i < 4; i++) {
             final int nx = chunkX + NEIGHBOR_OFFSETS[i][0];
             final int nz = chunkZ + NEIGHBOR_OFFSETS[i][1];
-            result[i] = this.cachedSkyLight.get(ChunkPosition.chunkKey(nx, nz));
+            final ChunkLightState state = this.chunkStates.get(ChunkPosition.chunkKey(nx, nz));
+            result[i] = state != null ? state.realSkyLight : null;
         }
         return result;
     }
 
-    private byte[][][] collectNeighborCachedBlockLight(final int chunkX, final int chunkZ) {
+    private byte[][][] collectNeighborRealBlockLight(final int chunkX, final int chunkZ) {
         final byte[][][] result = new byte[4][][];
         for (int i = 0; i < 4; i++) {
             final int nx = chunkX + NEIGHBOR_OFFSETS[i][0];
             final int nz = chunkZ + NEIGHBOR_OFFSETS[i][1];
-            result[i] = this.cachedBlockLight.get(ChunkPosition.chunkKey(nx, nz));
+            final ChunkLightState state = this.chunkStates.get(ChunkPosition.chunkKey(nx, nz));
+            result[i] = state != null ? state.realBlockLight : null;
+        }
+        return result;
+    }
+
+    private long[] collectNeighborSectionHashes(final int chunkX, final int chunkZ) {
+        final long[] result = new long[4];
+        for (int i = 0; i < 4; i++) {
+            final int nx = chunkX + NEIGHBOR_OFFSETS[i][0];
+            final int nz = chunkZ + NEIGHBOR_OFFSETS[i][1];
+            final ChunkLightState state = this.chunkStates.get(ChunkPosition.chunkKey(nx, nz));
+            result[i] = state != null && state.sections != null ? state.sectionsHash : 0L;
+        }
+        return result;
+    }
+
+    private long[] collectNeighborRealSkyLightHashes(final int chunkX, final int chunkZ) {
+        final long[] result = new long[4];
+        for (int i = 0; i < 4; i++) {
+            final int nx = chunkX + NEIGHBOR_OFFSETS[i][0];
+            final int nz = chunkZ + NEIGHBOR_OFFSETS[i][1];
+            final ChunkLightState state = this.chunkStates.get(ChunkPosition.chunkKey(nx, nz));
+            result[i] = state != null && state.realSkyLight != null ? state.realSkyLightHash : 0L;
+        }
+        return result;
+    }
+
+    private long[] collectNeighborRealBlockLightHashes(final int chunkX, final int chunkZ) {
+        final long[] result = new long[4];
+        for (int i = 0; i < 4; i++) {
+            final int nx = chunkX + NEIGHBOR_OFFSETS[i][0];
+            final int nz = chunkZ + NEIGHBOR_OFFSETS[i][1];
+            final ChunkLightState state = this.chunkStates.get(ChunkPosition.chunkKey(nx, nz));
+            result[i] = state != null && state.realBlockLight != null ? state.realBlockLightHash : 0L;
         }
         return result;
     }
@@ -537,7 +651,9 @@ public class AsyncLightEngine implements ChunkLightProvider {
             final int nx = chunkX + NEIGHBOR_OFFSETS[i][0];
             final int nz = chunkZ + NEIGHBOR_OFFSETS[i][1];
             final long neighborKey = ChunkPosition.chunkKey(nx, nz);
-            if (this.sentChunks.contains(neighborKey) && this.cachedSections.containsKey(neighborKey)) {
+            final ChunkLightState state = this.chunkStates.get(neighborKey);
+            if (state != null && state.sentToClient && state.sections != null) {
+                state.lightDependencyGeneration++;
                 this.pendingLightUpdates.add(neighborKey);
             }
         }
@@ -547,55 +663,11 @@ public class AsyncLightEngine implements ChunkLightProvider {
      * Re-compute light for a single already-sent neighbor chunk and send LIGHT_UPDATE if changed.
      */
     private void updateSingleNeighborLight(final long neighborKey) {
-        final ChunkSection[] neighborSections = this.cachedSections.get(neighborKey);
-        if (neighborSections == null) return;
-        if (this.pendingAsyncLight.contains(neighborKey)) return; // async already pending
+        final ChunkLightState state = this.chunkStates.get(neighborKey);
+        if (state == null || !state.sentToClient || state.sections == null) return;
 
         final ChunkPosition pos = new ChunkPosition(neighborKey);
-        final int nx = pos.chunkX();
-        final int nz = pos.chunkZ();
-
-        final ChunkSection[][] neighborsOfNeighbor = collectNeighborSections(nx, nz);
-        final byte[][][] neighborSkyLightNeighbors = collectNeighborCachedSkyLight(nx, nz);
-        final byte[][][] neighborBlockLightNeighbors = collectNeighborCachedBlockLight(nx, nz);
-
-        final CustomMappingAccess access = this.user.get(CustomMappingSyncStorage.class).access();
-        final long lightCacheKey = computeCombinedLightCacheKey(access.lightProfileKey(), neighborSections, neighborsOfNeighbor, neighborSkyLightNeighbors, neighborBlockLightNeighbors);
-        final GlobalLightCache.LightCacheEntry cached = GlobalLightCache.getInstance().get(lightCacheKey);
-
-        if (cached != null) {
-            // Cache hit: synchronous compare and update
-            final byte[][] oldSkyLight = this.cachedSkyLight.get(neighborKey);
-            final byte[][] oldBlockLight = this.cachedBlockLight.get(neighborKey);
-            if (hasLightChanged(oldSkyLight, cached.skyLight()) || hasLightChanged(oldBlockLight, cached.blockLight())) {
-                this.cachedSkyLight.put(neighborKey, cached.skyLight());
-                this.cachedBlockLight.put(neighborKey, cached.blockLight());
-                this.sendLightUpdate(nx, nz, cached.skyLight(), cached.blockLight());
-            }
-        } else {
-            // Cache miss: async computation
-            this.pendingAsyncLight.add(neighborKey);
-            GlobalLightCache.getInstance().submitAsync(() -> {
-                final byte[][] newSkyLight = computeSkyLight(neighborSections, neighborsOfNeighbor, neighborSkyLightNeighbors, access);
-                final byte[][] newBlockLight = computeBlockLight(neighborSections, neighborsOfNeighbor, neighborBlockLightNeighbors, access);
-                GlobalLightCache.getInstance().put(lightCacheKey, newSkyLight, newBlockLight);
-
-                user.getChannel().eventLoop().execute(() -> {
-                    if (!user.getChannel().isActive()) return;
-                    if (!this.sentChunks.contains(neighborKey)) return;
-                    if (this.cachedSections.get(neighborKey) != neighborSections) return; // chunk was overwritten
-                    this.pendingAsyncLight.remove(neighborKey);
-                    final byte[][] oldSky = this.cachedSkyLight.get(neighborKey);
-                    final byte[][] oldBlock = this.cachedBlockLight.get(neighborKey);
-                    if (hasLightChanged(oldSky, newSkyLight) || hasLightChanged(oldBlock, newBlockLight)) {
-                        this.cachedSkyLight.put(neighborKey, newSkyLight);
-                        this.cachedBlockLight.put(neighborKey, newBlockLight);
-                        this.sendLightUpdate(nx, nz, newSkyLight, newBlockLight);
-                        this.markNeighborLightDirty(nx, nz);
-                    }
-                });
-            });
-        }
+        this.scheduleLightComputation(pos.chunkX(), pos.chunkZ(), neighborKey, state);
     }
 
     // --- Packet sending ---
@@ -670,8 +742,9 @@ public class AsyncLightEngine implements ChunkLightProvider {
         }
     }
 
-    private static boolean hasLightChanged(final byte[][] oldLight, final byte[][] newLight) {
+    private static boolean hasLightChanged(final byte[][] oldLight, final long oldHash, final byte[][] newLight, final long newHash) {
         if (oldLight == null || newLight == null) return oldLight != newLight;
+        if (oldHash != newHash) return true;
         if (oldLight.length != newLight.length) return true;
         for (int i = 0; i < oldLight.length; i++) {
             if (oldLight[i] == null && newLight[i] == null) continue;
@@ -683,66 +756,72 @@ public class AsyncLightEngine implements ChunkLightProvider {
 
     // --- Hash functions for light cache ---
 
-    private static long computeCombinedLightCacheKey(
+    private static long computeLightCacheKey(
             final long customMappingLightProfileKey,
-            final ChunkSection[] sections,
-            final ChunkSection[][] neighborSections,
-            final byte[][][] neighborCachedSkyLight,
-            final byte[][][] neighborCachedBlockLight) {
-        long hash = 0xcbf29ce484222325L; // FNV-1a offset basis
-        hash = fnv1a(hash, (int) customMappingLightProfileKey);
-        hash = fnv1a(hash, (int) (customMappingLightProfileKey >>> 32));
-        hash = hashSections(hash, sections);
-        if (neighborSections != null) {
-            for (final ChunkSection[] ns : neighborSections) {
-                hash = (ns != null) ? hashSections(hash, ns) : fnv1a(hash, 0);
-            }
-        }
-        hash = hashNeighborLight(hash, neighborCachedSkyLight);
-        hash = hashNeighborLight(hash, neighborCachedBlockLight);
+            final long sectionsHash,
+            final long[] neighborSectionHashes,
+            final long[] neighborRealSkyLightHashes,
+            final long[] neighborRealBlockLightHashes) {
+        long hash = FNV_OFFSET;
+        hash = fnv1aLong(hash, customMappingLightProfileKey);
+        hash = fnv1aLong(hash, sectionsHash);
+        hash = hashLongArray(hash, neighborSectionHashes);
+        hash = hashLongArray(hash, neighborRealSkyLightHashes);
+        hash = hashLongArray(hash, neighborRealBlockLightHashes);
         return hash;
     }
 
-    private static long hashSections(long hash, final ChunkSection[] sections) {
-        hash = fnv1a(hash, sections.length);
-        for (final ChunkSection section : sections) {
-            if (section == null) {
-                hash = fnv1a(hash, 0);
-                continue;
-            }
-            final DataPalette palette = section.palette(PaletteType.BLOCKS);
-            if (palette.size() == 1) {
-                hash = fnv1a(hash, palette.idByIndex(0));
-            } else {
-                for (int y = 0; y < 16; y++) {
-                    for (int z = 0; z < 16; z++) {
-                        for (int x = 0; x < 16; x++) {
-                            hash = fnv1a(hash, palette.idAt(x, y, z));
-                        }
-                    }
+    private static long hashSection(long hash, final ChunkSection section) {
+        if (section == null) {
+            return fnv1a(hash, 0);
+        }
+
+        final DataPalette palette = section.palette(PaletteType.BLOCKS);
+        if (palette.size() == 1) {
+            return fnv1a(hash, palette.idByIndex(0));
+        }
+
+        for (int y = 0; y < 16; y++) {
+            for (int z = 0; z < 16; z++) {
+                for (int x = 0; x < 16; x++) {
+                    hash = fnv1a(hash, palette.idAt(x, y, z));
                 }
             }
         }
         return hash;
     }
 
-    private static long hashNeighborLight(long hash, final byte[][][] neighborLight) {
-        if (neighborLight == null) return fnv1a(hash, 0);
-        for (final byte[][] nl : neighborLight) {
-            hash = hashLightData(hash, nl);
+    private static long hashLongArray(long hash, final long[] values) {
+        if (values == null) return fnv1a(hash, 0);
+        hash = fnv1a(hash, values.length);
+        for (final long value : values) {
+            hash = fnv1aLong(hash, value);
         }
         return hash;
     }
 
     private static long hashLightData(long hash, final byte[][] lightData) {
         if (lightData == null) return fnv1a(hash, 0);
+        hash = fnv1a(hash, lightData.length);
         for (final byte[] section : lightData) {
             if (section == null) {
                 hash = fnv1a(hash, 0);
-                continue;
+            } else {
+                for (int i = 0; i < section.length; i += Integer.BYTES) {
+                    int value = 0;
+                    for (int j = 0; j < Integer.BYTES && i + j < section.length; j++) {
+                        value |= (section[i + j] & 0xFF) << (j * Byte.SIZE);
+                    }
+                    hash = fnv1a(hash, value);
+                }
             }
-            hash = fnv1a(hash, Arrays.hashCode(section));
         }
+        return hash;
+    }
+
+    private static long fnv1aLong(long hash, final long value) {
+        hash = fnv1a(hash, (int) value);
+        hash = fnv1a(hash, (int) (value >>> 32));
         return hash;
     }
 
@@ -750,6 +829,39 @@ public class AsyncLightEngine implements ChunkLightProvider {
         hash ^= value;
         hash *= 0x100000001b3L;
         return hash;
+    }
+
+    private record LightJobInput(
+            long chunkKey,
+            int chunkX,
+            int chunkZ,
+            long generation,
+            long lightDependencyGeneration,
+            long cacheKey,
+            ChunkSection[] sections,
+            ChunkSection[][] neighborSections,
+            byte[][][] neighborSkyLight,
+            byte[][][] neighborBlockLight,
+            CustomMappingAccess access) {
+    }
+
+    private record LightComputation(byte[][] skyLight, byte[][] blockLight, long skyLightHash, long blockLightHash) {
+    }
+
+    private record SectionSnapshot(ChunkSection[] sections, long hash) {
+    }
+
+    private static final class ChunkLightState {
+        private ChunkSection[] sections;
+        private long sectionsHash;
+        private long generation;
+        private long lightDependencyGeneration;
+        private boolean sentToClient;
+        private byte[][] realSkyLight;
+        private byte[][] realBlockLight;
+        private long realSkyLightHash;
+        private long realBlockLightHash;
+        private long computingGeneration = NO_GENERATION;
     }
 
     // --- IntQueue ---

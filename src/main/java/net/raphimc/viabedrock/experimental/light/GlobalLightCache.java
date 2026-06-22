@@ -31,7 +31,7 @@ public final class GlobalLightCache {
         return INSTANCE;
     }
 
-    private final ConcurrentHashMap<Long, LightCacheEntry> cache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, RealLight> cache = new ConcurrentHashMap<>();
     private final ExecutorService executor = Executors.newFixedThreadPool(LIGHT_COMPUTE_THREADS, r -> {
         final Thread t = new Thread(r, "ViaBedrock-LightCompute");
         t.setDaemon(true);
@@ -45,20 +45,20 @@ public final class GlobalLightCache {
         this.executor.submit(task);
     }
 
-    public record LightCacheEntry(byte[][] skyLight, byte[][] blockLight, long timestamp) {
+    public record RealLight(byte[][] skyLight, byte[][] blockLight, long skyLightHash, long blockLightHash, long timestamp) {
     }
 
-    public LightCacheEntry get(final long key) {
-        final LightCacheEntry entry = this.cache.get(key);
+    public RealLight getRealLight(final long key) {
+        final RealLight entry = this.cache.get(key);
         if (entry == null) return null;
-        return new LightCacheEntry(deepCopy(entry.skyLight), deepCopy(entry.blockLight), entry.timestamp);
+        return new RealLight(deepCopy(entry.skyLight), deepCopy(entry.blockLight), entry.skyLightHash, entry.blockLightHash, entry.timestamp);
     }
 
-    public void put(final long key, final byte[][] skyLight, final byte[][] blockLight) {
+    public void putRealLight(final long key, final byte[][] skyLight, final byte[][] blockLight, final long skyLightHash, final long blockLightHash) {
         if (this.cache.size() >= MAX_ENTRIES) {
             this.evictOldest();
         }
-        this.cache.put(key, new LightCacheEntry(deepCopy(skyLight), deepCopy(blockLight), System.currentTimeMillis()));
+        this.cache.put(key, new RealLight(deepCopy(skyLight), deepCopy(blockLight), skyLightHash, blockLightHash, System.currentTimeMillis()));
     }
 
     public void invalidate(final long key) {
@@ -71,7 +71,7 @@ public final class GlobalLightCache {
 
     private void evictOldest() {
         final long cutoff = this.cache.values().stream()
-                .mapToLong(LightCacheEntry::timestamp)
+                .mapToLong(RealLight::timestamp)
                 .sorted()
                 .skip(MAX_ENTRIES / 4)
                 .findFirst().orElse(Long.MAX_VALUE);
