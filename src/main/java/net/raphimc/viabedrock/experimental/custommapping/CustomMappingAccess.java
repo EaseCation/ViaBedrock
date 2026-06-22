@@ -38,6 +38,7 @@ public final class CustomMappingAccess {
     private final IntSet allowedJavaBlockStates;
     private final IntSet allowedBlockEntityTypes;
     private final Map<String, Integer> blockEntityTypeIds;
+    private final Map<String, Integer> itemIds;
     private final Map<String, BlockEntityRule> identifierRules;
     private final int maxJavaBlockStateId;
     private final long lightProfileKey;
@@ -57,6 +58,7 @@ public final class CustomMappingAccess {
         this.allowedJavaBlockStates = builder.allowedJavaBlockStates;
         this.allowedBlockEntityTypes = builder.allowedBlockEntityTypes;
         this.blockEntityTypeIds = Map.copyOf(builder.blockEntityTypeIds);
+        this.itemIds = Map.copyOf(builder.itemIds);
         this.identifierRules = Map.copyOf(builder.identifierRules);
         this.maxJavaBlockStateId = builder.maxJavaBlockStateId;
         this.lightProfileKey = builder.lightProfileKey;
@@ -179,6 +181,10 @@ public final class CustomMappingAccess {
         return identifier != null ? this.blockEntityTypeIdByBedrockIdentifier(identifier) : -1;
     }
 
+    public int customItemSourceId(final String bedrockIdentifier) {
+        return this.itemIds.getOrDefault(bedrockIdentifier, -1);
+    }
+
     public int emitLight(final int javaBlockStateId) {
         if (javaBlockStateId >= 0 && javaBlockStateId < BedrockProtocol.MAPPINGS.getVanillaBlockStateCount()) return BedrockProtocol.MAPPINGS.getEmitLight(javaBlockStateId);
         final int emit = this.javaEmit.get(javaBlockStateId);
@@ -256,6 +262,7 @@ public final class CustomMappingAccess {
         private final IntOpenHashSet allowedJavaBlockStates = new IntOpenHashSet();
         private final IntOpenHashSet allowedBlockEntityTypes = new IntOpenHashSet();
         private final Map<String, Integer> blockEntityTypeIds = new HashMap<>();
+        private final Map<String, Integer> itemIds = new HashMap<>();
         private final Map<String, BlockEntityRule> identifierRules = new HashMap<>();
         private int maxJavaBlockStateId = BedrockProtocol.MAPPINGS.getVanillaBlockStateCount() - 1;
         private long lightProfileKey = 0xcbf29ce484222325L;
@@ -287,6 +294,10 @@ public final class CustomMappingAccess {
             this.blockEntityTypeIds.put(javaIdentifier, rawId);
             this.blockEntityTypeIds.put("mod_block:" + bedrockIdentifier, rawId);
             this.identifierRules.put(bedrockIdentifier, rule);
+        }
+
+        public void addItem(final String bedrockIdentifier, final int rawId) {
+            this.itemIds.put(bedrockIdentifier, rawId);
         }
 
         public CustomMappingAccess build() {

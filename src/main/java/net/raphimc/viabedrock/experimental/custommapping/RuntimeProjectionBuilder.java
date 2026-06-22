@@ -80,7 +80,7 @@ public final class RuntimeProjectionBuilder {
         for (SnapshotProfile.BlockEntityTypeMapping type : this.profile.blockEntityTypes()) {
             blockEntityTypes.add(new SnapshotProfile.BlockEntityTypeMapping(type.bedrockIdentifier(), type.javaIdentifier(), nextBlockEntitySourceId++, type.targetJavaRawId(), type.rule()));
         }
-        final RuntimeProjection projection = new RuntimeProjection(this.blockStates, blockEntityTypes);
+        final RuntimeProjection projection = new RuntimeProjection(this.blockStates, blockEntityTypes, this.profile.items());
         if (this.cacheKey != null) {
             RuntimeProjectionCache.getInstance().put(this.cacheKey, projection);
         }

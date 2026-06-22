@@ -14,22 +14,28 @@ public final class SnapshotProfile {
 
     private final Map<CustomMappingSnapshot.TypedBedrockState, BlockStateMapping> blockStatesByState;
     private final List<BlockEntityTypeMapping> blockEntityTypes;
+    private final Map<String, ItemMapping> itemsByBedrockIdentifier;
+    private final List<ItemMapping> items;
     private final List<String> diagnostics;
     private final long cacheKey;
 
     private SnapshotProfile(
             final Map<CustomMappingSnapshot.TypedBedrockState, BlockStateMapping> blockStatesByState,
             final List<BlockEntityTypeMapping> blockEntityTypes,
+            final Map<String, ItemMapping> itemsByBedrockIdentifier,
+            final List<ItemMapping> items,
             final List<String> diagnostics,
             final long cacheKey) {
         this.blockStatesByState = Map.copyOf(blockStatesByState);
         this.blockEntityTypes = List.copyOf(blockEntityTypes);
+        this.itemsByBedrockIdentifier = Map.copyOf(itemsByBedrockIdentifier);
+        this.items = List.copyOf(items);
         this.diagnostics = List.copyOf(diagnostics);
         this.cacheKey = cacheKey;
     }
 
     public static SnapshotProfile empty() {
-        return new SnapshotProfile(Map.of(), List.of(), List.of(), CustomMappingProfileCache.EMPTY_KEY);
+        return new SnapshotProfile(Map.of(), List.of(), Map.of(), List.of(), List.of(), CustomMappingProfileCache.EMPTY_KEY);
     }
 
     public static SnapshotProfile fromSnapshot(final CustomMappingSnapshot snapshot) {
@@ -47,6 +53,15 @@ public final class SnapshotProfile {
             final BlockEntityTypeMapping mapping = new BlockEntityTypeMapping(type.bedrockIdentifier(), type.javaIdentifier(), nextBlockEntitySourceId++, type.targetJavaRawId(), rule);
             entityTypes.add(mapping);
             entityTypesByBedrockIdentifier.put(type.bedrockIdentifier(), mapping);
+        }
+
+        final List<ItemMapping> items = new ArrayList<>();
+        final Map<String, ItemMapping> itemsByBedrockIdentifier = new HashMap<>();
+        int nextItemSourceId = BedrockProtocol.MAPPINGS.getJavaItems().size();
+        for (CustomMappingSnapshot.ItemEntry item : snapshot.items()) {
+            final ItemMapping mapping = new ItemMapping(item.bedrockIdentifier(), nextItemSourceId++, item.targetJavaRawId());
+            items.add(mapping);
+            itemsByBedrockIdentifier.put(item.bedrockIdentifier(), mapping);
         }
 
         final Map<CustomMappingSnapshot.TypedBedrockState, BlockStateMapping> states = new HashMap<>();
@@ -80,7 +95,7 @@ public final class SnapshotProfile {
         if (!diagnostics.isEmpty()) {
             ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Custom mapping snapshot was locally degraded: " + diagnostics.size() + " issue(s)");
         }
-        return new SnapshotProfile(states, entityTypes, diagnostics, cacheKey);
+        return new SnapshotProfile(states, entityTypes, itemsByBedrockIdentifier, items, diagnostics, cacheKey);
     }
 
     public BlockStateMapping blockState(final BlockState runtimeState) {
@@ -91,12 +106,24 @@ public final class SnapshotProfile {
         return this.blockEntityTypes;
     }
 
+    public ItemMapping item(final String bedrockIdentifier) {
+        return this.itemsByBedrockIdentifier.get(bedrockIdentifier);
+    }
+
+    public List<ItemMapping> items() {
+        return this.items;
+    }
+
     public int blockStateCount() {
         return this.blockStatesByState.size();
     }
 
     public int blockEntityTypeCount() {
         return this.blockEntityTypes.size();
+    }
+
+    public int itemCount() {
+        return this.items.size();
     }
 
     public int maxTargetJavaRawId() {
@@ -115,6 +142,14 @@ public final class SnapshotProfile {
         return max;
     }
 
+    public int maxTargetJavaItemRawId() {
+        int max = -1;
+        for (ItemMapping mapping : this.items) {
+            max = Math.max(max, mapping.targetJavaRawId());
+        }
+        return max;
+    }
+
     public List<String> diagnostics() {
         return this.diagnostics;
     }
@@ -127,6 +162,9 @@ public final class SnapshotProfile {
     }
 
     public record BlockEntityTypeMapping(String bedrockIdentifier, String javaIdentifier, int sourceJavaRawId, int targetJavaRawId, CustomMappingAccess.BlockEntityRule rule) {
+    }
+
+    public record ItemMapping(String bedrockIdentifier, int sourceJavaRawId, int targetJavaRawId) {
     }
 
     private static int rawIdFor(final String blockStateString) {

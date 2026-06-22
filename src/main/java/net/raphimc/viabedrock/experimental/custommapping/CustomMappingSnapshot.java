@@ -21,11 +21,13 @@ public record CustomMappingSnapshot(
         int javaProtocolVersion,
         int flags,
         List<BlockStateEntry> blockStates,
-        List<BlockEntityTypeEntry> blockEntityTypes) {
+        List<BlockEntityTypeEntry> blockEntityTypes,
+        List<ItemEntry> items) {
 
     public CustomMappingSnapshot {
         blockStates = List.copyOf(blockStates);
         blockEntityTypes = List.copyOf(blockEntityTypes);
+        items = List.copyOf(items);
     }
 
     public enum PropertyValueType {
@@ -165,18 +167,25 @@ public record CustomMappingSnapshot(
             CustomMappingAccess.BlockEntityRule rule) {
     }
 
+    public record ItemEntry(
+            String bedrockIdentifier,
+            int targetJavaRawId) {
+    }
+
     public static CustomMappingSnapshot decode(
             final byte[] body,
             final int maxSnapshotBytes,
             final int maxCustomBlockStates,
             final int maxCustomBlockEntityTypes,
+            final int maxCustomItems,
             final int maxJavaBlockStateId) {
         final Reader r = new Reader(body, maxSnapshotBytes);
         final int schemaVersion = r.readNonNegativeVarInt("schema version");
         // Schema 3 adds a per-block-state seconds_to_destroy float after the block entity rule (for instant-break
         // detection). Schema 2 is still accepted for forward/backward compatibility during rollout; its block states
         // are read without that field and default to NaN (treated as "unknown", i.e. not instant).
-        if (schemaVersion != 2 && schemaVersion != 3) throw new IllegalArgumentException("Unsupported BedrockLoader custom mapping schema " + schemaVersion + " (expected 2 or 3)");
+        // Schema 4 appends Java custom item raw id entries after the block entity type table.
+        if (schemaVersion != 2 && schemaVersion != 3 && schemaVersion != 4) throw new IllegalArgumentException("Unsupported BedrockLoader custom mapping schema " + schemaVersion + " (expected 2, 3 or 4)");
         final int javaProtocolVersion = r.readNonNegativeVarInt("java protocol");
         final int flags = r.readNonNegativeVarInt("flags");
 
@@ -291,8 +300,34 @@ public record CustomMappingSnapshot(
             blockEntityTypes.add(new BlockEntityTypeEntry(bedrockIdentifier, javaIdentifier, targetJavaRawId, rule));
         }
 
+        final List<ItemEntry> items;
+        if (schemaVersion >= 4) {
+            final int itemCount = r.readNonNegativeVarInt("custom item count");
+            if (itemCount > maxCustomItems) throw new IllegalArgumentException("Invalid custom item count");
+            items = new ArrayList<>(itemCount);
+            final HashSet<Integer> itemRawIds = new HashSet<>();
+            final HashSet<String> itemIdentifiers = new HashSet<>();
+            WireItemOrder previousItemOrder = null;
+            for (int i = 0; i < itemCount; i++) {
+                final int bedrockIdentifierId = id(r, strings);
+                final String bedrockIdentifier = strings[bedrockIdentifierId];
+                if (isPlaceholder(bedrockIdentifier)) throw new IllegalArgumentException("Placeholder item in custom mapping snapshot");
+                if (bedrockIdentifier.startsWith("minecraft:")) throw new IllegalArgumentException("Custom item overrides vanilla identifier: " + bedrockIdentifier);
+                final int targetJavaRawId = r.readNonNegativeVarInt("target item raw id");
+                if ((long) targetJavaRawId >= (long) Integer.MAX_VALUE) throw new IllegalArgumentException("Custom item id exceeds configured maximum");
+                if (!itemRawIds.add(targetJavaRawId)) throw new IllegalArgumentException("Duplicate custom item raw id");
+                if (!itemIdentifiers.add(bedrockIdentifier)) throw new IllegalArgumentException("Duplicate custom item identifier");
+                final WireItemOrder order = new WireItemOrder(bedrockIdentifierId, targetJavaRawId);
+                if (previousItemOrder != null && previousItemOrder.compareTo(order) >= 0) throw new IllegalArgumentException("Items are not sorted");
+                previousItemOrder = order;
+                items.add(new ItemEntry(bedrockIdentifier, targetJavaRawId));
+            }
+        } else {
+            items = List.of();
+        }
+
         r.ensureFullyRead();
-        return new CustomMappingSnapshot(schemaVersion, javaProtocolVersion, flags, blockStates, blockEntityTypes);
+        return new CustomMappingSnapshot(schemaVersion, javaProtocolVersion, flags, blockStates, blockEntityTypes, items);
     }
 
     private static int id(final Reader r, final String[] strings) {
@@ -371,6 +406,15 @@ public record CustomMappingSnapshot(
             int cmp = Integer.compare(this.bedrockIdentifierId, other.bedrockIdentifierId);
             if (cmp != 0) return cmp;
             cmp = Integer.compare(this.javaIdentifierId, other.javaIdentifierId);
+            if (cmp != 0) return cmp;
+            return Integer.compare(this.javaRawId, other.javaRawId);
+        }
+    }
+
+    private record WireItemOrder(int bedrockIdentifierId, int javaRawId) implements Comparable<WireItemOrder> {
+        @Override
+        public int compareTo(final WireItemOrder other) {
+            int cmp = Integer.compare(this.bedrockIdentifierId, other.bedrockIdentifierId);
             if (cmp != 0) return cmp;
             return Integer.compare(this.javaRawId, other.javaRawId);
         }
