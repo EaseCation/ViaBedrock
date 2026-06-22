@@ -78,6 +78,8 @@ public class BlockStateRewriter implements StorableObject {
         final Set<String> reportedMissingCustomRuntimeProperties = new HashSet<>();
         final Map<String, Integer> missingCustomRuntimeCounts = new HashMap<>();
         final Map<String, String> missingCustomRuntimeExamples = new HashMap<>();
+        final Map<String, Integer> missingVanillaRuntimeCounts = new HashMap<>();
+        final Map<String, String> missingVanillaRuntimeExamples = new HashMap<>();
 
         for (int i = 0; i < bedrockBlockStates.size(); i++) {
             final BedrockBlockState bedrockBlockState = bedrockBlockStates.get(i);
@@ -114,27 +116,25 @@ public class BlockStateRewriter implements StorableObject {
                     final String identifier = bedrockBlockState.namespacedIdentifier();
                     missingCustomRuntimeCounts.merge(identifier, 1, Integer::sum);
                     missingCustomRuntimeExamples.putIfAbsent(identifier, bedrockBlockState.toBlockStateString());
-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing custom mapping snapshot entry for runtime block state: " + bedrockBlockState.toBlockStateString());
                     if (reportedMissingCustomRuntimeProperties.add(identifier)) {
                         final CompoundTag properties = customRuntimeBlockProperties.get(identifier);
                         final String diagnostics = properties != null ? RuntimeProjectionBuilder.describeBlockProperties(properties) : "<missing START_GAME block properties>";
                         ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing custom mapping START_GAME block properties for " + identifier + ": " + diagnostics);
                     }
                 } else {
-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing bedrock -> java block state mapping: " + bedrockBlockState.toBlockStateString());
+                    final String identifier = bedrockBlockState.namespacedIdentifier();
+                    missingVanillaRuntimeCounts.merge(identifier, 1, Integer::sum);
+                    missingVanillaRuntimeExamples.putIfAbsent(identifier, bedrockBlockState.toBlockStateString());
                     final int javaId = javaBlockStates.get(bedrockToJavaBlockStates.get(BedrockBlockState.INFO_UPDATE));
                     this.blockStateIdMappings.put(bedrockId, javaId);
                 }
             }
         }
         if (!missingCustomRuntimeCounts.isEmpty()) {
-            final int missingStateCount = missingCustomRuntimeCounts.values().stream().mapToInt(Integer::intValue).sum();
-            final String topMissing = missingCustomRuntimeCounts.entrySet().stream()
-                    .sorted(Map.Entry.<String, Integer>comparingByValue().reversed().thenComparing(Map.Entry.comparingByKey()))
-                    .limit(20)
-                    .map(entry -> entry.getKey() + "=" + entry.getValue() + " example=" + missingCustomRuntimeExamples.get(entry.getKey()))
-                    .collect(Collectors.joining("; "));
-            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing custom mapping snapshot summary: identifiers=" + missingCustomRuntimeCounts.size() + ", states=" + missingStateCount + ", top=" + topMissing);
+            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing custom mapping snapshot summary: " + formatMissingRuntimeSummary(missingCustomRuntimeCounts, missingCustomRuntimeExamples));
+        }
+        if (!missingVanillaRuntimeCounts.isEmpty()) {
+            ViaBedrock.getPlatform().getLogger().log(Level.INFO, "Missing bedrock -> java block state mapping summary: " + formatMissingRuntimeSummary(missingVanillaRuntimeCounts, missingVanillaRuntimeExamples));
         }
         if (runtimeProjectionBuilder != null) {
             try {
@@ -208,6 +208,16 @@ public class BlockStateRewriter implements StorableObject {
 
     public String tag(final int bedrockBlockStateId) {
         return this.blockStateTags.get(bedrockBlockStateId);
+    }
+
+    private static String formatMissingRuntimeSummary(final Map<String, Integer> counts, final Map<String, String> examples) {
+        final int missingStateCount = counts.values().stream().mapToInt(Integer::intValue).sum();
+        final String topMissing = counts.entrySet().stream()
+                .sorted(Map.Entry.<String, Integer>comparingByValue().reversed().thenComparing(Map.Entry.comparingByKey()))
+                .limit(20)
+                .map(entry -> entry.getKey() + "=" + entry.getValue() + " example=" + examples.get(entry.getKey()))
+                .collect(Collectors.joining("; "));
+        return "identifiers=" + counts.size() + ", states=" + missingStateCount + ", top=" + topMissing;
     }
 
 }
