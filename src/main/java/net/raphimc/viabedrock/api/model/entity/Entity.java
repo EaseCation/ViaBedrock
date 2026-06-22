@@ -26,6 +26,7 @@ import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.util.EnumUtil;
+import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.experimental.rewriter.EntityMetadataRewriter;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
@@ -130,6 +131,7 @@ public class Entity {
             }
         }
         this.onEntityDataChanged();
+        ExperimentalFeatures.dispatchEntityDataChanged(this.user, this, entityData);
     }
 
     public void playSound(final SharedTypes_Legacy_LevelSoundEvent soundEvent) {

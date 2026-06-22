@@ -21,6 +21,7 @@ import com.viaversion.viaversion.api.Via;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.minecraft.BlockFace;
 import com.viaversion.viaversion.api.minecraft.BlockPosition;
+import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.libs.fastutil.longs.LongArrayList;
@@ -41,6 +42,7 @@ import net.raphimc.viabedrock.experimental.model.inventory.InventoryTransactionD
 import net.raphimc.viabedrock.experimental.model.map.MapDecoration;
 import net.raphimc.viabedrock.experimental.model.map.MapObject;
 import net.raphimc.viabedrock.experimental.model.map.MapTrackedObject;
+import net.raphimc.viabedrock.experimental.model.PlayerAuthInputContext;
 import net.raphimc.viabedrock.experimental.block.CustomBlockMappingModule;
 import net.raphimc.viabedrock.experimental.camera.CameraModule;
 import net.raphimc.viabedrock.experimental.inventory.CraftingDataModule;
@@ -53,6 +55,7 @@ import net.raphimc.viabedrock.experimental.npc.NpcDialogueModule;
 import net.raphimc.viabedrock.experimental.modinterface.ModUIClientModule;
 import net.raphimc.viabedrock.experimental.resourcepack.ResourcePackModule;
 import net.raphimc.viabedrock.experimental.rewriter.InventoryTransactionRewriter;
+import net.raphimc.viabedrock.experimental.riding.RidingModule;
 import net.raphimc.viabedrock.experimental.storage.BlockPlacementAckTracker;
 import net.raphimc.viabedrock.experimental.storage.MapTracker;
 import net.raphimc.viabedrock.experimental.storage.MultilineNametagTracker;
@@ -72,6 +75,7 @@ import net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.PlayerActionAction;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
+import net.raphimc.viabedrock.protocol.model.EntityLink;
 import net.raphimc.viabedrock.protocol.model.Position3f;
 import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
@@ -158,6 +162,50 @@ public class ExperimentalFeatures {
                 module.onEntityRemoved(user, entity);
             } catch (final Throwable e) {
                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error in module onEntityRemoved", e);
+            }
+        }
+    }
+
+    public static void dispatchEntityLinks(final UserConnection user, final EntityLink[] links) {
+        if (links.length == 0) {
+            return;
+        }
+
+        for (final FeatureModule module : MODULES) {
+            try {
+                module.onEntityLinks(user, links);
+            } catch (final Throwable e) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error in module onEntityLinks", e);
+            }
+        }
+    }
+
+    public static void dispatchEntityDataChanged(final UserConnection user, final Entity entity, final EntityData[] entityData) {
+        for (final FeatureModule module : MODULES) {
+            try {
+                module.onEntityDataChanged(user, entity, entityData);
+            } catch (final Throwable e) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error in module onEntityDataChanged", e);
+            }
+        }
+    }
+
+    public static void dispatchEntityMoved(final UserConnection user, final Entity entity) {
+        for (final FeatureModule module : MODULES) {
+            try {
+                module.onEntityMoved(user, entity);
+            } catch (final Throwable e) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error in module onEntityMoved", e);
+            }
+        }
+    }
+
+    public static void dispatchPlayerAuthInput(final UserConnection user, final ClientPlayerEntity clientPlayer, final PlayerAuthInputContext context) {
+        for (final FeatureModule module : MODULES) {
+            try {
+                module.onPlayerAuthInput(user, clientPlayer, context);
+            } catch (final Throwable e) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error in module onPlayerAuthInput", e);
             }
         }
     }
@@ -249,6 +297,7 @@ public class ExperimentalFeatures {
         registerModule(new AsyncLightModule());
         registerModule(new CraftingDataModule());
         registerModule(new ClientAuthInventoryModule());
+        registerModule(new RidingModule());
     }
 
     private static ItemReleaseInventoryTransaction_ActionType releaseActionForItem(final ItemRewriter itemRewriter, final BedrockItem item, final int usingTicks) {

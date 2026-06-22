@@ -71,6 +71,7 @@ public class ScriptDebugTextTracker extends StoredObject {
     private static final byte BILLBOARD_CENTER = 3; // face camera on all axes
     private static final byte STYLE_SEE_THROUGH = 0x02; // render through blocks
     private static final float DEFAULT_VIEW_RANGE_BLOCKS = 64.0f; // view_range == 1.0 ~= 64 blocks
+    private static final String PASSENGER_SOURCE = "script-debug-text";
 
     private final Map<Long, ShapeInfo> shapes = new HashMap<>();
     private long tickCounter = 0;
@@ -252,7 +253,7 @@ public class ScriptDebugTextTracker extends StoredObject {
             // When attached, the shape's location is an offset from the entity; SET_PASSENGERS keeps
             // the display synced to the host. The passenger attachment point differs from the entity
             // root, so the offset is approximate, but the display correctly follows the entity.
-            sendSetPassengers(hostJavaId, javaId);
+            refreshHostPassengers(hostJavaId);
         }
     }
 
@@ -303,8 +304,9 @@ public class ScriptDebugTextTracker extends StoredObject {
     private void remove(final long id) {
         final ShapeInfo info = shapes.remove(id);
         if (info == null) return;
-        // Removing the entity client-side automatically detaches it from any vehicle's passenger
-        // list, so we don't touch SET_PASSENGERS here (which would disturb sibling displays).
+        if (info.attachedHostJavaId != -1) {
+            refreshHostPassengers(info.attachedHostJavaId);
+        }
         final PacketWrapper removeEntities = PacketWrapper.create(ClientboundPackets26_1.REMOVE_ENTITIES, this.user());
         removeEntities.write(Types.VAR_INT_ARRAY_PRIMITIVE, new int[]{info.javaId});
         removeEntities.send(BedrockProtocol.class);
@@ -313,6 +315,10 @@ public class ScriptDebugTextTracker extends StoredObject {
     public void clearAll() {
         // Java client clears all entities on dimension change, so just drop tracking state.
         shapes.clear();
+        final JavaPassengerTracker passengerTracker = this.user().get(JavaPassengerTracker.class);
+        if (passengerTracker != null) {
+            passengerTracker.clearSource(PASSENGER_SOURCE);
+        }
     }
 
     // ---- Tick (finite lifespan expiry) ----
@@ -337,11 +343,15 @@ public class ScriptDebugTextTracker extends StoredObject {
 
     // ---- Helpers ----
 
-    private void sendSetPassengers(final int vehicleJavaId, final int... passengerJavaIds) {
-        final PacketWrapper setPassengers = PacketWrapper.create(ClientboundPackets26_1.SET_PASSENGERS, this.user());
-        setPassengers.write(Types.VAR_INT, vehicleJavaId); // vehicle entity id
-        setPassengers.write(Types.VAR_INT_ARRAY_PRIMITIVE, passengerJavaIds); // passenger entity ids
-        setPassengers.send(BedrockProtocol.class);
+    private void refreshHostPassengers(final int vehicleJavaId) {
+        final int[] passengerJavaIds = shapes.values().stream()
+                .filter(shape -> shape.attachedHostJavaId == vehicleJavaId)
+                .mapToInt(shape -> shape.javaId)
+                .toArray();
+        final JavaPassengerTracker passengerTracker = this.user().get(JavaPassengerTracker.class);
+        if (passengerTracker != null) {
+            passengerTracker.setVirtualPassengers(PASSENGER_SOURCE, vehicleJavaId, passengerJavaIds);
+        }
     }
 
     private static int textDisplayIndex(final String fieldName) {

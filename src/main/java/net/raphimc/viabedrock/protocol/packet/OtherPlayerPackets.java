@@ -34,6 +34,7 @@ import net.raphimc.viabedrock.api.util.BitSets;
 import net.raphimc.viabedrock.api.util.MathUtil;
 import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.api.util.StringUtil;
+import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.GameType;
@@ -114,6 +115,7 @@ public class OtherPlayerPackets {
 
             entity.sendInitialEntityData();
             entity.updateEntityData(entityData);
+            ExperimentalFeatures.dispatchEntityLinks(wrapper.user(), entityLinks);
         });
         protocol.registerClientbound(ClientboundBedrockPackets.MOVE_PLAYER, ClientboundPackets26_1.ENTITY_POSITION_SYNC, wrapper -> {
             final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
@@ -163,6 +165,7 @@ public class OtherPlayerPackets {
                 entity.setPosition(position);
                 entity.setRotation(rotation);
                 entity.setOnGround(onGround);
+                ExperimentalFeatures.dispatchEntityMoved(wrapper.user(), entity);
                 wrapper.setPacketType(ClientboundPackets26_1.PLAYER_POSITION);
                 clientPlayer.writePlayerPositionPacketToClient(wrapper, Relative.NONE, mode == PlayerPositionModeComponent_PositionMode.Respawn);
                 return;
@@ -171,6 +174,7 @@ public class OtherPlayerPackets {
             entity.setPosition(position);
             entity.setRotation(rotation);
             entity.setOnGround(onGround);
+            ExperimentalFeatures.dispatchEntityMoved(wrapper.user(), entity);
 
             wrapper.write(Types.VAR_INT, entity.javaId()); // entity id
             wrapper.write(Types.DOUBLE, (double) position.x()); // x

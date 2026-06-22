@@ -18,11 +18,15 @@
 package net.raphimc.viabedrock.experimental;
 
 import com.viaversion.viaversion.api.connection.UserConnection;
+import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
+import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
 import net.raphimc.viabedrock.api.model.entity.Entity;
+import net.raphimc.viabedrock.experimental.model.PlayerAuthInputContext;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.data.BedrockMappingData;
 import net.raphimc.viabedrock.protocol.data.enums.Dimension;
+import net.raphimc.viabedrock.protocol.model.EntityLink;
 import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
 
 import java.util.Set;
@@ -63,6 +67,31 @@ public interface FeatureModule {
      * Called before an entity is removed from the EntityTracker.
      */
     default void onEntityRemoved(UserConnection user, Entity entity) {
+    }
+
+    /**
+     * Called after ADD_ENTITY/ADD_PLAYER has been translated and the Bedrock entity links from
+     * the spawn packet are available.
+     */
+    default void onEntityLinks(UserConnection user, EntityLink[] links) {
+    }
+
+    /**
+     * Called after an entity has stored a Bedrock entity data batch.
+     */
+    default void onEntityDataChanged(UserConnection user, Entity entity, EntityData[] entityData) {
+    }
+
+    /**
+     * Called after an entity position/rotation update has been applied.
+     */
+    default void onEntityMoved(UserConnection user, Entity entity) {
+    }
+
+    /**
+     * Called while writing PLAYER_AUTH_INPUT, after common fields are computed and before serialization.
+     */
+    default void onPlayerAuthInput(UserConnection user, ClientPlayerEntity clientPlayer, PlayerAuthInputContext context) {
     }
 
     /**

@@ -73,6 +73,7 @@ public class MultilineNametagTracker extends StoredObject {
     private static final float LINE_HEIGHT = 0.28f;
     private static final float ARMOR_STAND_BASE_HEIGHT = 1.975f;
     private static final float PASSENGER_OFFSET = 0.0625f;
+    private static final String PASSENGER_SOURCE = "multiline-nametag";
 
     private final Map<Long, NametagDisplayInfo> displays = new HashMap<>();
     // Reverse mapping: host entity Java ID → entity uniqueId
@@ -257,6 +258,10 @@ public class MultilineNametagTracker extends StoredObject {
     public void clearAll() {
         displays.clear();
         hostJavaIdToUniqueId.clear();
+        final JavaPassengerTracker passengerTracker = this.user().get(JavaPassengerTracker.class);
+        if (passengerTracker != null) {
+            passengerTracker.clearSource(PASSENGER_SOURCE);
+        }
     }
 
     // ---- TEXT_DISPLAY strategy (non-player entities) ----
@@ -665,14 +670,13 @@ public class MultilineNametagTracker extends StoredObject {
     // ---- Shared methods ----
 
     /**
-     * Sends SET_PASSENGERS to make virtual entities ride (or stop riding) the host entity.
-     * With no passenger IDs, this clears all passengers from the vehicle.
+     * Updates this feature's virtual passengers without overwriting real Bedrock riding passengers.
      */
     private void sendSetPassengers(final int vehicleJavaId, final int... passengerJavaIds) {
-        final PacketWrapper setPassengers = PacketWrapper.create(ClientboundPackets26_1.SET_PASSENGERS, this.user());
-        setPassengers.write(Types.VAR_INT, vehicleJavaId); // vehicle entity id
-        setPassengers.write(Types.VAR_INT_ARRAY_PRIMITIVE, passengerJavaIds); // passenger entity ids
-        setPassengers.send(BedrockProtocol.class);
+        final JavaPassengerTracker passengerTracker = this.user().get(JavaPassengerTracker.class);
+        if (passengerTracker != null) {
+            passengerTracker.setVirtualPassengers(PASSENGER_SOURCE, vehicleJavaId, passengerJavaIds);
+        }
     }
 
     // ---- Utilities ----

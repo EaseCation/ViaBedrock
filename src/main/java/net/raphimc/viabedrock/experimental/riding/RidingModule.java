@@ -1,0 +1,196 @@
+/*
+ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
+ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+package net.raphimc.viabedrock.experimental.riding;
+
+import com.viaversion.viaversion.api.connection.UserConnection;
+import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
+import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
+import com.viaversion.viaversion.api.type.Types;
+import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ServerboundPackets26_1;
+import net.raphimc.viabedrock.ViaBedrock;
+import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
+import net.raphimc.viabedrock.api.model.entity.Entity;
+import net.raphimc.viabedrock.experimental.FeatureModule;
+import net.raphimc.viabedrock.experimental.model.PlayerAuthInputContext;
+import net.raphimc.viabedrock.experimental.storage.JavaPassengerTracker;
+import net.raphimc.viabedrock.experimental.storage.RidingTracker;
+import net.raphimc.viabedrock.experimental.util.ProtocolUtil;
+import net.raphimc.viabedrock.protocol.BedrockProtocol;
+import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
+import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
+import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InteractPacket_Action;
+import net.raphimc.viabedrock.protocol.data.enums.java.InputFlag;
+import net.raphimc.viabedrock.protocol.data.enums.java.generated.PlayerCommandAction;
+import net.raphimc.viabedrock.protocol.model.EntityLink;
+import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+
+import java.util.EnumSet;
+import java.util.Set;
+import java.util.logging.Level;
+
+public class RidingModule implements FeatureModule {
+
+    @Override
+    public void onStorageRegistration(final UserConnection user) {
+        user.put(new JavaPassengerTracker(user));
+        user.put(new RidingTracker(user));
+    }
+
+    @Override
+    public void onPacketRegistration(final BedrockProtocol protocol) {
+        protocol.registerClientbound(ClientboundBedrockPackets.SET_ENTITY_LINK, null, wrapper -> {
+            wrapper.cancel();
+            final RidingTracker tracker = wrapper.user().get(RidingTracker.class);
+            if (tracker == null) {
+                return;
+            }
+            try {
+                tracker.handleLink(wrapper.read(BedrockTypes.ENTITY_LINK));
+            } catch (final Exception e) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to inspect SET_ENTITY_LINK riding link", e);
+            }
+        });
+
+        ProtocolUtil.prependServerbound(protocol, ServerboundPackets26_1.PLAYER_INPUT, wrapper -> {
+            final RidingTracker tracker = wrapper.user().get(RidingTracker.class);
+            if (tracker == null) {
+                return;
+            }
+
+            final Set<InputFlag> inputFlags = inputFlags(wrapper.passthrough(Types.BYTE));
+            final Entity vehicle = tracker.localVehicle();
+            if (vehicle == null || !inputFlags.contains(InputFlag.SHIFT)) {
+                tracker.updateRidingShift(false);
+                return;
+            }
+
+            if (tracker.updateRidingShift(true)) {
+                sendInteract(wrapper.user(), vehicle.runtimeId(), InteractPacket_Action.StopRiding);
+            }
+            wrapper.cancel();
+        });
+
+        ProtocolUtil.prependServerbound(protocol, ServerboundPackets26_1.PLAYER_COMMAND, wrapper -> {
+            wrapper.passthrough(Types.VAR_INT); // entity id
+            final int actionId = wrapper.passthrough(Types.VAR_INT); // action
+            wrapper.passthrough(Types.VAR_INT); // data
+            if (actionId < 0 || actionId >= PlayerCommandAction.values().length) {
+                wrapper.cancel();
+                return;
+            }
+
+            final PlayerCommandAction action = PlayerCommandAction.values()[actionId];
+            switch (action) {
+                case START_RIDING_JUMP, STOP_RIDING_JUMP -> wrapper.cancel();
+                case OPEN_INVENTORY -> {
+                    final RidingTracker tracker = wrapper.user().get(RidingTracker.class);
+                    final Entity vehicle = tracker != null ? tracker.localVehicle() : null;
+                    if (vehicle != null) {
+                        sendInteract(wrapper.user(), vehicle.runtimeId(), InteractPacket_Action.OpenInventory);
+                    }
+                    wrapper.cancel();
+                }
+            }
+        });
+
+        ProtocolUtil.prependServerbound(protocol, ServerboundPackets26_1.MOVE_VEHICLE, wrapper -> {
+            final double x = wrapper.passthrough(Types.DOUBLE); // x
+            final double y = wrapper.passthrough(Types.DOUBLE); // y
+            final double z = wrapper.passthrough(Types.DOUBLE); // z
+            final float yaw = wrapper.passthrough(Types.FLOAT); // yaw
+            final float pitch = wrapper.passthrough(Types.FLOAT); // pitch
+            final boolean onGround = wrapper.passthrough(Types.BOOLEAN); // on ground
+
+            final RidingTracker tracker = wrapper.user().get(RidingTracker.class);
+            if (tracker != null && tracker.isLocalRiding()) {
+                tracker.setLastMoveVehicleInput(x, y, z, yaw, pitch, onGround);
+            }
+            wrapper.cancel();
+        });
+    }
+
+    @Override
+    public void onEntityAdded(final UserConnection user, final Entity entity) {
+        final RidingTracker tracker = user.get(RidingTracker.class);
+        if (tracker != null) {
+            tracker.onEntityAdded(entity);
+        }
+    }
+
+    @Override
+    public void onEntityRemoved(final UserConnection user, final Entity entity) {
+        final RidingTracker tracker = user.get(RidingTracker.class);
+        if (tracker != null) {
+            tracker.onEntityRemoved(entity);
+        }
+    }
+
+    @Override
+    public void onEntityLinks(final UserConnection user, final EntityLink[] links) {
+        final RidingTracker tracker = user.get(RidingTracker.class);
+        if (tracker == null) {
+            return;
+        }
+        for (final EntityLink link : links) {
+            tracker.handleLink(link);
+        }
+    }
+
+    @Override
+    public void onEntityDataChanged(final UserConnection user, final Entity entity, final EntityData[] entityData) {
+        final RidingTracker tracker = user.get(RidingTracker.class);
+        if (tracker != null) {
+            tracker.onEntityDataChanged(entity);
+        }
+    }
+
+    @Override
+    public void onEntityMoved(final UserConnection user, final Entity entity) {
+        final RidingTracker tracker = user.get(RidingTracker.class);
+        if (tracker != null) {
+            tracker.onEntityMoved(entity);
+        }
+    }
+
+    @Override
+    public void onPlayerAuthInput(final UserConnection user, final ClientPlayerEntity clientPlayer, final PlayerAuthInputContext context) {
+        final RidingTracker tracker = user.get(RidingTracker.class);
+        if (tracker != null) {
+            tracker.applyAuthInput(clientPlayer, context);
+        }
+    }
+
+    private static Set<InputFlag> inputFlags(final short flags) {
+        final Set<InputFlag> inputFlags = EnumSet.noneOf(InputFlag.class);
+        for (final InputFlag flag : InputFlag.values()) {
+            if ((flags & flag.getBit()) != 0) {
+                inputFlags.add(flag);
+            }
+        }
+        return inputFlags;
+    }
+
+    private static void sendInteract(final UserConnection user, final long targetRuntimeId, final InteractPacket_Action action) {
+        final PacketWrapper interact = PacketWrapper.create(ServerboundBedrockPackets.INTERACT, user);
+        interact.write(Types.UNSIGNED_BYTE, (short) action.getValue()); // action
+        interact.write(BedrockTypes.UNSIGNED_VAR_LONG, targetRuntimeId); // target entity runtime id
+        interact.write(BedrockTypes.OPTIONAL_POSITION_3F, null); // position
+        interact.sendToServer(BedrockProtocol.class);
+    }
+
+}

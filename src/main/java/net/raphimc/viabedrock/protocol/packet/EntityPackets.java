@@ -142,6 +142,7 @@ public class EntityPackets {
                 livingEntity.updateAttributes(attributes);
             }
             entity.updateEntityData(entityData);
+            ExperimentalFeatures.dispatchEntityLinks(wrapper.user(), entityLinks);
         });
         protocol.registerClientbound(ClientboundBedrockPackets.ADD_ITEM_ENTITY, ClientboundPackets26_1.ADD_ENTITY, wrapper -> {
             final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
@@ -205,6 +206,7 @@ public class EntityPackets {
                     return;
                 }
                 entity.setPosition(position);
+                ExperimentalFeatures.dispatchEntityMoved(wrapper.user(), entity);
 
                 if (teleported) {
                     wrapper.setPacketType(ClientboundPackets26_1.PLAYER_POSITION);
@@ -227,6 +229,7 @@ public class EntityPackets {
             entity.setPosition(position);
             entity.setRotation(new Position3f(pitch, yaw, headYaw));
             entity.setOnGround(onGround);
+            ExperimentalFeatures.dispatchEntityMoved(wrapper.user(), entity);
 
             wrapper.write(Types.VAR_INT, entity.javaId()); // entity id
             wrapper.write(Types.DOUBLE, (double) position.x()); // x
@@ -281,6 +284,7 @@ public class EntityPackets {
                     z = wrapper.read(BedrockTypes.FLOAT_LE);
                 }
                 entity.setPosition(new Position3f(x, y, z));
+                ExperimentalFeatures.dispatchEntityMoved(wrapper.user(), entity);
 
                 wrapper.clearPacket();
                 if (teleported) {
@@ -321,6 +325,7 @@ public class EntityPackets {
                 PacketFactory.sendJavaRotateHead(wrapper.user(), entity);
             }
             entity.setOnGround(onGround);
+            ExperimentalFeatures.dispatchEntityMoved(wrapper.user(), entity);
 
             wrapper.write(Types.VAR_INT, entity.javaId()); // entity id
             wrapper.write(Types.DOUBLE, (double) entity.position().x()); // x

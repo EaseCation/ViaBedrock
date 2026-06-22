@@ -39,6 +39,7 @@ import net.raphimc.viabedrock.api.util.MathUtil;
 import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
+import net.raphimc.viabedrock.experimental.model.PlayerAuthInputContext;
 import net.raphimc.viabedrock.experimental.model.inventory.BedrockInventoryTransaction;
 import net.raphimc.viabedrock.experimental.rewriter.InventoryTransactionRewriter;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
@@ -554,9 +555,12 @@ public class ClientPlayerPackets {
                 velocity = new Position3f(dx * 0.91F, dy * 0.98F, dz * 0.91F);
             }
 
+            final PlayerAuthInputContext authInputContext = new PlayerAuthInputContext(clientPlayer.position(), velocity);
+            ExperimentalFeatures.dispatchPlayerAuthInput(wrapper.user(), clientPlayer, authInputContext);
+
             wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().x()); // pitch
             wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().y()); // yaw
-            wrapper.write(BedrockTypes.POSITION_3F, clientPlayer.position()); // position
+            wrapper.write(BedrockTypes.POSITION_3F, authInputContext.position()); // position
             wrapper.write(BedrockTypes.POSITION_2F, MathUtil.calculateMovementDirections(clientPlayer.authInputData(), clientPlayer.isSneaking())); // move vector
             wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().z()); // head yaw
             wrapper.write(BedrockTypes.UNSIGNED_VAR_BIG_INTEGER, EnumUtil.getBigBitmaskFromEnumSet(clientPlayer.authInputData(), PlayerAuthInputPacket_InputData::getValue)); // input flags
@@ -566,7 +570,7 @@ public class ClientPlayerPackets {
             wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().x()); // interact pitch
             wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().y()); // interact yaw
             wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG, (long) clientPlayer.age()); // tick
-            wrapper.write(BedrockTypes.POSITION_3F, velocity); // delta
+            wrapper.write(BedrockTypes.POSITION_3F, authInputContext.delta()); // delta
             if (clientPlayer.authInputData().contains(PlayerAuthInputPacket_InputData.PerformItemInteraction)) {
                 final BedrockInventoryTransaction itemInteraction = clientPlayer.authInputItemInteraction();
                 if (itemInteraction != null) {
@@ -585,6 +589,11 @@ public class ClientPlayerPackets {
                         }
                     }
                 }
+            }
+            if (authInputContext.hasPredictedVehicle()) {
+                wrapper.write(BedrockTypes.FLOAT_LE, authInputContext.vehiclePitch()); // vehicle pitch
+                wrapper.write(BedrockTypes.FLOAT_LE, authInputContext.vehicleYaw()); // vehicle yaw
+                wrapper.write(BedrockTypes.VAR_LONG, authInputContext.predictedVehicleUniqueId()); // predicted vehicle entity unique id
             }
             wrapper.write(BedrockTypes.POSITION_2F, new Position2f(0F, 0F)); // analog move vector
             wrapper.write(BedrockTypes.POSITION_3F, MathUtil.calculateCameraOrientation(clientPlayer.rotation().y(), clientPlayer.rotation().x())); // camera orientation
