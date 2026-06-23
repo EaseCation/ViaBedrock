@@ -333,7 +333,7 @@ public class InventoryPackets {
             final Identifier responseIdentifier = Identifier.of("viabedrock", "form/" + id);
             final CompoundTag exitButtonAdditions = new CompoundTag();
             exitButtonAdditions.putBoolean("exit", true);
-            final ActionButton exitButton = new ActionButton(new StringComponent(resourcePackStorage.getTexts().get("gui.close")), DIALOG_BUTTON_WIDTH, new CustomAllAction(responseIdentifier, exitButtonAdditions));
+            final ActionButton exitButton = new ActionButton(new TranslationComponent("gui.cancel"), DIALOG_BUTTON_WIDTH, new CustomAllAction(responseIdentifier, exitButtonAdditions));
 
             final Dialog dialog;
             if (form instanceof ModalForm modalForm) {
@@ -374,7 +374,7 @@ public class InventoryPackets {
                     dialog = actionDialog;
                 }
             } else if (form instanceof CustomForm customForm) {
-                final MultiActionDialog actionDialog = new MultiActionDialog(TextUtil.stringToTextComponent(form.getTitle()), true, false, AfterAction.CLOSE, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), exitButton, 1);
+                final MultiActionDialog actionDialog = new MultiActionDialog(TextUtil.stringToTextComponent(form.getTitle()), false, false, AfterAction.CLOSE, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), 1);
                 for (int elementIndex = 0; elementIndex < customForm.getElements().length; elementIndex++) {
                     final FormElement element = customForm.getElements()[elementIndex];
                     final String inputKey = String.valueOf(elementIndex);
@@ -421,7 +421,8 @@ public class InventoryPackets {
                         throw new IllegalArgumentException("Unhandled form element type: " + element.getClass().getSimpleName());
                     }
                 }
-                actionDialog.getActions().add(new ActionButton(TextUtil.stringToTextComponent(resourcePackStorage.getTexts().get("gui.submit")), DIALOG_BUTTON_WIDTH, new CustomAllAction(responseIdentifier, null)));
+                actionDialog.getActions().add(new ActionButton(new TranslationComponent("gui.done"), DIALOG_BUTTON_WIDTH, new CustomAllAction(responseIdentifier, null)));
+                actionDialog.getActions().add(new ActionButton(new TranslationComponent("gui.cancel"), DIALOG_BUTTON_WIDTH, new CustomAllAction(responseIdentifier, exitButtonAdditions)));
                 dialog = actionDialog;
             } else {
                 throw new IllegalArgumentException("Unhandled form type: " + form.getClass().getSimpleName());
