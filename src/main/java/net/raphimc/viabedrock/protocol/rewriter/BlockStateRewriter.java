@@ -63,15 +63,24 @@ public class BlockStateRewriter implements StorableObject {
         Set<BedrockBlockState> customRuntimeStates = Set.of();
         Map<String, CompoundTag> customRuntimeBlockProperties = Map.of();
 
-        if (runtimeProjectionBuilder != null) {
-            try {
-                customRuntimeBlockProperties = RuntimeProjectionBuilder.collectEffectiveCustomBlockProperties(blockProperties, bedrockBlockIdentifiers);
-                customRuntimeStates = new HashSet<>(RuntimeProjectionBuilder.buildCustomRuntimeStates(blockProperties, bedrockBlockIdentifiers));
-                bedrockBlockStates.addAll(customRuntimeStates);
-            } catch (Throwable e) {
+        // Always reconstruct the server-defined custom block runtime states from START_GAME blockProperties,
+        // independent of BedrockLoader. The Bedrock server assigns runtime ids (sequential or hashed) over the
+        // full palette including these custom blocks, so they must be present to keep all block ids aligned.
+        // Without this, sequential-runtime-id servers misalign every block state after the first custom block.
+        // The optional BedrockLoader projection only layers real Java mappings on top of this reconstruction.
+        try {
+            customRuntimeBlockProperties = RuntimeProjectionBuilder.collectEffectiveCustomBlockProperties(blockProperties, bedrockBlockIdentifiers);
+            customRuntimeStates = new HashSet<>(RuntimeProjectionBuilder.buildCustomRuntimeStates(blockProperties, bedrockBlockIdentifiers));
+            bedrockBlockStates.addAll(customRuntimeStates);
+        } catch (Throwable e) {
+            if (runtimeProjectionBuilder != null) {
                 customMappingSync.failProjection("Failed to build custom block runtime projection states", e);
-                runtimeProjectionBuilder = null;
+            } else {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to build custom block runtime states from START_GAME block properties", e);
             }
+            runtimeProjectionBuilder = null;
+            customRuntimeStates = Set.of();
+            customRuntimeBlockProperties = Map.of();
         }
 
         bedrockBlockStates.sort((a, b) -> HashedPaletteComparator.INSTANCE.compare(a.namespacedIdentifier(), b.namespacedIdentifier()));
@@ -121,6 +130,10 @@ public class BlockStateRewriter implements StorableObject {
                         final String diagnostics = properties != null ? RuntimeProjectionBuilder.describeBlockProperties(properties) : "<missing START_GAME block properties>";
                         ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing custom mapping START_GAME block properties for " + identifier + ": " + diagnostics);
                     }
+                    // Unsupported custom block (no projection mapping): render as info_update placeholder, like a
+                    // vanilla-missing block, so javaId() never returns -1 and chunk lookups don't spam "Missing block state".
+                    final int javaId = javaBlockStates.get(bedrockToJavaBlockStates.get(BedrockBlockState.INFO_UPDATE));
+                    this.blockStateIdMappings.put(bedrockId, javaId);
                 } else {
                     final String identifier = bedrockBlockState.namespacedIdentifier();
                     missingVanillaRuntimeCounts.merge(identifier, 1, Integer::sum);
