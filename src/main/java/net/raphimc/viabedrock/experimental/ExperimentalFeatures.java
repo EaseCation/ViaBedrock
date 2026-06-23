@@ -44,6 +44,7 @@ import net.raphimc.viabedrock.experimental.model.map.MapObject;
 import net.raphimc.viabedrock.experimental.model.map.MapTrackedObject;
 import net.raphimc.viabedrock.experimental.model.PlayerAuthInputContext;
 import net.raphimc.viabedrock.experimental.block.CustomBlockMappingModule;
+import net.raphimc.viabedrock.experimental.blockbreak.BlockBreakingProgressModule;
 import net.raphimc.viabedrock.experimental.camera.CameraModule;
 import net.raphimc.viabedrock.experimental.inventory.CraftingDataModule;
 import net.raphimc.viabedrock.experimental.inventory.ClientAuthInventoryModule;
@@ -60,6 +61,7 @@ import net.raphimc.viabedrock.experimental.storage.BlockPlacementAckTracker;
 import net.raphimc.viabedrock.experimental.storage.MapTracker;
 import net.raphimc.viabedrock.experimental.storage.MultilineNametagTracker;
 import net.raphimc.viabedrock.experimental.storage.ScriptDebugTextTracker;
+import net.raphimc.viabedrock.experimental.task.BlockBreakingProgressTickTask;
 import net.raphimc.viabedrock.experimental.task.ScriptDebugTextTickTask;
 import net.raphimc.viabedrock.experimental.util.JavaMapPaletteUtil;
 import net.raphimc.viabedrock.experimental.util.ProtocolUtil;
@@ -298,6 +300,7 @@ public class ExperimentalFeatures {
         registerModule(new CraftingDataModule());
         registerModule(new ClientAuthInventoryModule());
         registerModule(new RidingModule());
+        registerModule(new BlockBreakingProgressModule());
     }
 
     private static ItemReleaseInventoryTransaction_ActionType releaseActionForItem(final ItemRewriter itemRewriter, final BedrockItem item, final int usingTicks) {
@@ -1238,6 +1241,7 @@ public class ExperimentalFeatures {
 
     public static void registerTasks() {
         Via.getPlatform().runRepeatingSync(new ScriptDebugTextTickTask(), 1L);
+        Via.getPlatform().runRepeatingSync(new BlockBreakingProgressTickTask(), 1L);
     }
 
     // Maps a Bedrock MapDecoration_Type value (index) to a Java minecraft:map_decoration_type registry id.
