@@ -56,11 +56,11 @@ public class BlobDB implements Closeable {
                     for (Map.Entry<Long, byte[]> entry : this.pendingWrites.entrySet()) {
                         try {
                             this.putNow(entry.getKey(), entry.getValue());
-                            writtenKeys.add(entry.getKey());
                         } catch (Throwable e) {
                             Via.getPlatform().getLogger().log(Level.SEVERE, "Failed to write pending blob", e);
-                            break;
                         }
+                        // Always drop the key from the queue: success persisted it, failure must not retry forever
+                        writtenKeys.add(entry.getKey());
                     }
                     writtenKeys.forEach(this.pendingWrites::remove);
                 } catch (InterruptedException e) {
@@ -110,8 +110,8 @@ public class BlobDB implements Closeable {
     }
 
     public synchronized void queuePut(final long key, final byte[] value) {
-        if (this.index.containsKey(key)) {
-            throw new IllegalArgumentException("Key already exists: " + key);
+        if (this.index.containsKey(key) || this.pendingWrites.containsKey(key)) {
+            return; // Content-addressed cache: identical key means identical content, skip idempotently
         }
 
         this.pendingWrites.put(key, value);
@@ -119,7 +119,7 @@ public class BlobDB implements Closeable {
 
     public synchronized void putNow(final long key, final byte[] value) throws IOException {
         if (this.index.containsKey(key)) {
-            throw new IllegalArgumentException("Key already exists: " + key);
+            return; // Already persisted, skip
         }
 
         final byte[] compressedValue = LZ4.compress(value);
