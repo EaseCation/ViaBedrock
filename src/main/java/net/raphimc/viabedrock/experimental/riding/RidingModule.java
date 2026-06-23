@@ -74,14 +74,24 @@ public class RidingModule implements FeatureModule {
 
             final Set<InputFlag> inputFlags = inputFlags(wrapper.passthrough(Types.BYTE));
             final Entity vehicle = tracker.localVehicle();
-            if (vehicle == null || !inputFlags.contains(InputFlag.SHIFT)) {
+            if (vehicle == null) {
+                tracker.setLastInputFlags(inputFlags);
+                tracker.updateRidingShift(false);
+                return;
+            }
+
+            if (!inputFlags.contains(InputFlag.SHIFT)) {
+                tracker.setLastInputFlags(inputFlags);
                 tracker.updateRidingShift(false);
                 return;
             }
 
             if (tracker.updateRidingShift(true)) {
+                tracker.requestLocalDismount(vehicle);
                 sendInteract(wrapper.user(), vehicle.runtimeId(), InteractPacket_Action.StopRiding);
             }
+            inputFlags.remove(InputFlag.SHIFT);
+            tracker.setLastInputFlags(inputFlags);
             wrapper.cancel();
         });
 

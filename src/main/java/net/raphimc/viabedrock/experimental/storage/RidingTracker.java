@@ -32,11 +32,14 @@ import net.raphimc.viabedrock.experimental.model.PlayerAuthInputContext;
 import net.raphimc.viabedrock.experimental.riding.RidingAnchorHelper;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorDataIDs;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAuthInputPacket_InputData;
+import net.raphimc.viabedrock.protocol.data.enums.java.InputFlag;
 import net.raphimc.viabedrock.protocol.model.EntityLink;
 import net.raphimc.viabedrock.protocol.model.Position3f;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 
 import java.nio.charset.StandardCharsets;
+import java.util.EnumSet;
+import java.util.Set;
 import java.util.UUID;
 
 public class RidingTracker extends StoredObject {
@@ -46,13 +49,20 @@ public class RidingTracker extends StoredObject {
     private static final byte LINK_PASSENGER = 2;
     private static final ActorDataIDs SEAT_OFFSET_DATA = ActorDataIDs.RESERVED_056; // Synapse SEAT_OFFSET = 56
     private static final float JAVA_PLAYER_VEHICLE_ATTACHMENT_Y = 0.6F; // PlayerEntity.VEHICLE_ATTACHMENT_POS
+    private static final int PENDING_DISMOUNT_TICKS = 10;
+    private static final Position3f BOAT_PLAYER_SEAT_OFFSET = new Position3f(0F, 1.02001F, 0F);
 
     private final Long2ObjectMap<LongList> vehiclePassengers = new Long2ObjectOpenHashMap<>();
     private final Long2ObjectMap<AnchorState> anchorsByPassenger = new Long2ObjectOpenHashMap<>();
     private final Long2ObjectMap<Position3f> seatOffsets = new Long2ObjectOpenHashMap<>();
     private Long localVehicleUniqueId;
     private boolean ridingShiftDown;
+    private Set<InputFlag> lastInputFlags = EnumSet.noneOf(InputFlag.class);
     private MoveVehicleInput lastMoveVehicleInput;
+    private boolean lastMoveVehicleInputFresh;
+    private Long pendingDismountVehicleUniqueId;
+    private int pendingDismountTicks;
+    private Position3f lastSafeDismountPosition;
 
     public RidingTracker(final UserConnection user) {
         super(user);
@@ -85,8 +95,22 @@ public class RidingTracker extends StoredObject {
         return this.localVehicle() != null;
     }
 
+    public void setLastInputFlags(final Set<InputFlag> inputFlags) {
+        this.lastInputFlags = inputFlags.isEmpty() ? EnumSet.noneOf(InputFlag.class) : EnumSet.copyOf(inputFlags);
+    }
+
     public void setLastMoveVehicleInput(final double x, final double y, final double z, final float yaw, final float pitch, final boolean onGround) {
         this.lastMoveVehicleInput = new MoveVehicleInput(new Position3f((float) x, (float) y, (float) z), yaw, pitch, onGround);
+        this.lastMoveVehicleInputFresh = true;
+    }
+
+    public void requestLocalDismount(final Entity vehicle) {
+        if (this.localVehicleUniqueId == null || vehicle.uniqueId() != this.localVehicleUniqueId) {
+            return;
+        }
+
+        this.pendingDismountVehicleUniqueId = vehicle.uniqueId();
+        this.pendingDismountTicks = PENDING_DISMOUNT_TICKS;
     }
 
     public void applyAuthInput(final ClientPlayerEntity clientPlayer, final PlayerAuthInputContext context) {
@@ -95,15 +119,38 @@ public class RidingTracker extends StoredObject {
             return;
         }
 
-        final Position3f basePosition = vehicle.position();
-        context.setPosition(new Position3f(basePosition.x(), basePosition.y() + clientPlayer.eyeOffset(), basePosition.z()));
+        final LocalRidingMode mode = this.localRidingMode(vehicle, clientPlayer);
+        this.removeRidingInputData(clientPlayer);
+
+        final Position3f authInputPosition = this.authInputPosition(vehicle, clientPlayer, mode);
+        final Position3f safeDismountPosition = this.safeDismountPosition(vehicle, clientPlayer, mode, authInputPosition);
+        if (this.isPendingDismount(vehicle)) {
+            context.setPosition(this.lastSafeDismountPosition != null ? this.lastSafeDismountPosition : safeDismountPosition);
+            context.setDelta(Position3f.ZERO);
+            this.tickPendingDismount();
+            this.lastMoveVehicleInputFresh = false;
+            return;
+        }
+
+        this.lastSafeDismountPosition = safeDismountPosition;
+        context.setPosition(authInputPosition);
         context.setDelta(Position3f.ZERO);
 
-        final MoveVehicleInput vehicleInput = this.lastMoveVehicleInput;
-        final float vehiclePitch = vehicleInput != null ? vehicleInput.pitch() : vehicle.rotation().x();
-        final float vehicleYaw = vehicleInput != null ? vehicleInput.yaw() : vehicle.rotation().y();
-        clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.IsInClientPredictedVehicle);
-        context.setPredictedVehicle(vehicle.uniqueId(), vehiclePitch, vehicleYaw);
+        switch (mode) {
+            case BOAT_PREDICTED -> {
+                this.addMovementInputData(clientPlayer);
+                this.addBoatPaddleInputData(clientPlayer);
+
+                final MoveVehicleInput vehicleInput = this.lastMoveVehicleInputFresh ? this.lastMoveVehicleInput : null;
+                final float vehiclePitch = vehicleInput != null ? vehicleInput.pitch() : vehicle.rotation().x();
+                final float vehicleYaw = vehicleInput != null ? vehicleInput.yaw() : vehicle.rotation().y();
+                clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.IsInClientPredictedVehicle);
+                context.setPredictedVehicle(vehicle.uniqueId(), vehiclePitch, vehicleYaw);
+            }
+            case VIRTUAL_INPUT_ONLY -> this.addMovementInputData(clientPlayer);
+        }
+
+        this.lastMoveVehicleInputFresh = false;
     }
 
     public void handleLink(final EntityLink link) {
@@ -333,6 +380,113 @@ public class RidingTracker extends StoredObject {
         return 0F;
     }
 
+    private Position3f authInputPosition(final Entity vehicle, final ClientPlayerEntity clientPlayer, final LocalRidingMode mode) {
+        if (mode == LocalRidingMode.BOAT_PREDICTED && this.lastMoveVehicleInputFresh && this.lastMoveVehicleInput != null) {
+            final Position3f vehiclePosition = this.lastMoveVehicleInput.position();
+            return new Position3f(vehiclePosition.x(), vehiclePosition.y() + clientPlayer.eyeOffset(), vehiclePosition.z());
+        }
+
+        final Position3f vehiclePosition = vehicle.position();
+        if (mode == LocalRidingMode.VIRTUAL_INPUT_ONLY) {
+            final Position3f seatPosition = vehiclePosition.add(this.seatOffset(vehicle, clientPlayer, this.rawSeatOffset(clientPlayer), 0F));
+            return new Position3f(seatPosition.x(), seatPosition.y() + clientPlayer.eyeOffset(), seatPosition.z());
+        }
+
+        return new Position3f(vehiclePosition.x(), vehiclePosition.y() + clientPlayer.eyeOffset(), vehiclePosition.z());
+    }
+
+    private Position3f safeDismountPosition(final Entity vehicle, final ClientPlayerEntity clientPlayer, final LocalRidingMode mode, final Position3f authInputPosition) {
+        if (mode == LocalRidingMode.BOAT_PREDICTED) {
+            return authInputPosition.add(this.seatOffset(vehicle, clientPlayer, this.boatMountedOffset(clientPlayer), 0F));
+        }
+
+        final Position3f vehiclePosition = vehicle.position();
+        final Position3f seatPosition = vehiclePosition.add(this.seatOffset(vehicle, clientPlayer, this.rawSeatOffset(clientPlayer), 0F));
+        return new Position3f(seatPosition.x(), seatPosition.y() + clientPlayer.eyeOffset(), seatPosition.z());
+    }
+
+    private Position3f boatMountedOffset(final ClientPlayerEntity clientPlayer) {
+        final Position3f offset = this.rawSeatOffset(clientPlayer);
+        if (offset == Position3f.ZERO || offset.x() == 0F && offset.y() == 0F && offset.z() == 0F) {
+            return BOAT_PLAYER_SEAT_OFFSET;
+        }
+        return offset;
+    }
+
+    private LocalRidingMode localRidingMode(final Entity vehicle, final ClientPlayerEntity clientPlayer) {
+        if (!this.isControllingPassenger(vehicle.uniqueId(), clientPlayer.uniqueId())) {
+            return LocalRidingMode.PASSENGER_ONLY;
+        }
+
+        if (usesBoatRiding(vehicle)) {
+            return LocalRidingMode.BOAT_PREDICTED;
+        }
+        if (!usesVanillaRiding(vehicle)) {
+            return LocalRidingMode.VIRTUAL_INPUT_ONLY;
+        }
+        return LocalRidingMode.PASSENGER_ONLY;
+    }
+
+    private boolean isControllingPassenger(final long vehicleUniqueId, final long passengerUniqueId) {
+        final LongList passengers = this.vehiclePassengers.get(vehicleUniqueId);
+        return passengers != null && !passengers.isEmpty() && passengers.getLong(0) == passengerUniqueId;
+    }
+
+    private void addMovementInputData(final ClientPlayerEntity clientPlayer) {
+        if (this.lastInputFlags.contains(InputFlag.FORWARD)) {
+            clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.Up);
+        }
+        if (this.lastInputFlags.contains(InputFlag.BACKWARD)) {
+            clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.Down);
+        }
+        if (this.lastInputFlags.contains(InputFlag.LEFT)) {
+            clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.Left);
+        }
+        if (this.lastInputFlags.contains(InputFlag.RIGHT)) {
+            clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.Right);
+        }
+        if (this.lastInputFlags.contains(InputFlag.JUMP)) {
+            clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.JumpDown, PlayerAuthInputPacket_InputData.Jumping, PlayerAuthInputPacket_InputData.WantUp, PlayerAuthInputPacket_InputData.JumpCurrentRaw);
+        }
+        if (this.lastInputFlags.contains(InputFlag.SHIFT)) {
+            clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.SneakDown, PlayerAuthInputPacket_InputData.Sneaking, PlayerAuthInputPacket_InputData.WantDown, PlayerAuthInputPacket_InputData.SneakCurrentRaw);
+        }
+    }
+
+    private void addBoatPaddleInputData(final ClientPlayerEntity clientPlayer) {
+        final boolean left = this.lastInputFlags.contains(InputFlag.LEFT);
+        final boolean right = this.lastInputFlags.contains(InputFlag.RIGHT);
+        if (!left && !right && (this.lastInputFlags.contains(InputFlag.FORWARD) || this.lastInputFlags.contains(InputFlag.BACKWARD))) {
+            clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.PaddlingLeft, PlayerAuthInputPacket_InputData.PaddlingRight);
+            return;
+        }
+
+        // Bedrock paddle flags describe the oar being used: row right to turn left, row left to turn right.
+        if (left) {
+            clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.PaddlingRight);
+        }
+        if (right) {
+            clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.PaddlingLeft);
+        }
+    }
+
+    private void removeRidingInputData(final ClientPlayerEntity clientPlayer) {
+        clientPlayer.authInputData().remove(PlayerAuthInputPacket_InputData.Up);
+        clientPlayer.authInputData().remove(PlayerAuthInputPacket_InputData.Down);
+        clientPlayer.authInputData().remove(PlayerAuthInputPacket_InputData.Left);
+        clientPlayer.authInputData().remove(PlayerAuthInputPacket_InputData.Right);
+        clientPlayer.authInputData().remove(PlayerAuthInputPacket_InputData.JumpDown);
+        clientPlayer.authInputData().remove(PlayerAuthInputPacket_InputData.Jumping);
+        clientPlayer.authInputData().remove(PlayerAuthInputPacket_InputData.WantUp);
+        clientPlayer.authInputData().remove(PlayerAuthInputPacket_InputData.JumpCurrentRaw);
+        clientPlayer.authInputData().remove(PlayerAuthInputPacket_InputData.SneakDown);
+        clientPlayer.authInputData().remove(PlayerAuthInputPacket_InputData.Sneaking);
+        clientPlayer.authInputData().remove(PlayerAuthInputPacket_InputData.WantDown);
+        clientPlayer.authInputData().remove(PlayerAuthInputPacket_InputData.SneakCurrentRaw);
+        clientPlayer.authInputData().remove(PlayerAuthInputPacket_InputData.PaddlingLeft);
+        clientPlayer.authInputData().remove(PlayerAuthInputPacket_InputData.PaddlingRight);
+    }
+
     private void updateLocalVehicle(final long passengerUniqueId, final Long vehicleUniqueId) {
         final EntityTracker entityTracker = this.user().get(EntityTracker.class);
         if (entityTracker == null) {
@@ -341,15 +495,41 @@ public class RidingTracker extends StoredObject {
 
         final Entity clientPlayer = entityTracker.getClientPlayer();
         if (clientPlayer != null && clientPlayer.uniqueId() == passengerUniqueId) {
+            if (vehicleUniqueId == null) {
+                this.clearLocalRiding();
+                return;
+            }
+
             this.localVehicleUniqueId = vehicleUniqueId;
+            this.clearPendingDismount();
             this.lastMoveVehicleInput = null;
+            this.lastMoveVehicleInputFresh = false;
         }
     }
 
     private void clearLocalRiding() {
         this.localVehicleUniqueId = null;
         this.ridingShiftDown = false;
+        this.lastInputFlags = EnumSet.noneOf(InputFlag.class);
         this.lastMoveVehicleInput = null;
+        this.lastMoveVehicleInputFresh = false;
+        this.lastSafeDismountPosition = null;
+        this.clearPendingDismount();
+    }
+
+    private boolean isPendingDismount(final Entity vehicle) {
+        return this.pendingDismountVehicleUniqueId != null && this.pendingDismountVehicleUniqueId == vehicle.uniqueId();
+    }
+
+    private void tickPendingDismount() {
+        if (this.pendingDismountVehicleUniqueId != null && --this.pendingDismountTicks <= 0) {
+            this.clearPendingDismount();
+        }
+    }
+
+    private void clearPendingDismount() {
+        this.pendingDismountVehicleUniqueId = null;
+        this.pendingDismountTicks = 0;
     }
 
     private boolean isLocalPlayer(final Entity entity) {
@@ -364,11 +544,15 @@ public class RidingTracker extends StoredObject {
 
     private static boolean usesVanillaRiding(final Entity vehicle) {
         final EntityTypes1_21_11 type = vehicle.javaType();
-        return type.isOrHasParent(EntityTypes1_21_11.ABSTRACT_BOAT)
+        return usesBoatRiding(vehicle)
                 || type.isOrHasParent(EntityTypes1_21_11.ABSTRACT_HORSE)
                 || type.isOrHasParent(EntityTypes1_21_11.ABSTRACT_MINECART)
                 || type == EntityTypes1_21_11.PIG
                 || type == EntityTypes1_21_11.STRIDER;
+    }
+
+    private static boolean usesBoatRiding(final Entity vehicle) {
+        return vehicle.javaType().isOrHasParent(EntityTypes1_21_11.ABSTRACT_BOAT);
     }
 
     private static boolean contains(final LongList list, final long value) {
@@ -394,6 +578,12 @@ public class RidingTracker extends StoredObject {
     }
 
     private record MoveVehicleInput(Position3f position, float yaw, float pitch, boolean onGround) {
+    }
+
+    private enum LocalRidingMode {
+        BOAT_PREDICTED,
+        VIRTUAL_INPUT_ONLY,
+        PASSENGER_ONLY
     }
 
 }
