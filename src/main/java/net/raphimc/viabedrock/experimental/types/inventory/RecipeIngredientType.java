@@ -38,7 +38,12 @@ public class RecipeIngredientType extends Type<RecipeIngredient> {
                 BedrockTypes.VAR_INT.read(buffer); // count (always 0)
                 return new RecipeIngredient(0, 0, 0);
             case 1: // DEFAULT (int_id_meta)
-                final int runtimeId = buffer.readShortLE() & 0xFFFF;
+                // The server writes the ingredient network id with putLShort(networkId); networkId can be
+                // negative (new blocks, after the >>=1 flat-upgrade shift). Inventory items carry the SAME
+                // networkId via putVarInt, read back as a signed value. So we must read this as a SIGNED short
+                // to match — masking with & 0xFFFF turned e.g. -571 into 64965 and broke all negative-id items
+                // (logs, modern blocks), while positive small ids (planks, sticks) happened to still match.
+                final int runtimeId = buffer.readShortLE();
                 final int damage = buffer.readShortLE() & 0xFFFF;
                 final int count = BedrockTypes.VAR_INT.read(buffer);
                 return new RecipeIngredient(runtimeId, damage, count);

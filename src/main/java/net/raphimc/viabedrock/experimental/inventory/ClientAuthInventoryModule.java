@@ -20,19 +20,24 @@ package net.raphimc.viabedrock.experimental.inventory;
 import com.viaversion.viaversion.api.connection.StoredObject;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
+import com.viaversion.viaversion.api.minecraft.item.Item;
 import com.viaversion.viaversion.api.type.Types;
+import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
+import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ServerboundPackets26_1;
-import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.model.container.Container;
 import net.raphimc.viabedrock.api.model.container.CraftingTableContainer;
 import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.experimental.FeatureModule;
 import net.raphimc.viabedrock.experimental.model.inventory.BedrockInventoryTransaction;
+import net.raphimc.viabedrock.experimental.model.inventory.BedrockRecipe;
 import net.raphimc.viabedrock.experimental.model.inventory.InventoryActionData;
 import net.raphimc.viabedrock.experimental.model.inventory.InventoryTransactionData;
 import net.raphimc.viabedrock.experimental.rewriter.InventoryTransactionRewriter;
+import net.raphimc.viabedrock.experimental.storage.RecipeRegistry;
 import net.raphimc.viabedrock.experimental.util.ProtocolUtil;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
+import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ComplexInventoryTransaction_Type;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
@@ -40,19 +45,13 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerTyp
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventorySourceType;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.ContainerInput;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
+import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.logging.Logger;
 
 public class ClientAuthInventoryModule implements FeatureModule {
-
-    private static final int TODO_USE_INGREDIENT = -5;
-
-    private static Logger logger() {
-        return ViaBedrock.getPlatform().getLogger();
-    }
 
     @Override
     public void onStorageRegistration(final UserConnection user) {
@@ -62,6 +61,33 @@ public class ClientAuthInventoryModule implements FeatureModule {
     @Override
     public void onPacketRegistration(final BedrockProtocol protocol) {
         registerContainerClickHandler(protocol);
+        // Java expects the crafting output preview to be pushed by the server, but Bedrock computes it
+        // client-side and never sends it. Recompute it locally whenever the (server-authoritative) grid
+        // contents change, so the Java output slot reflects the matched recipe's result.
+        ProtocolUtil.appendClientbound(protocol, ClientboundBedrockPackets.INVENTORY_SLOT, wrapper -> updateCraftingOutputPreview(wrapper.user()));
+        ProtocolUtil.appendClientbound(protocol, ClientboundBedrockPackets.INVENTORY_CONTENT, wrapper -> updateCraftingOutputPreview(wrapper.user()));
+        // Client-authoritative servers don't echo a clientbound CONTAINER_CLOSE for client-initiated
+        // closes, so pendingCloseContainer would never clear and the container could not be reopened
+        // (until the player walked away and the server force-closed it). Clear it right after the close
+        // is forwarded to the server.
+        ProtocolUtil.appendServerbound(protocol, ServerboundPackets26_1.CONTAINER_CLOSE, wrapper -> {
+            final InventoryTracker tracker = wrapper.user().get(InventoryTracker.class);
+            final Container pending = tracker.getPendingCloseContainer();
+            // The server (Nukkit) returns the crafting grid items to the inventory on close
+            // (resetCraftingGridType -> inventory.addItem) and echoes the inventory, but it does NOT echo the
+            // UI grid being emptied. Clear the 2x2/3x3 crafting grid + output mirror here so stale 3x3 items
+            // don't linger and leak into the 2x2 view the next time a crafting screen is opened.
+            if (pending instanceof CraftingTableContainer) {
+                final Container hud = tracker.getHudContainer();
+                for (int slot = 28; slot <= 40; slot++) {
+                    hud.setItemSilent(slot, BedrockItem.empty());
+                }
+                hud.setItemSilent(50, BedrockItem.empty());
+            }
+            if (pending != null) {
+                tracker.setCurrentContainerClosed(false);
+            }
+        });
     }
 
     private void registerContainerClickHandler(final BedrockProtocol protocol) {
@@ -91,16 +117,12 @@ public class ClientAuthInventoryModule implements FeatureModule {
                 }
             }
 
-            logger().fine("[CLICK] containerId=" + containerId + " slot=" + slot + " button=" + button + " action=" + action
-                    + " cursor=" + SlotMapper.getCursorItem(inventoryTracker));
-
             final DragState dragState = wrapper.user().get(DragState.class);
             final List<InventoryActionData> actions = ClickSimulator.simulate(
                     containerId, slot, button, action, inventoryTracker, dragState);
 
             if (actions == null) {
-                logger().fine("[CLICK] -> unsupported, rollback");
-                // Unsupported operation — rollback container contents
+                // Unsupported operation — roll back container contents to the authoritative mirror
                 if (containerId != ContainerID.CONTAINER_ID_INVENTORY.getValue()) {
                     PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getInventoryContainer());
                 }
@@ -108,18 +130,8 @@ public class ClientAuthInventoryModule implements FeatureModule {
                 return;
             }
             if (actions.isEmpty()) {
-                logger().fine("[CLICK] -> no-op (empty actions)");
                 return; // No-op, no packet needed
             }
-
-            // Log actions
-            for (InventoryActionData a : actions) {
-                logger().fine("[CLICK]   action: src=" + a.source().type() + " cid=" + a.source().containerId()
-                        + " slot=" + a.slot() + " from=" + a.fromItem() + " to=" + a.toItem());
-            }
-
-            // Check if this is a crafting operation (has SOURCE_TODO actions)
-            final boolean isCraftingAction = hasCraftingActions(actions);
 
             // Send NormalTransaction to Bedrock server
             final InventoryTransactionRewriter txRewriter = wrapper.user().get(InventoryTransactionRewriter.class);
@@ -136,35 +148,81 @@ public class ClientAuthInventoryModule implements FeatureModule {
 
             txPacket.sendToServer(BedrockProtocol.class);
 
-            // The Java client predicts clicks locally, but Bedrock/Nukkit remains
-            // authoritative and may reject plugin-locked/menu slots. Do not commit the
-            // prediction to our mirror; reset Java immediately and request the server's
-            // authoritative contents so fake hotbar items cannot be used later.
+            // Optimistically commit the predicted result to our mirror, then push it to Java. Previously we
+            // reset Java to the pre-click state without committing the prediction, which made every action
+            // visually roll back and forced the user to click twice (the second click then desynced because
+            // the server had already applied the first). The server stays authoritative and will correct us
+            // via clientbound inventory packets if it rejects the transaction.
+            applyMirrorUpdates(actions, inventoryTracker);
             if (containerId != ContainerID.CONTAINER_ID_INVENTORY.getValue()) {
                 PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getInventoryContainer());
             }
             PacketFactory.sendJavaContainerSetContent(wrapper.user(), container);
-
-            final PacketWrapper mismatchPacket = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, wrapper.user());
-            mismatchPacket.write(txRewriter.getInventoryTransactionType(),
-                    new BedrockInventoryTransaction(
-                            0,
-                            null,
-                            null,
-                            ComplexInventoryTransaction_Type.InventoryMismatch,
-                            new InventoryTransactionData.MismatchTransactionData()
-                    ));
-            mismatchPacket.sendToServer(BedrockProtocol.class);
+            sendJavaCursor(wrapper.user(), inventoryTracker);
+            updateCraftingOutputPreview(wrapper.user());
+            // NOTE: real Bedrock clients never send an InventoryMismatch after a normal transaction.
         });
     }
 
-    private static boolean hasCraftingActions(final List<InventoryActionData> actions) {
-        for (final InventoryActionData action : actions) {
-            if (action.source().type() == InventorySourceType.NonImplementedFeatureTODO) {
-                return true;
-            }
+    private static final int HUD_OUTPUT_SLOT = 50;
+
+    /**
+     * Java relies on the server to push the crafting result into the output slot, but Bedrock computes the
+     * preview client-side and never sends it. This recomputes the result from the (mirror) grid via the
+     * loaded recipe table and pushes it into the Java output slot (slot 0) for both the 2x2 inventory grid
+     * and the 3x3 crafting table. The result is mirrored into HUD slot 50 so the container's getJavaItems
+     * (which reads HUD 50 for slot 0) stays consistent.
+     */
+    public static void updateCraftingOutputPreview(final UserConnection user) {
+        final RecipeRegistry registry = user.get(RecipeRegistry.class);
+        if (registry == null) {
+            return;
         }
-        return false;
+        final InventoryTracker tracker = user.get(InventoryTracker.class);
+        final Container current = tracker.getCurrentContainer();
+
+        final boolean is3x3;
+        final int javaWindowId;
+        if (current instanceof CraftingTableContainer) {
+            is3x3 = true;
+            javaWindowId = current.javaContainerId();
+        } else if (current == null || current.type() == ContainerType.INVENTORY) {
+            is3x3 = false;
+            javaWindowId = ContainerID.CONTAINER_ID_INVENTORY.getValue();
+        } else {
+            return; // No crafting grid in this screen
+        }
+
+        final BedrockItem[] gridItems = CraftingSimulator.getGridItems(is3x3, tracker);
+        final BedrockRecipe recipe = registry.matchRecipe(gridItems, is3x3);
+        final BedrockItem output = recipe != null ? recipe.primaryOutput().copy() : BedrockItem.empty();
+
+        final Container hud = tracker.getHudContainer();
+        final BedrockItem previous = hud.getItem(HUD_OUTPUT_SLOT);
+        if (!previous.isDifferent(output) && previous.amount() == output.amount()) {
+            return; // No change, avoid redundant packets
+        }
+        hud.setItemSilent(HUD_OUTPUT_SLOT, output);
+
+        final Item javaOutput = user.get(ItemRewriter.class).javaItem(output);
+        final PacketWrapper setSlot = PacketWrapper.create(ClientboundPackets26_1.CONTAINER_SET_SLOT, user);
+        setSlot.write(Types.VAR_INT, javaWindowId); // window id
+        setSlot.write(Types.VAR_INT, 0); // revision
+        setSlot.write(Types.SHORT, (short) 0); // slot 0 = crafting output
+        setSlot.write(VersionedTypes.V26_1.item, javaOutput);
+        setSlot.send(BedrockProtocol.class);
+    }
+
+    /**
+     * Pushes the current cursor item (HUD slot 0) to the Java client as SET_CURSOR_ITEM. sendJavaContainerSetContent
+     * does not include the cursor, so after an optimistic prediction that moved the cursor we must sync it explicitly.
+     */
+    private static void sendJavaCursor(final UserConnection user, final InventoryTracker tracker) {
+        final BedrockItem cursor = tracker.getHudContainer().getItem(0);
+        final Item javaCursor = user.get(ItemRewriter.class).javaItem(cursor);
+        final PacketWrapper setCursor = PacketWrapper.create(ClientboundPackets26_1.SET_CURSOR_ITEM, user);
+        setCursor.write(VersionedTypes.V26_1.item, javaCursor);
+        setCursor.send(BedrockProtocol.class);
     }
 
     /**
@@ -174,52 +232,17 @@ public class ClientAuthInventoryModule implements FeatureModule {
      */
     private static void applyMirrorUpdates(final List<InventoryActionData> actions, final InventoryTracker tracker) {
         for (final InventoryActionData action : actions) {
+            // Only ContainerInventory actions mutate slots in our mirror (grid slots, cursor, inventory,
+            // armor, offhand). SOURCE_TODO craft markers (-5 USE_INGREDIENT / -4 CRAFTING_RESULT) carry no
+            // mirror change — the grid decrement is now sent as an explicit ContainerInventory grid SlotChange,
+            // so consuming them here too would double-decrement the grid.
             if (action.source().type() == InventorySourceType.ContainerInventory) {
                 final Container container = resolveContainerById(action.source().containerId(), tracker);
                 if (container != null) {
                     container.setItemSilent(action.slot(), action.toItem());
                 }
-            } else if (action.source().type() == InventorySourceType.NonImplementedFeatureTODO) {
-                // Handle SOURCE_TODO crafting actions
-                final int todoType = action.source().containerId();
-                if (todoType == TODO_USE_INGREDIENT) {
-                    // USE_INGREDIENT: toItem is the ingredient consumed; find matching grid slots and decrement
-                    applyIngredientConsumption(action.toItem(), tracker);
-                }
-                // CRAFTING_RESULT(-4): no mirror update needed (the result is handled by cursor action)
             }
             // Skip WorldInteraction (drops) and CreativeInventory actions
-        }
-    }
-
-    /**
-     * Decrements grid slot items to simulate ingredient consumption.
-     * Each consumed ingredient reduces matching grid items by 1 count.
-     */
-    private static void applyIngredientConsumption(final BedrockItem ingredient, final InventoryTracker tracker) {
-        final Container hudContainer = tracker.getHudContainer();
-        int toConsume = ingredient.amount();
-
-        // Choose grid range based on whether a crafting table is open
-        final boolean is3x3 = tracker.getCurrentContainer() instanceof CraftingTableContainer;
-        final int[][] gridRanges = is3x3 ? new int[][]{{32, 40}} : new int[][]{{28, 31}};
-        for (int[] range : gridRanges) {
-            for (int slot = range[0]; slot <= range[1] && toConsume > 0; slot++) {
-                final BedrockItem gridItem = hudContainer.getItem(slot);
-                if (gridItem.isEmpty()) continue;
-                if (gridItem.identifier() != ingredient.identifier()) continue;
-                if (gridItem.data() != ingredient.data()) continue;
-
-                if (gridItem.amount() <= toConsume) {
-                    toConsume -= gridItem.amount();
-                    hudContainer.setItemSilent(slot, BedrockItem.empty());
-                } else {
-                    BedrockItem newItem = gridItem.copy();
-                    newItem.setAmount(gridItem.amount() - toConsume);
-                    hudContainer.setItemSilent(slot, newItem);
-                    toConsume = 0;
-                }
-            }
         }
     }
 

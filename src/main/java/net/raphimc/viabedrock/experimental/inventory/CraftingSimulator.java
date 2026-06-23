@@ -64,8 +64,11 @@ public class CraftingSimulator {
 
         final List<InventoryActionData> actions = new ArrayList<>();
 
-        // ACTION 1: SOURCE_TODO(-5) for each ingredient type consumed
-        addIngredientActions(actions, gridItems);
+        // ACTION 1: per grid slot, SOURCE_TODO(-5 USE_INGREDIENT) + an explicit grid SlotChange that
+        // decrements the slot by 1. This mirrors the real Bedrock client packets so the server's
+        // CraftingTransaction collects the inputs and validates (single merged -5 with slot=0 and no grid
+        // change made canExecute fail, leaving a stale transaction that corrupted the next craft).
+        addGridConsumption(actions, is3x3, tracker);
 
         // ACTION 2: SOURCE_TODO(-4) — set primaryOutput
         actions.add(new InventoryActionData(
@@ -103,8 +106,8 @@ public class CraftingSimulator {
 
         final List<InventoryActionData> actions = new ArrayList<>();
 
-        // ACTION 1: SOURCE_TODO(-5) for ingredients
-        addIngredientActions(actions, gridItems);
+        // ACTION 1: per grid slot consumption (-5 USE_INGREDIENT + explicit grid SlotChange decrement)
+        addGridConsumption(actions, is3x3, tracker);
 
         // ACTION 2: SOURCE_TODO(-4) — set primaryOutput
         actions.add(new InventoryActionData(
@@ -174,7 +177,7 @@ public class CraftingSimulator {
      * 2x2: HUD slots 28-31
      * 3x3: HUD slots 32-40
      */
-    private static BedrockItem[] getGridItems(final boolean is3x3, final InventoryTracker tracker) {
+    public static BedrockItem[] getGridItems(final boolean is3x3, final InventoryTracker tracker) {
         final int gridSize = is3x3 ? 9 : 4;
         final int startSlot = is3x3 ? 32 : 28;
         final BedrockItem[] gridItems = new BedrockItem[gridSize];
@@ -185,30 +188,39 @@ public class CraftingSimulator {
     }
 
     /**
-     * Creates SOURCE_TODO(-5) actions for each ingredient type consumed.
-     * Each non-empty grid slot contributes one action with count=1.
-     * Same item types are merged into one action with summed count.
+     * For each non-empty crafting grid slot, emits the pair of actions a real Bedrock client sends when
+     * crafting consumes one item from that slot:
+     *   1. SOURCE_TODO(-5 USE_INGREDIENT) with slot = grid-relative index (0-based), fromItem empty,
+     *      toItem the consumed ingredient (count 1) — this feeds the server's CraftingTransaction inputs.
+     *   2. A ContainerInventory SlotChange on the HUD/UI container (id 124) at the absolute grid slot,
+     *      decrementing the stack by 1 (or clearing it) — the actual grid mutation the server validates.
      */
-    private static void addIngredientActions(final List<InventoryActionData> actions, final BedrockItem[] gridItems) {
-        // Merge by (runtimeId, data) to combine same materials
-        final Map<Long, BedrockItem> merged = new LinkedHashMap<>();
-        for (final BedrockItem gridItem : gridItems) {
+    private static void addGridConsumption(final List<InventoryActionData> actions, final boolean is3x3, final InventoryTracker tracker) {
+        final var hudContainer = tracker.getHudContainer();
+        final int startSlot = is3x3 ? 32 : 28;
+        final int gridSize = is3x3 ? 9 : 4;
+        for (int i = 0; i < gridSize; i++) {
+            final int hudSlot = startSlot + i;
+            final BedrockItem gridItem = hudContainer.getItem(hudSlot);
             if (gridItem.isEmpty()) continue;
-            long key = ((long) gridItem.identifier() << 16) | (gridItem.data() & 0xFFFF);
-            BedrockItem existing = merged.get(key);
-            if (existing == null) {
-                BedrockItem ingredient = gridItem.copy();
-                ingredient.setAmount(1);
-                merged.put(key, ingredient);
-            } else {
-                existing.setAmount(existing.amount() + 1);
-            }
-        }
 
-        for (final BedrockItem ingredient : merged.values()) {
+            final BedrockItem ingredient = gridItem.copy();
+            ingredient.setAmount(1);
             actions.add(new InventoryActionData(
                     new InventorySource(InventorySourceType.NonImplementedFeatureTODO, TODO_USE_INGREDIENT, InventorySource_InventorySourceFlags.NoFlag),
-                    0, BedrockItem.empty(), ingredient
+                    i, BedrockItem.empty(), ingredient
+            ));
+
+            final BedrockItem newGrid;
+            if (gridItem.amount() > 1) {
+                newGrid = gridItem.copy();
+                newGrid.setAmount(gridItem.amount() - 1);
+            } else {
+                newGrid = BedrockItem.empty();
+            }
+            actions.add(new InventoryActionData(
+                    new InventorySource(InventorySourceType.ContainerInventory, ContainerID.CONTAINER_ID_PLAYER_ONLY_UI.getValue(), InventorySource_InventorySourceFlags.NoFlag),
+                    hudSlot, gridItem.copy(), newGrid
             ));
         }
     }

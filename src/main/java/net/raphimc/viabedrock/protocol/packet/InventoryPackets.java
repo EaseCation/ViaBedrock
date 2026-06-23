@@ -110,7 +110,18 @@ public class InventoryPackets {
                 return;
             }
             final BedrockBlockEntity blockEntity = chunkTracker.getBlockEntity(position);
-            TextComponent title = new TranslationComponent("container." + blockStateRewriter.tag(chunkTracker.getBlockState(position)));
+            final String bedrockBlockTag = blockStateRewriter.tag(chunkTracker.getBlockState(position));
+            // Map the Bedrock block tag to the Java container title translation key. Most align with
+            // "container.<tag>", but several differ; an unmatched key shows as raw "container.crafting_table"
+            // text on the Java client instead of a localized title.
+            final String javaTitleKey = switch (bedrockBlockTag) {
+                case "crafting_table" -> "container.crafting";
+                case "anvil" -> "container.repair";
+                case "brewing_stand" -> "container.brewing";
+                case "enchanting_table" -> "container.enchant";
+                default -> "container." + bedrockBlockTag;
+            };
+            TextComponent title = new TranslationComponent(javaTitleKey);
             if (blockEntity != null && blockEntity.tag().get("CustomName") instanceof StringTag customNameTag) {
                 title = TextUtil.stringToTextComponent(wrapper.user().get(ResourcePackStorage.class).getTexts().translate(customNameTag.getValue()));
             }
@@ -149,6 +160,9 @@ public class InventoryPackets {
                 case WORKBENCH -> {
                     container = new CraftingTableContainer(wrapper.user(), containerId, title, position);
                 }
+                case FURNACE, BLAST_FURNACE, SMOKER -> {
+                    container = new FurnaceContainer(wrapper.user(), containerId, type, title, position);
+                }
                 case NONE, CAULDRON, JUKEBOX, ARMOR, HAND, HUD, DECORATED_POT -> { // Bedrock client can't open these containers
                     wrapper.cancel();
                     return;
@@ -163,7 +177,11 @@ public class InventoryPackets {
             }
             inventoryTracker.setCurrentContainer(container);
 
-            wrapper.write(Types.VAR_INT, (int) containerId); // container id
+            // Use the Java window id (javaContainerId), not the raw Bedrock containerId: the crafting
+            // table overrides javaContainerId() to a fixed value and all clientbound updates / serverbound
+            // lookups key off javaContainerId. Sending the raw containerId here desynced the window id so
+            // the table's CONTAINER_CLICK/CLOSE never matched (items not placed, container never closed).
+            wrapper.write(Types.VAR_INT, (int) container.javaContainerId()); // container id (Java window id)
             wrapper.write(Types.VAR_INT, javaMenuId); // type
             wrapper.write(Types.TAG, TextUtil.textComponentToNbt(title)); // title
         });
@@ -181,6 +199,8 @@ public class InventoryPackets {
                         wrapper.cancel();
                         return;
                     }
+                    // Java window id must match what CONTAINER_OPEN sent (javaContainerId), not the raw Bedrock containerId.
+                    wrapper.set(Types.VAR_INT, 0, (int) container.javaContainerId());
 
                     if (serverInitiated && containerType != container.type()) {
                         ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Server tried to close container, but container type was not correct");

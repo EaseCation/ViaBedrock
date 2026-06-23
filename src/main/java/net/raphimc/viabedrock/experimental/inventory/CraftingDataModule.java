@@ -70,6 +70,16 @@ public class CraftingDataModule implements FeatureModule {
             final CraftingDataEntryType type = CraftingDataEntryType.getByValue(rawType);
 
             if (type == null) {
+                // FurnaceRecipe(2) and FurnaceAuxRecipe(3) are missing from the generated enum. They appear
+                // interleaved in the recipe stream, so not consuming their bytes desyncs the reader and aborts
+                // parsing — dropping every recipe after the first furnace entry (e.g. log -> planks). Skip them.
+                if (rawType == 2) {
+                    skipFurnaceRecipe(wrapper);
+                    continue;
+                } else if (rawType == 3) {
+                    skipFurnaceAuxRecipe(wrapper);
+                    continue;
+                }
                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown CraftingDataEntryType: " + rawType + ", stopping parse at recipe " + i + "/" + recipeCount);
                 return;
             }
