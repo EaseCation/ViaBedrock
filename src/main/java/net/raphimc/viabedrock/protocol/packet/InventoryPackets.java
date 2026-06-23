@@ -259,6 +259,49 @@ public class InventoryPackets {
                 wrapper.cancel();
             }
         });
+        protocol.registerClientbound(ClientboundBedrockPackets.CONTAINER_SET_DATA, ClientboundPackets26_1.CONTAINER_SET_DATA, wrapper -> {
+            final int containerId = wrapper.read(Types.BYTE); // container id
+            final int property = wrapper.read(BedrockTypes.VAR_INT); // property
+            final int value = wrapper.read(BedrockTypes.VAR_INT); // value
+
+            final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
+            final Container container = inventoryTracker.getCurrentContainer();
+            // Only one screen can be open at a time, and the server only sends CONTAINER_SET_DATA while the
+            // furnace screen is open. Anything else (e.g. a brewing stand) is dropped, matching prior behavior.
+            if (!(container instanceof FurnaceContainer) || (byte) containerId != container.containerId()) {
+                wrapper.cancel();
+                return;
+            }
+
+            // Bedrock (ContainerSetDataPacket) only sends the numerators:
+            //   0 SMELT_PROGRESS      = cookTime     (0..burnInterval) -> Java cooking_time_spent (data slot 2)
+            //   1 REMAINING_FUEL_TIME = burnDuration (0..burnInterval) -> Java lit_time_remaining (data slot 0)
+            // Java needs the matching denominator slots too, or the flame ratio is wrong and the cooking arrow
+            // is hidden entirely (getBurnProgress returns 0 when cooking_total_time == 0). burnInterval is 200
+            // for a normal furnace and 100 for a blast furnace / smoker (which cook at double speed).
+            final int burnInterval = container.type() == ContainerType.FURNACE ? 200 : 100;
+            final int javaWindowId = container.javaContainerId();
+
+            final int numeratorSlot;
+            final int denominatorSlot;
+            switch (property) {
+                case 0 -> { numeratorSlot = 2; denominatorSlot = 3; } // SMELT_PROGRESS
+                case 1 -> { numeratorSlot = 0; denominatorSlot = 1; } // REMAINING_FUEL_TIME
+                default -> { wrapper.cancel(); return; } // MAX_FUEL_TIME / STORED_XP / FUEL_AUX: not needed by the Java GUI
+            }
+
+            // Synthesize the denominator (Bedrock never sends it) so the GUI renders a proportional bar.
+            final PacketWrapper denominator = PacketWrapper.create(ClientboundPackets26_1.CONTAINER_SET_DATA, wrapper.user());
+            denominator.write(Types.VAR_INT, javaWindowId); // container id
+            denominator.write(Types.SHORT, (short) denominatorSlot); // property
+            denominator.write(Types.SHORT, (short) burnInterval); // value
+            denominator.send(BedrockProtocol.class);
+
+            // Rewrite this packet as the numerator update.
+            wrapper.write(Types.VAR_INT, javaWindowId); // container id
+            wrapper.write(Types.SHORT, (short) numeratorSlot); // property
+            wrapper.write(Types.SHORT, (short) value); // value
+        });
         protocol.registerClientbound(ClientboundBedrockPackets.MODAL_FORM_REQUEST, ClientboundPackets26_1.SHOW_DIALOG, wrapper -> {
             final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
             final int id = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // id
