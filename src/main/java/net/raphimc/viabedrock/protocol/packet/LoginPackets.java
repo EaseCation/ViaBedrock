@@ -190,10 +190,10 @@ public class LoginPackets {
             final Instant now = Instant.now();
             final KeyPair sessionKeyPair = CryptUtil.generateEcdsa384KeyPair();
             final String encodedPublicKey = Base64.getEncoder().encodeToString(sessionKeyPair.getPublic().getEncoded());
-            final long rawXuid = javaUuid != null
-                    ? javaUuid.getMostSignificantBits() ^ javaUuid.getLeastSignificantBits()
-                    : FNV1.fnv1_64(javaUsername.getBytes(StandardCharsets.UTF_8));
-            final String xuid = Long.toUnsignedString(rawXuid, 36);
+            // 使用 UUID 后8位（低32位）作为 XUID，与中国版统一
+            final String xuid = javaUuid != null
+                    ? String.format("%08x", (int) javaUuid.getLeastSignificantBits())
+                    : String.format("%08x", (int) FNV1.fnv1_64(javaUsername.getBytes(StandardCharsets.UTF_8)));
             final UUID identity = javaUuid != null
                     ? javaUuid
                     : UUID.nameUUIDFromBytes(("pocket-auth-1-xuid:" + xuid).getBytes(StandardCharsets.UTF_8));
@@ -219,7 +219,7 @@ public class LoginPackets {
                         .claim(Claims.AUDIENCE, "api://auth-minecraft-services/multiplayer") // audience
                         .claim("cpk", encodedPublicKey) // client public key
                         .claim("leguuid", identity) // ? (Should be the same as SelfSignedId)
-                        .claim("mid", Long.toHexString(rawXuid).toUpperCase(Locale.ROOT)) // PlayFab entity id
+                        .claim("mid", xuid.toUpperCase(Locale.ROOT)) // PlayFab entity id
                         .claim("nid", "") // ?
                         .claim("nname", "") // ?
                         .claim("pid", "") // ?
@@ -241,11 +241,11 @@ public class LoginPackets {
                 authData.setDisplayName(extraData.get("displayName").getAsString());
                 authData.setXuid(extraData.get("XUID").getAsString());
             } else {
-                authData.setDisplayName(javaUsername);
-                final long rawXuid = javaUuid != null
-                        ? javaUuid.getMostSignificantBits() ^ javaUuid.getLeastSignificantBits()
-                        : FNV1.fnv1_64(javaUsername.getBytes(StandardCharsets.UTF_8));
-                authData.setXuid(Long.toUnsignedString(rawXuid, 36));
+                // 使用 UUID 后8位（低32位）作为 XUID，与中国版统一
+                final String xuid = javaUuid != null
+                        ? String.format("%08x", (int) javaUuid.getLeastSignificantBits())
+                        : String.format("%08x", (int) FNV1.fnv1_64(javaUsername.getBytes(StandardCharsets.UTF_8)));
+                authData.setXuid(xuid);
             }
         }
         if (authData.getDeviceId() == null) {
