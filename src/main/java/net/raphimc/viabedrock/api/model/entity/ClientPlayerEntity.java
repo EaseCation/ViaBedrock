@@ -61,6 +61,11 @@ public class ClientPlayerEntity extends PlayerEntity {
     // Position syncing
     private int pendingTeleportId;
     private boolean waitingForPositionSync;
+    // Teleport id of the position-sync packet we are currently waiting a client confirm for (0 = none).
+    // Kept separate from pendingTeleportId, which is overwritten by EVERY outgoing position packet, so the
+    // sync can still be matched/cleared if another server-driven position packet bumps pendingTeleportId
+    // before the sync confirm arrives. See beginPositionSync() / confirmTeleport().
+    private int positionSyncTeleportId;
     private boolean serverSideTeleportConfirmed;
 
     // Server Authoritative Movement
@@ -217,11 +222,32 @@ public class ClientPlayerEntity extends PlayerEntity {
         this.horizontalCollision = (flags & MovePlayerFlag.HORIZONTAL_COLLISION.getBit()) != 0;
     }
 
+    // Starts a position sync: gates movement (preMove returns false) and sends a position packet the
+    // client must confirm before its movement is forwarded again. Records the teleport id of THIS sync
+    // (positionSyncTeleportId) so confirmTeleport() can clear the sync even if a later server-driven
+    // position packet overwrites pendingTeleportId before the confirm arrives.
+    public void beginPositionSync(final Set<Relative> relatives) {
+        this.waitingForPositionSync = true;
+        this.sendPlayerPositionPacketToClient(relatives);
+        this.positionSyncTeleportId = this.pendingTeleportId;
+    }
+
     public void confirmTeleport(final int teleportId) {
+        // Clear a pending position sync as soon as the client confirms ANY teleport whose id is at or
+        // beyond the sync's id. Teleport ids increase monotonically and are confirmed in order, so this
+        // is robust against pendingTeleportId being overwritten between sending the sync and the confirm
+        // arriving. Crucially this runs regardless of the fake/real (sign) branch below: a REAL server
+        // teleport (positive id) can land in that window and its confirm takes the else-branch, which on
+        // its own never touches waitingForPositionSync — leaving the sync stuck forever (movement frozen
+        // server-side while the client walks freely). See the deterministic trigger described in preMove().
+        if (this.waitingForPositionSync && this.positionSyncTeleportId != 0 && Math.abs(teleportId) >= this.positionSyncTeleportId) {
+            this.waitingForPositionSync = false;
+            this.positionSyncTeleportId = 0;
+        }
+
         if (teleportId < 0) { // Fake teleport
             if (this.pendingTeleportId == -teleportId) {
                 this.pendingTeleportId = 0;
-                this.waitingForPositionSync = false;
             }
         } else {
             this.serverSideTeleportConfirmed = true;
@@ -521,7 +547,25 @@ public class ClientPlayerEntity extends PlayerEntity {
             this.serverSideTeleportConfirmed = false;
             return true;
         }
-        // Waiting for position sync
+        // Waiting for position sync. Silently drops movement (no rubber-band) until the client confirms
+        // the sync teleport. Deterministic deadlock this used to cause, and how it is now prevented:
+        //   1. Player switches world / cross-server; their position momentarily lands in a not-yet-loaded
+        //      chunk section -> the unloaded-chunk branch below calls beginPositionSync(), which sends a
+        //      FAKE teleport (negative id N) and sets waitingForPositionSync = true.
+        //   2. BEFORE the client's ACCEPT_TELEPORTATION(N) returns, the Bedrock backend sends a server
+        //      teleport for the local player: MOVE_PLAYER with mode = Teleport (OtherPlayerPackets:160-170,
+        //      very common right after a world/server switch to place the player). Because fakeTeleport is
+        //      only true for mode = Respawn, this writes a REAL teleport (positive id M > N) and overwrites
+        //      pendingTeleportId from N to M.
+        //   3. The client confirms N then M. Old code cleared the sync only in the fake branch when
+        //      pendingTeleportId == -teleportId: confirm(N) failed (pendingTeleportId == M != N) and
+        //      confirm(M) took the real/else branch which never cleared the sync. waitingForPositionSync
+        //      stayed true forever -> preMove permanently returns false here -> PLAYER_AUTH_INPUT keeps
+        //      sending the frozen old position (server-side player + footstep sound stuck at the origin)
+        //      while the client keeps predicting movement locally (walks freely). Matches the observed
+        //      "client walks, footstep stays put and fades with distance" symptom.
+        // Fix: confirmTeleport() now clears the sync on ANY confirm with |id| >= positionSyncTeleportId,
+        // so the real teleport in step 2 (or the fake confirm in step 3) resolves it. See confirmTeleport().
         if (this.waitingForPositionSync) {
             return false;
         }
@@ -536,20 +580,17 @@ public class ClientPlayerEntity extends PlayerEntity {
         if (chunkTracker.isInUnloadedChunkSection(this.position)) {
             this.wasInsideUnloadedChunk = true;
             if (!this.position.equals(newPosition)) {
-                this.waitingForPositionSync = true;
-                this.sendPlayerPositionPacketToClient(Relative.ROTATION);
+                this.beginPositionSync(Relative.ROTATION);
             }
             return false;
         } else if (this.wasInsideUnloadedChunk) {
             this.wasInsideUnloadedChunk = false;
-            this.waitingForPositionSync = true;
-            this.sendPlayerPositionPacketToClient(Relative.ROTATION);
+            this.beginPositionSync(Relative.ROTATION);
             return false;
         }
         // Loaded -> Unloaded chunk
         if (newPosition != null && chunkTracker.isInUnloadedChunkSection(newPosition)) {
-            this.waitingForPositionSync = true;
-            this.sendPlayerPositionPacketToClient(Relative.ROTATION);
+            this.beginPositionSync(Relative.ROTATION);
             return false;
         }
 
