@@ -36,6 +36,7 @@ import net.raphimc.viabedrock.api.util.BitSets;
 import net.raphimc.viabedrock.api.util.EnumUtil;
 import net.raphimc.viabedrock.api.util.InstantBreakBlocks;
 import net.raphimc.viabedrock.api.util.MathUtil;
+import net.raphimc.viabedrock.api.util.MovementDebug;
 import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
@@ -122,6 +123,9 @@ public class ClientPlayerPackets {
                 case ReadyToSpawn -> {
                     final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
                     clientPlayer.setPosition(position);
+                    if (MovementDebug.ENABLED) {
+                        MovementDebug.log(clientPlayer.name(), "RESPAWN ReadyToSpawn pos=" + MovementDebug.fmt(position) + " initSpawned=" + clientPlayer.isInitiallySpawned() + (clientPlayer.isInitiallySpawned() ? " -> will clear dimChange LOCK + resetChunks" : " -> SKIP unlock (guard); dimChangeLock=" + (clientPlayer.dimensionChangeInfo() != null)));
+                    }
 
                     if (clientPlayer.isInitiallySpawned()) {
                         final GameSessionStorage gameSession = wrapper.user().get(GameSessionStorage.class);
@@ -184,6 +188,9 @@ public class ClientPlayerPackets {
 
             if (action == PlayerActionType.ChangeDimensionAck) {
                 final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
+                if (MovementDebug.ENABLED) {
+                    MovementDebug.log(clientPlayer.name(), "PLAYER_ACTION ChangeDimensionAck(server) dimChangeLock=" + (clientPlayer.dimensionChangeInfo() != null));
+                }
                 if (clientPlayer.dimensionChangeInfo() != null) {
                     clientPlayer.sendPlayerActionPacketToServer(PlayerActionType.ChangeDimensionAck);
                     PacketFactory.sendBedrockLoadingScreen(wrapper.user(), ServerboundLoadingScreenPacketType.EndLoadingScreen, clientPlayer.dimensionChangeInfo().loadingScreenId());

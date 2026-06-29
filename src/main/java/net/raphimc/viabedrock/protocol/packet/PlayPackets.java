@@ -22,10 +22,12 @@ import com.viaversion.viaversion.api.protocol.remapper.PacketHandlers;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ServerboundPackets26_1;
+import net.raphimc.viabedrock.api.util.MovementDebug;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.storage.BlobCache;
+import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 import net.raphimc.viabedrock.protocol.storage.GameRulesStorage;
 import net.raphimc.viabedrock.protocol.storage.JoinGate;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
@@ -56,7 +58,13 @@ public class PlayPackets {
                 map(BedrockTypes.STRING, Types.STRING); // address
                 map(BedrockTypes.UNSIGNED_SHORT_LE, Types.VAR_INT); // port
                 handler(wrapper -> {
-                    if (wrapper.read(Types.BOOLEAN)) { // reload world
+                    final boolean reloadWorld = wrapper.read(Types.BOOLEAN); // reload world
+                    if (MovementDebug.ENABLED) {
+                        final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
+                        final String name = entityTracker != null && entityTracker.getClientPlayer() != null ? entityTracker.getClientPlayer().name() : "?";
+                        MovementDebug.log(name, "TRANSFER address=" + wrapper.get(Types.STRING, 0) + " port=" + wrapper.get(Types.VAR_INT, 0) + " reloadWorld=" + reloadWorld + (reloadWorld ? " -> stay on connection (cancel forward)" : " -> forward (client reconnect)"));
+                    }
+                    if (reloadWorld) {
                         wrapper.cancel();
                     }
                 });

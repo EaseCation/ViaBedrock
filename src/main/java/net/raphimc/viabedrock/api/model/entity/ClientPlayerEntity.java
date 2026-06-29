@@ -26,6 +26,7 @@ import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPack
 import com.viaversion.viaversion.util.Pair;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.util.EnumUtil;
+import net.raphimc.viabedrock.api.util.MovementDebug;
 import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.experimental.model.inventory.BedrockInventoryTransaction;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
@@ -62,6 +63,10 @@ public class ClientPlayerEntity extends PlayerEntity {
     private int pendingTeleportId;
     private boolean waitingForPositionSync;
     private boolean serverSideTeleportConfirmed;
+
+    // Movement debug (only active when -Dviabedrock.debug.movement=true)
+    private int lastMoveDebugAge = -1000;
+    private String lastMoveDebugBranch;
 
     // Server Authoritative Movement
     private Position3f prevPosition;
@@ -219,9 +224,14 @@ public class ClientPlayerEntity extends PlayerEntity {
 
     public void confirmTeleport(final int teleportId) {
         if (teleportId < 0) { // Fake teleport
-            if (this.pendingTeleportId == -teleportId) {
+            final int expected = this.pendingTeleportId;
+            if (expected == -teleportId) {
                 this.pendingTeleportId = 0;
                 this.waitingForPositionSync = false;
+            }
+            if (MovementDebug.ENABLED) {
+                MovementDebug.log(this.name(), "confirmTeleport(fake) id=" + teleportId + " expected=" + expected
+                        + " matched=" + (expected == -teleportId) + " -> waitingSync=" + this.waitingForPositionSync);
             }
         } else {
             this.serverSideTeleportConfirmed = true;
@@ -229,6 +239,9 @@ public class ClientPlayerEntity extends PlayerEntity {
                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received teleport confirm for teleport id " + teleportId + " but player is not spawned yet");
             }
             this.authInputData.add(PlayerAuthInputPacket_InputData.HandledTeleport);
+            if (MovementDebug.ENABLED) {
+                MovementDebug.log(this.name(), "confirmTeleport(real) id=" + teleportId + " initSpawned=" + this.initiallySpawned);
+            }
         }
     }
 
@@ -523,10 +536,12 @@ public class ClientPlayerEntity extends PlayerEntity {
         }
         // Waiting for position sync
         if (this.waitingForPositionSync) {
+            if (MovementDebug.ENABLED) this.debugBlockedMove(chunkTracker, "waitingForPositionSync", newPosition);
             return false;
         }
         // Not spawned yet or respawning
         if (!this.initiallySpawned || this.dimensionChangeInfo != null) {
+            if (MovementDebug.ENABLED) this.debugBlockedMove(chunkTracker, !this.initiallySpawned ? "notInitiallySpawned" : "dimensionChangeInfo", newPosition);
             if (!this.position.equals(newPosition)) {
                 this.sendPlayerPositionPacketToClient(Relative.NONE);
             }
@@ -534,6 +549,7 @@ public class ClientPlayerEntity extends PlayerEntity {
         }
         // Is in unloaded chunk
         if (chunkTracker.isInUnloadedChunkSection(this.position)) {
+            if (MovementDebug.ENABLED) this.debugBlockedMove(chunkTracker, "unloadedChunk_current", newPosition);
             this.wasInsideUnloadedChunk = true;
             if (!this.position.equals(newPosition)) {
                 this.waitingForPositionSync = true;
@@ -541,6 +557,7 @@ public class ClientPlayerEntity extends PlayerEntity {
             }
             return false;
         } else if (this.wasInsideUnloadedChunk) {
+            if (MovementDebug.ENABLED) this.debugBlockedMove(chunkTracker, "wasInsideUnloadedChunk", newPosition);
             this.wasInsideUnloadedChunk = false;
             this.waitingForPositionSync = true;
             this.sendPlayerPositionPacketToClient(Relative.ROTATION);
@@ -548,6 +565,7 @@ public class ClientPlayerEntity extends PlayerEntity {
         }
         // Loaded -> Unloaded chunk
         if (newPosition != null && chunkTracker.isInUnloadedChunkSection(newPosition)) {
+            if (MovementDebug.ENABLED) this.debugBlockedMove(chunkTracker, "unloadedChunk_target", newPosition);
             this.waitingForPositionSync = true;
             this.sendPlayerPositionPacketToClient(Relative.ROTATION);
             return false;
@@ -562,6 +580,26 @@ public class ClientPlayerEntity extends PlayerEntity {
         }
 
         return false;
+    }
+
+    // Diagnostic only (see MovementDebug). Throttled: logs immediately when the blocking branch changes,
+    // otherwise at most once per ~1s (20 ticks), to avoid flooding since preMove runs every movement packet.
+    private void debugBlockedMove(final ChunkTracker chunkTracker, final String branch, final Position3f newPosition) {
+        if (branch.equals(this.lastMoveDebugBranch) && this.age - this.lastMoveDebugAge < 20) {
+            return;
+        }
+        this.lastMoveDebugBranch = branch;
+        this.lastMoveDebugAge = this.age;
+        final boolean currentChunkLoaded = chunkTracker != null && !chunkTracker.isInUnloadedChunkSection(this.position);
+        MovementDebug.log(this.name(), "preMove BLOCKED[" + branch + "]"
+                + " pos=" + MovementDebug.fmt(this.position)
+                + " new=" + MovementDebug.fmt(newPosition)
+                + " curChunkLoaded=" + currentChunkLoaded
+                + " initSpawned=" + this.initiallySpawned
+                + " dimChange=" + (this.dimensionChangeInfo != null)
+                + " waitingSync=" + this.waitingForPositionSync
+                + " wasUnloaded=" + this.wasInsideUnloadedChunk
+                + " pendingTp=" + this.pendingTeleportId);
     }
 
     public record DimensionChangeInfo(Long loadingScreenId) {

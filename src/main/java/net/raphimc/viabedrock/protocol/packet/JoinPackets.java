@@ -40,6 +40,7 @@ import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
 import net.raphimc.viabedrock.api.resourcepack.definition.ItemDefinitions;
 import net.raphimc.viabedrock.api.util.BitSets;
+import net.raphimc.viabedrock.api.util.MovementDebug;
 import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.api.util.StringUtil;
 import net.raphimc.viabedrock.api.util.TextUtil;
@@ -150,6 +151,9 @@ public class JoinPackets {
                     } else if (status == PlayStatus.PlayerSpawn) {
                         wrapper.cancel();
                         final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
+                        if (MovementDebug.ENABLED) {
+                            MovementDebug.log(clientPlayer.name(), "PlayStatus PlayerSpawn initSpawned=" + clientPlayer.isInitiallySpawned() + (clientPlayer.isInitiallySpawned() ? " -> IGNORED (already spawned); dimChangeLock=" + (clientPlayer.dimensionChangeInfo() != null) : " -> first spawn, will init"));
+                        }
                         if (clientPlayer.isInitiallySpawned()) return;
 
                         final PacketWrapper interact = PacketWrapper.create(ServerboundBedrockPackets.INTERACT, wrapper.user());
@@ -372,7 +376,14 @@ public class JoinPackets {
                             vanillaVersion,
                             enabledFeatures
                     ));
-                }, State.PLAY, (PacketHandler) PacketWrapper::cancel // Bedrock client ignores multiple start game packets
+                }, State.PLAY, (PacketHandler) wrapper -> {
+                    wrapper.cancel(); // Bedrock client ignores multiple start game packets
+                    if (MovementDebug.ENABLED) {
+                        final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
+                        final String name = entityTracker != null && entityTracker.getClientPlayer() != null ? entityTracker.getClientPlayer().name() : "?";
+                        MovementDebug.log(name, "START_GAME received again in PLAY -> IGNORED (entity reused, initSpawned kept)");
+                    }
+                }
         );
         protocol.registerClientboundTransition(ClientboundBedrockPackets.BIOME_DEFINITION_LIST,
                 // Biomes are technically data driven, but the client seems to ignore most of the defined data and instead uses hardcoded values.

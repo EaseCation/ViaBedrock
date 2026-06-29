@@ -42,6 +42,7 @@ import net.raphimc.viabedrock.api.chunk.datapalette.BedrockDataPalette;
 import net.raphimc.viabedrock.api.chunk.section.BedrockChunkSection;
 import net.raphimc.viabedrock.api.chunk.section.BedrockChunkSectionImpl;
 import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
+import net.raphimc.viabedrock.api.util.MovementDebug;
 import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
@@ -190,6 +191,9 @@ public class WorldPackets {
             PacketFactory.sendBedrockLoadingScreen(wrapper.user(), ServerboundLoadingScreenPacketType.StartLoadingScreen, loadingScreenId);
             clientPlayer.setPosition(new Position3f(position.x(), position.y() + clientPlayer.eyeOffset(), position.z()));
             clientPlayer.setDimensionChangeInfo(new ClientPlayerEntity.DimensionChangeInfo(loadingScreenId));
+            if (MovementDebug.ENABLED) {
+                MovementDebug.log(clientPlayer.name(), "CHANGE_DIMENSION dim=" + dimensionId + " (" + dimensionKey + ") pos=" + MovementDebug.fmt(position) + " loadingScreenId=" + loadingScreenId + " -> dimChange LOCK set");
+            }
             if (inventoryTracker.isContainerOpen()) {
                 inventoryTracker.setCurrentContainerClosed(true);
             }
@@ -239,6 +243,9 @@ public class WorldPackets {
             final int chunkZ = wrapper.read(BedrockTypes.VAR_INT); // chunk z
             final Dimension dimension = Dimension.getByValue(wrapper.read(BedrockTypes.VAR_INT)); // dimension
             if (dimension != chunkTracker.getDimension()) {
+                if (MovementDebug.ENABLED) {
+                    MovementDebug.log(wrapper.user().get(EntityTracker.class).getClientPlayer().name(), "LEVEL_CHUNK DROPPED wrong-dim chunk=(" + chunkX + "," + chunkZ + ") pktDim=" + dimension + " trackerDim=" + chunkTracker.getDimension());
+                }
                 return;
             }
             final int sectionCount = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // sub chunk count
@@ -543,6 +550,9 @@ public class WorldPackets {
             final boolean radiusChanged = previousRadius != radius;
             chunkTracker.setRadius(radius);
             chunkTracker.setCenter(centerX, centerZ);
+            if (MovementDebug.ENABLED && (centerChanged || radiusChanged)) {
+                MovementDebug.log(wrapper.user().get(EntityTracker.class).getClientPlayer().name(), "CHUNK_PUBLISHER center=(" + centerX + "," + centerZ + ") radius=" + radius + " prevCenter=(" + previousCenterX + "," + previousCenterZ + ") prevRadius=" + previousRadius);
+            }
 
             final int count = wrapper.read(BedrockTypes.INT_LE); // server built chunks count
             for (int i = 0; i < count; i++) {
