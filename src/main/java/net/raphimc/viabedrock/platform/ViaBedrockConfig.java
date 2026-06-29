@@ -123,6 +123,46 @@ public interface ViaBedrockConfig extends Config {
 
     boolean shouldSendCustomMappingSyncResult();
 
+    /**
+     * @return The movement watchdog mode. A fail-safe net for the rare case where the backend never sends the
+     * packet that would unlock movement after a world/dimension/server switch (see ViaBedrock movement docs).
+     * OFF = disabled (behaviour identical to upstream); OBSERVE = only log when a lock stays stuck past the
+     * timeout, without changing behaviour (default, most conservative); ACTIVE = additionally perform the
+     * conservative, idempotent recovery (re-send the standard handshake finalization the backend omitted).
+     */
+    MovementWatchdogMode getMovementWatchdogMode();
+
+    /**
+     * @return Ticks (20/s) a dimension change may stay un-finalized before the watchdog acts. Default 200 (10s),
+     * far above any normal handshake so normal players never trigger it.
+     */
+    int getMovementWatchdogDimensionChangeTimeoutTicks();
+
+    /**
+     * @return Ticks the player may stay stuck in an unloaded chunk section before the watchdog re-requests chunks.
+     */
+    int getMovementWatchdogChunkStuckTimeoutTicks();
+
+    /**
+     * @return Throttle (in ticks) between repeated chunk-radius re-requests while stuck in an unloaded chunk.
+     */
+    int getMovementWatchdogChunkRadiusRequestIntervalTicks();
+
+    enum MovementWatchdogMode {
+        OFF,
+        OBSERVE,
+        ACTIVE;
+
+        public static MovementWatchdogMode byName(final String name) {
+            for (MovementWatchdogMode mode : values()) {
+                if (mode.name().equalsIgnoreCase(name)) {
+                    return mode;
+                }
+            }
+            return OBSERVE;
+        }
+    }
+
     enum CustomMappingSyncFailureMode {
         SAFE_FALLBACK,
         KICK;

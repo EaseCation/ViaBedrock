@@ -63,3 +63,20 @@ customMappingSync:
   enableChunks: true
   # If true, send BedrockLoader diagnostic result payloads.
   sendSyncResult: false
+
+# Movement watchdog: a fail-safe net for the rare case where the backend never sends the packet that would
+# unlock movement after a world/dimension/server switch, leaving the server-side player frozen while the
+# client keeps moving. It NEVER touches the normal path - it only acts after a timeout far above any normal
+# handshake, so normal players are unaffected.
+movementWatchdog:
+  # off     = disabled (behaviour identical to upstream)
+  # observe = only log when a lock stays stuck past the timeout, without changing behaviour (default, safest)
+  # active  = additionally perform the conservative, idempotent recovery (re-send the handshake finalization
+  #           the backend omitted; for stuck chunks, re-request the chunk radius - never lets the player phase)
+  mode: "observe"
+  # Ticks (20/s) a dimension change may stay un-finalized before the watchdog acts. 200 = 10s.
+  dimensionChangeTimeoutTicks: 200
+  # Ticks the player may stay stuck in an unloaded chunk before the watchdog re-requests chunks. 200 = 10s.
+  chunkStuckTimeoutTicks: 200
+  # Throttle (ticks) between repeated chunk-radius re-requests while stuck. 100 = 5s.
+  chunkRadiusRequestIntervalTicks: 100

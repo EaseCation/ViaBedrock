@@ -150,7 +150,24 @@ public class JoinPackets {
                     } else if (status == PlayStatus.PlayerSpawn) {
                         wrapper.cancel();
                         final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
-                        if (clientPlayer.isInitiallySpawned()) return;
+                        if (clientPlayer.isInitiallySpawned()) {
+                            // C1: re-spawn on the same connection (e.g. cross-server reload that reuses this entity).
+                            // The plain early-return below would skip the loading-screen finalization, leaving the
+                            // client stuck on the loading screen and the backend unaware the player is ready. Gated by
+                            // the movementWatchdog switch: ACTIVE re-sends the idempotent finalization, OBSERVE logs,
+                            // OFF keeps upstream behaviour.
+                            final ViaBedrockConfig.MovementWatchdogMode mode = ViaBedrock.getConfig().getMovementWatchdogMode();
+                            if (mode == ViaBedrockConfig.MovementWatchdogMode.ACTIVE) {
+                                PacketFactory.sendBedrockLoadingScreen(wrapper.user(), ServerboundLoadingScreenPacketType.EndLoadingScreen, null);
+                                final PacketWrapper reInit = PacketWrapper.create(ServerboundBedrockPackets.SET_LOCAL_PLAYER_AS_INITIALIZED, wrapper.user());
+                                reInit.write(BedrockTypes.UNSIGNED_VAR_LONG, clientPlayer.runtimeId());
+                                reInit.sendToServer(BedrockProtocol.class);
+                                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "[movement-watchdog] C: re-spawn after reload; re-sent EndLoadingScreen + SET_LOCAL_PLAYER_AS_INITIALIZED");
+                            } else if (mode == ViaBedrockConfig.MovementWatchdogMode.OBSERVE) {
+                                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "[movement-watchdog] C(observe): re-spawn after reload detected (would re-send loading finalization in active mode)");
+                            }
+                            return;
+                        }
 
                         final PacketWrapper interact = PacketWrapper.create(ServerboundBedrockPackets.INTERACT, wrapper.user());
                         interact.write(Types.UNSIGNED_BYTE, (short) InteractPacket_Action.InteractUpdate.getValue()); // action

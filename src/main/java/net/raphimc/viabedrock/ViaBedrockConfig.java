@@ -54,6 +54,10 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
     private String customMappingSyncDefaultFallbackBlock;
     private boolean customMappingSyncEnableChunks;
     private boolean customMappingSyncSendSyncResult;
+    private MovementWatchdogMode movementWatchdogMode;
+    private int movementWatchdogDimensionChangeTimeoutTicks;
+    private int movementWatchdogChunkStuckTimeoutTicks;
+    private int movementWatchdogChunkRadiusRequestIntervalTicks;
 
     public ViaBedrockConfig(final File configFile, final Logger logger) {
         super(configFile, logger);
@@ -92,6 +96,11 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
         this.customMappingSyncDefaultFallbackBlock = getString(customMappingSync, "defaultFallbackBlock", "minecraft:stone");
         this.customMappingSyncEnableChunks = getBoolean(customMappingSync, "enableChunks", true);
         this.customMappingSyncSendSyncResult = getBoolean(customMappingSync, "sendSyncResult", false);
+        final ConfigSection movementWatchdog = this.getSection("movementWatchdog");
+        this.movementWatchdogMode = MovementWatchdogMode.byName(getString(movementWatchdog, "mode", "observe"));
+        this.movementWatchdogDimensionChangeTimeoutTicks = getInt(movementWatchdog, "dimensionChangeTimeoutTicks", 200);
+        this.movementWatchdogChunkStuckTimeoutTicks = getInt(movementWatchdog, "chunkStuckTimeoutTicks", 200);
+        this.movementWatchdogChunkRadiusRequestIntervalTicks = getInt(movementWatchdog, "chunkRadiusRequestIntervalTicks", 100);
     }
 
     private static boolean getBoolean(final ConfigSection section, final String key, final boolean def) {
@@ -243,6 +252,26 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
     @Override
     public boolean shouldSendCustomMappingSyncResult() {
         return this.customMappingSyncSendSyncResult;
+    }
+
+    @Override
+    public MovementWatchdogMode getMovementWatchdogMode() {
+        return this.movementWatchdogMode;
+    }
+
+    @Override
+    public int getMovementWatchdogDimensionChangeTimeoutTicks() {
+        return this.movementWatchdogDimensionChangeTimeoutTicks;
+    }
+
+    @Override
+    public int getMovementWatchdogChunkStuckTimeoutTicks() {
+        return this.movementWatchdogChunkStuckTimeoutTicks;
+    }
+
+    @Override
+    public int getMovementWatchdogChunkRadiusRequestIntervalTicks() {
+        return this.movementWatchdogChunkRadiusRequestIntervalTicks;
     }
 
 }

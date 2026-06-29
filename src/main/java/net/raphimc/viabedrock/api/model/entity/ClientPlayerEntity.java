@@ -26,6 +26,9 @@ import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPack
 import com.viaversion.viaversion.util.Pair;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.util.EnumUtil;
+import net.raphimc.viabedrock.platform.ViaBedrockConfig;
+import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
+import net.raphimc.viabedrock.protocol.storage.ClientSettingsStorage;
 import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.experimental.model.inventory.BedrockInventoryTransaction;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
@@ -67,6 +70,12 @@ public class ClientPlayerEntity extends PlayerEntity {
     // before the sync confirm arrives. See beginPositionSync() / confirmTeleport().
     private int positionSyncTeleportId;
     private boolean serverSideTeleportConfirmed;
+
+    // Movement watchdog (fail-safe for a backend that never sends the unlock packet after a switch).
+    // -1 = inactive; ages are compared against Entity.age (incremented once per client tick).
+    private int dimensionChangeStartAge = -1;
+    private int chunkStuckStartAge = -1;
+    private int lastChunkRadiusRequestAge = -1;
 
     // Server Authoritative Movement
     private Position3f prevPosition;
@@ -112,6 +121,8 @@ public class ClientPlayerEntity extends PlayerEntity {
         this.prevPosition = this.position;
         this.prevOnGround = this.onGround;
         this.prevInputFlags = this.inputFlags;
+
+        this.movementWatchdog();
     }
 
     public UUID bedrockUuid() {
@@ -376,6 +387,9 @@ public class ClientPlayerEntity extends PlayerEntity {
 
     public void setDimensionChangeInfo(final DimensionChangeInfo dimensionChangeInfo) {
         this.dimensionChangeInfo = dimensionChangeInfo;
+        if (dimensionChangeInfo != null) {
+            this.dimensionChangeStartAge = this.age; // watchdog timeout baseline
+        }
     }
 
     public Set<InputFlag> inputFlags() {
@@ -603,6 +617,83 @@ public class ClientPlayerEntity extends PlayerEntity {
         }
 
         return false;
+    }
+
+    /**
+     * Fail-safe net for the rare case where the backend never sends the packet that would unlock movement after a
+     * world/dimension/server switch, leaving the server-side player frozen while the client keeps moving (see the
+     * deterministic analysis in the ViaBedrock movement notes). Runs once per client tick after super.tick().
+     * <p>
+     * Controlled by the {@code movementWatchdog} config section: OFF = no-op (upstream behaviour), OBSERVE = log
+     * only when a lock stays stuck past the timeout, ACTIVE = additionally perform the conservative, idempotent
+     * recovery (re-send the standard handshake finalization the backend omitted; for stuck chunks, re-request the
+     * chunk radius — it never lets the player phase through unloaded terrain). The timeouts are far above any normal
+     * handshake, so normal players never trigger it. Never throws into the tick loop.
+     */
+    private void movementWatchdog() {
+        final ViaBedrockConfig.MovementWatchdogMode mode = ViaBedrock.getConfig().getMovementWatchdogMode();
+        if (mode == ViaBedrockConfig.MovementWatchdogMode.OFF || !this.initiallySpawned) {
+            return;
+        }
+        try {
+            final ChunkTracker chunkTracker = this.user.get(ChunkTracker.class);
+            if (chunkTracker == null) {
+                return;
+            }
+            final boolean active = mode == ViaBedrockConfig.MovementWatchdogMode.ACTIVE;
+
+            // Link A: dimension lock (dimensionChangeInfo) never cleared by the backend -> preMove rubber-bands forever.
+            if (this.dimensionChangeInfo != null) {
+                final int elapsed = this.age - this.dimensionChangeStartAge;
+                if (this.dimensionChangeStartAge >= 0
+                        && elapsed > ViaBedrock.getConfig().getMovementWatchdogDimensionChangeTimeoutTicks()
+                        && !chunkTracker.isInUnloadedChunkSection(this.position)) { // only once the new world is actually ready
+                    if (active) {
+                        final Long loadingScreenId = this.dimensionChangeInfo.loadingScreenId();
+                        // Replicates the standard ChangeDimensionAck finalization (ClientPlayerPackets). Idempotent:
+                        // if the backend later sends the real ack, its dimensionChangeInfo != null guard skips it.
+                        this.sendPlayerActionPacketToServer(PlayerActionType.ChangeDimensionAck);
+                        PacketFactory.sendBedrockLoadingScreen(this.user, ServerboundLoadingScreenPacketType.EndLoadingScreen, loadingScreenId);
+                        this.sendPlayerPositionPacketToClient(Relative.NONE);
+                        this.setDimensionChangeInfo(null);
+                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "[movement-watchdog] A: dimension change not finalized by backend after " + elapsed + " ticks; finalized client-side");
+                    } else {
+                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "[movement-watchdog] A(observe): dimension lock stuck " + elapsed + " ticks (would finalize in active mode)");
+                        this.dimensionChangeStartAge = this.age; // re-baseline so observe logs at most once per timeout window
+                    }
+                }
+                return; // during a dimension change, do not also run the chunk watchdog
+            }
+
+            // Link B: stuck in an unloaded chunk section (chunks never delivered) -> preMove rubber-bands forever.
+            if (chunkTracker.isInUnloadedChunkSection(this.position)) {
+                if (this.chunkStuckStartAge < 0) {
+                    this.chunkStuckStartAge = this.age;
+                }
+                final int elapsed = this.age - this.chunkStuckStartAge;
+                if (elapsed > ViaBedrock.getConfig().getMovementWatchdogChunkStuckTimeoutTicks()
+                        && (this.lastChunkRadiusRequestAge < 0
+                            || this.age - this.lastChunkRadiusRequestAge > ViaBedrock.getConfig().getMovementWatchdogChunkRadiusRequestIntervalTicks())) {
+                    this.lastChunkRadiusRequestAge = this.age;
+                    if (active) {
+                        // Only re-request chunks; never relax the movement gate (relaxing would let the player phase).
+                        final PacketWrapper requestChunkRadius = PacketWrapper.create(ServerboundBedrockPackets.REQUEST_CHUNK_RADIUS, this.user);
+                        requestChunkRadius.write(BedrockTypes.VAR_INT, this.user.get(ClientSettingsStorage.class).viewDistance());
+                        requestChunkRadius.write(Types.BYTE, ProtocolConstants.BEDROCK_REQUEST_CHUNK_RADIUS_MAX_RADIUS);
+                        requestChunkRadius.sendToServer(BedrockProtocol.class);
+                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "[movement-watchdog] B: stuck in unloaded chunk " + elapsed + " ticks; re-requested chunk radius");
+                    } else {
+                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "[movement-watchdog] B(observe): stuck in unloaded chunk " + elapsed + " ticks (would re-request chunk radius in active mode)");
+                    }
+                }
+            } else {
+                this.chunkStuckStartAge = -1;
+                this.lastChunkRadiusRequestAge = -1;
+            }
+        } catch (final Throwable t) {
+            // Never let the watchdog break the tick loop.
+            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "[movement-watchdog] internal error (ignored): " + t.getMessage());
+        }
     }
 
     public record DimensionChangeInfo(Long loadingScreenId) {
