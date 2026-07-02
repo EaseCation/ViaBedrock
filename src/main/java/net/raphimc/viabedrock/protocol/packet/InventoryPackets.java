@@ -254,9 +254,7 @@ public class InventoryPackets {
                     wrapper.write(Types.VAR_INT, 0); // revision
                     wrapper.write(Types.SHORT, (short) container.javaSlot(slot)); // slot
                 }
-                final Item javaItem = container.getJavaItem(slot);
-                itemRewriter.logDyedColorOutput("INVENTORY_SLOT", slot, container.javaSlot(slot), javaItem);
-                wrapper.write(VersionedTypes.V26_1.item, javaItem); // item
+                wrapper.write(VersionedTypes.V26_1.item, container.getJavaItem(slot)); // item
             } else {
                 wrapper.cancel();
             }
@@ -501,9 +499,7 @@ public class InventoryPackets {
                     case Body -> EquipmentSlot.BODY;
                 };
                 wrapper.write(Types.BYTE, (byte) (equipmentSlot.ordinal() | (i < (size - 1) ? Byte.MIN_VALUE : 0))); // slot
-                final Item javaItem = wrapper.user().get(ItemRewriter.class).javaItem(item);
-                wrapper.user().get(ItemRewriter.class).logDyedColorOutput("PLAYER_ARMOR_DAMAGE", armorSlot.getValue(), equipmentSlot.ordinal(), javaItem);
-                wrapper.write(VersionedTypes.V26_1.item, javaItem); // item
+                wrapper.write(VersionedTypes.V26_1.item, wrapper.user().get(ItemRewriter.class).javaItem(item)); // item
             }
         });
 
