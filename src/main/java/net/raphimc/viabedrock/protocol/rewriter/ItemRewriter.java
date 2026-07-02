@@ -73,6 +73,8 @@ public class ItemRewriter extends StoredObject {
             "minecraft:leather_boots",
             "minecraft:leather_horse_armor"
     );
+    private static final Set<String> DYEABLE_COLOR_DEBUG_ITEMS = Set.of("minecraft:wolf_armor");
+    private static final int DYED_COLOR_DEBUG_LOG_LIMIT = 40;
 
     private final BiMap<String, Integer> items;
     private final Set<String> componentItems;
@@ -83,6 +85,7 @@ public class ItemRewriter extends StoredObject {
     private final Type<BedrockItem> newItemType;
     private final Type<BedrockItem> optionalNewItemType;
     private final Type<BedrockItem[]> newItemArrayType;
+    private int dyedColorDebugLogCount;
 
     static {
         // TODO: Add missing item nbt rewriters
@@ -224,9 +227,9 @@ public class ItemRewriter extends StoredObject {
         }
 
         final CompoundTag bedrockTag = bedrockItem.tag();
+        final Integer appliedDyedColor = this.applyDyedColor(identifier, bedrockTag, javaItem);
+        this.logDyedColorDiagnostic(identifier, bedrockItem, bedrockTag, javaItem, appliedDyedColor);
         if (bedrockTag != null) {
-            this.applyDyedColor(identifier, bedrockTag, javaItem);
-
             if (bedrockTag.get("display") instanceof CompoundTag display) {
                 final List<Tag> additionalLore = new ArrayList<>();
 
@@ -276,14 +279,85 @@ public class ItemRewriter extends StoredObject {
         return javaItem;
     }
 
-    private void applyDyedColor(final String identifier, final CompoundTag bedrockTag, final Item javaItem) {
-        if (!DYEABLE_LEATHER_ITEMS.contains(identifier)) {
-            return;
+    private Integer applyDyedColor(final String identifier, final CompoundTag bedrockTag, final Item javaItem) {
+        if (bedrockTag == null || !DYEABLE_LEATHER_ITEMS.contains(identifier)) {
+            return null;
         }
 
         if (bedrockTag.get("customColor") instanceof NumberTag customColor) {
-            javaItem.dataContainer().set(StructuredDataKey.DYED_COLOR1_21_5, new DyedColor(customColor.asInt() & 0xFFFFFF));
+            final int rgb = customColor.asInt() & 0xFFFFFF;
+            javaItem.dataContainer().set(StructuredDataKey.DYED_COLOR1_21_5, new DyedColor(rgb));
+            return rgb;
         }
+        return null;
+    }
+
+    private void logDyedColorDiagnostic(final String identifier, final BedrockItem bedrockItem, final CompoundTag bedrockTag, final Item javaItem, final Integer appliedDyedColor) {
+        if (this.dyedColorDebugLogCount >= DYED_COLOR_DEBUG_LOG_LIMIT || !this.shouldLogDyedColorDiagnostic(identifier, bedrockTag)) {
+            return;
+        }
+
+        this.dyedColorDebugLogCount++;
+        ViaBedrock.getPlatform().getLogger().log(Level.INFO, "[dyed-color-debug] "
+                + "count=" + this.dyedColorDebugLogCount + '/' + DYED_COLOR_DEBUG_LOG_LIMIT
+                + " identifier=" + identifier
+                + " eligibleLeather=" + DYEABLE_LEATHER_ITEMS.contains(identifier)
+                + " bedrockId=" + bedrockItem.identifier()
+                + " amount=" + bedrockItem.amount()
+                + " data=" + bedrockItem.data()
+                + " blockRuntimeId=" + bedrockItem.blockRuntimeId()
+                + " netId=" + bedrockItem.netId()
+                + " tagKeys=" + this.tagKeys(bedrockTag)
+                + " displayKeys=" + this.displayKeys(bedrockTag)
+                + " customColor=" + this.numberTagValue(bedrockTag, "customColor")
+                + " display.color=" + this.displayNumberTagValue(bedrockTag, "color")
+                + " display.Color=" + this.displayNumberTagValue(bedrockTag, "Color")
+                + " appliedDyedColor=" + this.formatColor(appliedDyedColor)
+                + " javaItemId=" + javaItem.identifier()
+                + " javaHasDyedColor=" + javaItem.dataContainer().hasValue(StructuredDataKey.DYED_COLOR1_21_5));
+    }
+
+    private boolean shouldLogDyedColorDiagnostic(final String identifier, final CompoundTag bedrockTag) {
+        return DYEABLE_LEATHER_ITEMS.contains(identifier)
+                || DYEABLE_COLOR_DEBUG_ITEMS.contains(identifier)
+                || identifier.contains("leather")
+                || this.hasNumberTag(bedrockTag, "customColor");
+    }
+
+    private boolean hasNumberTag(final CompoundTag tag, final String key) {
+        return tag != null && tag.get(key) instanceof NumberTag;
+    }
+
+    private String tagKeys(final CompoundTag tag) {
+        return tag != null ? tag.keySet().toString() : "null";
+    }
+
+    private String displayKeys(final CompoundTag tag) {
+        if (tag != null && tag.get("display") instanceof CompoundTag display) {
+            return display.keySet().toString();
+        }
+        return "null";
+    }
+
+    private String numberTagValue(final CompoundTag tag, final String key) {
+        if (tag != null && tag.get(key) instanceof NumberTag number) {
+            return this.formatColor(number.asInt());
+        }
+        return "null";
+    }
+
+    private String displayNumberTagValue(final CompoundTag tag, final String key) {
+        if (tag != null && tag.get("display") instanceof CompoundTag display && display.get(key) instanceof NumberTag number) {
+            return this.formatColor(number.asInt());
+        }
+        return "null";
+    }
+
+    private String formatColor(final Integer color) {
+        if (color == null) {
+            return "null";
+        }
+        return String.format(Locale.ROOT, "0x%08X(rgb=0x%06X)", color, color & 0xFFFFFF);
     }
 
     public CompoundTag javaItem(final CompoundTag bedrockTag) {
