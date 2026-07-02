@@ -27,6 +27,7 @@ import com.viaversion.nbt.tag.Tag;
 import com.viaversion.viaversion.api.Via;
 import com.viaversion.viaversion.api.connection.StoredObject;
 import com.viaversion.viaversion.api.connection.UserConnection;
+import com.viaversion.viaversion.api.minecraft.data.StructuredData;
 import com.viaversion.viaversion.api.minecraft.data.StructuredDataContainer;
 import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
 import com.viaversion.viaversion.api.minecraft.item.Item;
@@ -75,6 +76,7 @@ public class ItemRewriter extends StoredObject {
     );
     private static final Set<String> DYEABLE_COLOR_DEBUG_ITEMS = Set.of("minecraft:wolf_armor");
     private static final int DYED_COLOR_DEBUG_LOG_LIMIT = 40;
+    private static final int DYED_COLOR_OUTPUT_DEBUG_LOG_LIMIT = 120;
 
     private final BiMap<String, Integer> items;
     private final Set<String> componentItems;
@@ -86,6 +88,7 @@ public class ItemRewriter extends StoredObject {
     private final Type<BedrockItem> optionalNewItemType;
     private final Type<BedrockItem[]> newItemArrayType;
     private int dyedColorDebugLogCount;
+    private int dyedColorOutputDebugLogCount;
 
     static {
         // TODO: Add missing item nbt rewriters
@@ -279,6 +282,31 @@ public class ItemRewriter extends StoredObject {
         return javaItem;
     }
 
+    public void logDyedColorOutput(final String stage, final int bedrockSlot, final int javaSlot, final Item javaItem) {
+        if (this.dyedColorOutputDebugLogCount >= DYED_COLOR_OUTPUT_DEBUG_LOG_LIMIT || Item.isEmpty(javaItem)) {
+            return;
+        }
+
+        final String identifier = BedrockProtocol.MAPPINGS.getJavaItems().inverse().get(javaItem.identifier());
+        final DyedColor dyedColor = javaItem.dataContainer().get(StructuredDataKey.DYED_COLOR1_21_5);
+        if (dyedColor == null && !this.isDyeableLeatherItem(identifier)) {
+            return;
+        }
+
+        this.dyedColorOutputDebugLogCount++;
+        ViaBedrock.getPlatform().getLogger().log(Level.INFO, "[dyed-color-output] "
+                + "count=" + this.dyedColorOutputDebugLogCount + '/' + DYED_COLOR_OUTPUT_DEBUG_LOG_LIMIT
+                + " stage=" + stage
+                + " bedrockSlot=" + bedrockSlot
+                + " javaSlot=" + javaSlot
+                + " identifier=" + identifier
+                + " javaItemId=" + javaItem.identifier()
+                + " amount=" + javaItem.amount()
+                + " dyedColor=" + (dyedColor != null ? this.formatColor(dyedColor.rgb()) : "null")
+                + " hasDyedColor=" + javaItem.dataContainer().hasValue(StructuredDataKey.DYED_COLOR1_21_5)
+                + " components=" + this.componentKeys(javaItem));
+    }
+
     private Integer applyDyedColor(final String identifier, final CompoundTag bedrockTag, final Item javaItem) {
         if (bedrockTag == null || !DYEABLE_LEATHER_ITEMS.contains(identifier)) {
             return null;
@@ -330,6 +358,19 @@ public class ItemRewriter extends StoredObject {
 
     private String tagKeys(final CompoundTag tag) {
         return tag != null ? tag.keySet().toString() : "null";
+    }
+
+    private boolean isDyeableLeatherItem(final String identifier) {
+        return identifier != null && DYEABLE_LEATHER_ITEMS.contains(identifier);
+    }
+
+    private String componentKeys(final Item item) {
+        final List<String> keys = new ArrayList<>();
+        for (StructuredData<?> data : item.dataContainer().data().values()) {
+            keys.add(data.key().identifier() + '#' + data.id() + (data.isEmpty() ? "!" : ""));
+        }
+        Collections.sort(keys);
+        return keys.toString();
     }
 
     private String displayKeys(final CompoundTag tag) {

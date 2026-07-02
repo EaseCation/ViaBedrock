@@ -24,6 +24,7 @@ import com.viaversion.viaversion.api.minecraft.PaintingVariant;
 import com.viaversion.viaversion.api.minecraft.Vector3d;
 import com.viaversion.viaversion.api.minecraft.entities.EntityTypes1_21_11;
 import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
+import com.viaversion.viaversion.api.minecraft.item.Item;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
@@ -640,15 +641,25 @@ public class EntityPackets {
 
             wrapper.write(Types.VAR_INT, entity.javaId()); // entity id
             wrapper.write(Types.BYTE, (byte) (EquipmentSlot.FEET.ordinal() | Byte.MIN_VALUE)); // slot
-            wrapper.write(VersionedTypes.V26_1.item, itemRewriter.javaItem(feet)); // item
+            final Item javaFeet = itemRewriter.javaItem(feet);
+            itemRewriter.logDyedColorOutput("MOB_ARMOR_EQUIPMENT_FEET", 3, EquipmentSlot.FEET.ordinal(), javaFeet);
+            wrapper.write(VersionedTypes.V26_1.item, javaFeet); // item
             wrapper.write(Types.BYTE, (byte) (EquipmentSlot.LEGS.ordinal() | Byte.MIN_VALUE)); // slot
-            wrapper.write(VersionedTypes.V26_1.item, itemRewriter.javaItem(legs)); // item
+            final Item javaLegs = itemRewriter.javaItem(legs);
+            itemRewriter.logDyedColorOutput("MOB_ARMOR_EQUIPMENT_LEGS", 2, EquipmentSlot.LEGS.ordinal(), javaLegs);
+            wrapper.write(VersionedTypes.V26_1.item, javaLegs); // item
             wrapper.write(Types.BYTE, (byte) (EquipmentSlot.CHEST.ordinal() | Byte.MIN_VALUE)); // slot
-            wrapper.write(VersionedTypes.V26_1.item, itemRewriter.javaItem(chest)); // item
+            final Item javaChest = itemRewriter.javaItem(chest);
+            itemRewriter.logDyedColorOutput("MOB_ARMOR_EQUIPMENT_CHEST", 1, EquipmentSlot.CHEST.ordinal(), javaChest);
+            wrapper.write(VersionedTypes.V26_1.item, javaChest); // item
             wrapper.write(Types.BYTE, (byte) (EquipmentSlot.HEAD.ordinal() | Byte.MIN_VALUE)); // slot
-            wrapper.write(VersionedTypes.V26_1.item, itemRewriter.javaItem(head)); // item
+            final Item javaHead = itemRewriter.javaItem(head);
+            itemRewriter.logDyedColorOutput("MOB_ARMOR_EQUIPMENT_HEAD", 0, EquipmentSlot.HEAD.ordinal(), javaHead);
+            wrapper.write(VersionedTypes.V26_1.item, javaHead); // item
             wrapper.write(Types.BYTE, (byte) EquipmentSlot.BODY.ordinal()); // slot
-            wrapper.write(VersionedTypes.V26_1.item, itemRewriter.javaItem(body)); // item
+            final Item javaBody = itemRewriter.javaItem(body);
+            itemRewriter.logDyedColorOutput("MOB_ARMOR_EQUIPMENT_BODY", 4, EquipmentSlot.BODY.ordinal(), javaBody);
+            wrapper.write(VersionedTypes.V26_1.item, javaBody); // item
         });
         protocol.registerClientbound(ClientboundBedrockPackets.MOB_EQUIPMENT, ClientboundPackets26_1.SET_EQUIPMENT, wrapper -> {
             final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);

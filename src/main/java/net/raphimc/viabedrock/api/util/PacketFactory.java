@@ -21,6 +21,7 @@ import com.viaversion.nbt.tag.Tag;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.minecraft.BlockPosition;
 import com.viaversion.viaversion.api.minecraft.blockentity.BlockEntity;
+import com.viaversion.viaversion.api.minecraft.item.Item;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
@@ -37,6 +38,7 @@ import net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent;
 import net.raphimc.viabedrock.protocol.data.enums.java.GameEventType;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.CustomChatCompletionsAction;
 import net.raphimc.viabedrock.protocol.model.Position3f;
+import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
@@ -143,10 +145,18 @@ public class PacketFactory {
     }
 
     public static void writeJavaContainerSetContent(final PacketWrapper wrapper, final Container container) {
+        final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
+        final Item[] items = container.getJavaItems();
+        for (int javaSlot = 0; javaSlot < items.length; javaSlot++) {
+            itemRewriter.logDyedColorOutput("CONTAINER_SET_CONTENT", -1, javaSlot, items[javaSlot]);
+        }
+        final Item cursorItem = wrapper.user().get(InventoryTracker.class).getHudContainer().getJavaItem(0);
+        itemRewriter.logDyedColorOutput("CONTAINER_SET_CONTENT_CURSOR", 0, -1, cursorItem);
+
         wrapper.write(Types.VAR_INT, (int) container.javaContainerId()); // container id
         wrapper.write(Types.VAR_INT, 0); // revision
-        wrapper.write(VersionedTypes.V26_1.itemArray, container.getJavaItems()); // items
-        wrapper.write(VersionedTypes.V26_1.item, wrapper.user().get(InventoryTracker.class).getHudContainer().getJavaItem(0)); // cursor item
+        wrapper.write(VersionedTypes.V26_1.itemArray, items); // items
+        wrapper.write(VersionedTypes.V26_1.item, cursorItem); // cursor item
     }
 
     public static void writeJavaLevelParticles(final PacketWrapper wrapper, final Position3f position, final BedrockMappingData.JavaParticle particle) {
