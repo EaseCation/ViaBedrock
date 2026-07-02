@@ -31,6 +31,7 @@ import com.viaversion.viaversion.api.minecraft.data.StructuredDataContainer;
 import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
 import com.viaversion.viaversion.api.minecraft.item.Item;
 import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
+import com.viaversion.viaversion.api.minecraft.item.data.DyedColor;
 import com.viaversion.viaversion.api.type.OptionalType;
 import com.viaversion.viaversion.api.type.Type;
 import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectMap;
@@ -65,6 +66,13 @@ import java.util.logging.Level;
 public class ItemRewriter extends StoredObject {
 
     private static final Map<String, NbtRewriter> ITEM_NBT_REWRITERS = new HashMap<>();
+    private static final Set<String> DYEABLE_LEATHER_ITEMS = Set.of(
+            "minecraft:leather_helmet",
+            "minecraft:leather_chestplate",
+            "minecraft:leather_leggings",
+            "minecraft:leather_boots",
+            "minecraft:leather_horse_armor"
+    );
 
     private final BiMap<String, Integer> items;
     private final Set<String> componentItems;
@@ -217,6 +225,8 @@ public class ItemRewriter extends StoredObject {
 
         final CompoundTag bedrockTag = bedrockItem.tag();
         if (bedrockTag != null) {
+            this.applyDyedColor(identifier, bedrockTag, javaItem);
+
             if (bedrockTag.get("display") instanceof CompoundTag display) {
                 final List<Tag> additionalLore = new ArrayList<>();
 
@@ -264,6 +274,16 @@ public class ItemRewriter extends StoredObject {
         }
 
         return javaItem;
+    }
+
+    private void applyDyedColor(final String identifier, final CompoundTag bedrockTag, final Item javaItem) {
+        if (!DYEABLE_LEATHER_ITEMS.contains(identifier)) {
+            return;
+        }
+
+        if (bedrockTag.get("customColor") instanceof NumberTag customColor) {
+            javaItem.dataContainer().set(StructuredDataKey.DYED_COLOR1_21_5, new DyedColor(customColor.asInt() & 0xFFFFFF));
+        }
     }
 
     public CompoundTag javaItem(final CompoundTag bedrockTag) {
