@@ -156,14 +156,14 @@ public class WorldEffectPackets {
                 molangVarsJson = null;
             }
 
-            ViaBedrock.getPlatform().getLogger().log(Level.INFO, "[Particle:L1] SpawnParticleEffect received: " + effectIdentifier + " at (" + position.x() + ", " + position.y() + ", " + position.z() + ") molang=" + (molangVarsJson != null));
+            ViaBedrock.getPlatform().getLogger().log(Level.FINE, "[Particle:L1] SpawnParticleEffect received: " + effectIdentifier + " at (" + position.x() + ", " + position.y() + ", " + position.z() + ") molang=" + (molangVarsJson != null));
 
             final BedrockMappingData.JavaParticle javaParticle = BedrockProtocol.MAPPINGS.getBedrockToJavaParticles().get(effectIdentifier);
             if (javaParticle == null) {
                 // Try forwarding to VBU for custom particle rendering
                 final ChannelStorage channelStorage = wrapper.user().get(ChannelStorage.class);
                 if (channelStorage != null && channelStorage.hasChannel(ViaBedrockUtilityInterface.CONFIRM_CHANNEL)) {
-                    ViaBedrock.getPlatform().getLogger().log(Level.INFO, "[Particle:L1] No Java mapping, forwarding to VBU: " + effectIdentifier);
+                    ViaBedrock.getPlatform().getLogger().log(Level.FINE, "[Particle:L1] No Java mapping, forwarding to VBU: " + effectIdentifier);
                     ViaBedrockUtilityInterface.spawnParticle(wrapper.user(), effectIdentifier, position.x(), position.y(), position.z(), molangVarsJson);
                 } else {
                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "[Particle:L1] No Java mapping AND VBU channel not registered: " + effectIdentifier);
@@ -171,7 +171,7 @@ public class WorldEffectPackets {
                 wrapper.cancel();
                 return;
             }
-            ViaBedrock.getPlatform().getLogger().log(Level.INFO, "[Particle:L1] Java mapping found for: " + effectIdentifier);
+            ViaBedrock.getPlatform().getLogger().log(Level.FINE, "[Particle:L1] Java mapping found for: " + effectIdentifier);
             PacketFactory.writeJavaLevelParticles(wrapper, position, switch (effectIdentifier) {
                 case "minecraft:eyeblossom_close", "minecraft:eyeblossom_open" -> {
                     final Particle particle = javaParticle.particle().copy();

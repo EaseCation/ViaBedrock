@@ -207,7 +207,7 @@ public class ViaBedrockUtilityInterface {
     }
 
     public static void spawnParticle(final UserConnection user, final String identifier, final float x, final float y, final float z, final String molangVarsJson) {
-        java.util.logging.Logger.getLogger("ViaBedrock").log(java.util.logging.Level.INFO, "[Particle:L2] Sending SPAWN_PARTICLE payload: " + identifier + " at (" + x + ", " + y + ", " + z + ") molang=" + (molangVarsJson != null));
+        java.util.logging.Logger.getLogger("ViaBedrock").log(java.util.logging.Level.FINE, "[Particle:L2] Sending SPAWN_PARTICLE payload: " + identifier + " at (" + x + ", " + y + ", " + z + ") molang=" + (molangVarsJson != null));
         final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets26_1.CUSTOM_PAYLOAD, user);
         pluginMessage.write(Types.STRING, CHANNEL);
         pluginMessage.write(Types.INT, PayloadType.SPAWN_PARTICLE.ordinal());
