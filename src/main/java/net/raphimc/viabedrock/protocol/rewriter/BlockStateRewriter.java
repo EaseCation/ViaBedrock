@@ -70,8 +70,9 @@ public class BlockStateRewriter implements StorableObject {
         // The optional BedrockLoader projection only layers real Java mappings on top of this reconstruction.
         try {
             customRuntimeBlockProperties = RuntimeProjectionBuilder.collectEffectiveCustomBlockProperties(blockProperties, bedrockBlockIdentifiers);
-            customRuntimeStates = new HashSet<>(RuntimeProjectionBuilder.buildCustomRuntimeStates(blockProperties, bedrockBlockIdentifiers));
-            bedrockBlockStates.addAll(customRuntimeStates);
+            final List<BedrockBlockState> orderedCustomRuntimeStates = RuntimeProjectionBuilder.buildCustomRuntimeStates(blockProperties, bedrockBlockIdentifiers);
+            customRuntimeStates = new HashSet<>(orderedCustomRuntimeStates);
+            bedrockBlockStates.addAll(orderedCustomRuntimeStates);
         } catch (Throwable e) {
             if (runtimeProjectionBuilder != null) {
                 customMappingSync.failProjection("Failed to build custom block runtime projection states", e);
