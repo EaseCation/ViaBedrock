@@ -25,7 +25,10 @@ public final class GlobalLightCache {
 
     private static final GlobalLightCache INSTANCE = new GlobalLightCache();
     private static final int MAX_ENTRIES = 4096;
-    private static final int LIGHT_COMPUTE_THREADS = 2;
+    // Shared by every connection. Bumped 2 -> 4 to relieve the light-compute throughput
+    // bottleneck (profiling showed AsyncLightEngine dominating CPU). 4 leaves headroom for
+    // Netty IO / ZGC workers on the 6-core production container.
+    private static final int LIGHT_COMPUTE_THREADS = 4;
 
     public static GlobalLightCache getInstance() {
         return INSTANCE;
