@@ -57,10 +57,8 @@ import net.raphimc.viabedrock.protocol.data.enums.java.generated.HeightmapType;
 import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomBlockTags;
 import net.raphimc.viabedrock.protocol.data.generated.java.RegistryKeys;
 import net.raphimc.viabedrock.protocol.model.Position3f;
-import net.raphimc.viabedrock.protocol.rewriter.BlockConnectionResolver;
 import net.raphimc.viabedrock.protocol.rewriter.BlockEntityRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
-import net.raphimc.viabedrock.protocol.rewriter.StairShapeResolver;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.util.*;
@@ -1094,11 +1092,8 @@ public class ChunkTracker extends StoredObject {
             }
         }
 
-        // Fix stair shapes based on neighboring blocks
-        StairShapeResolver.fixChunkStairShapes(this, remappedChunk, chunk.getX(), chunk.getZ(), this.minY);
-
-        // Fix block connections (fences, glass panes, iron bars)
-        BlockConnectionResolver.fixChunkConnections(this, remappedChunk, chunk.getX(), chunk.getZ(), this.minY);
+        // Fix neighbor-aware blocks (stair shapes, fence/pane connections, door/bed halves) based on neighboring blocks
+        BedrockProtocol.MAPPINGS.getNeighborRewriter().fixChunk(this, remappedChunk, chunk.getX(), chunk.getZ(), this.minY);
 
         final IntSet motionBlockingBlockStates = BedrockProtocol.MAPPINGS.getJavaHeightMapBlockStates().get("motion_blocking");
         final int[] worldSurface = new int[16 * 16];

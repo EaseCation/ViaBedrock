@@ -31,13 +31,20 @@ public class BedBlockEntityRewriter implements BlockEntityRewriter.Rewriter {
 
     @Override
     public BlockEntity toJava(UserConnection user, BedrockBlockEntity bedrockBlockEntity) {
-        final CompoundTag bedrockTag = bedrockBlockEntity.tag();
-
-        final DyeColor color = DyeColor.getByJavaId(bedrockTag.getByte("color", (byte) -1), DyeColor.RED);
+        final DyeColor color = getColor(bedrockBlockEntity.tag());
         int javaBlockState = user.get(ChunkTracker.class).getJavaBlockState(bedrockBlockEntity.position());
         javaBlockState += color.javaId() * 16;
 
         return new BlockEntityWithBlockState(new BlockEntityImpl(bedrockBlockEntity.packedXZ(), bedrockBlockEntity.y(), -1, new CompoundTag()), javaBlockState);
+    }
+
+    /**
+     * Resolves a bed's dye colour from its Bedrock block entity NBT, falling back to {@link DyeColor#RED} when the
+     * {@code color} tag is missing or invalid. Single source of truth for bed colouring, shared with the
+     * neighbor-aware door/bed rewriter.
+     */
+    public static DyeColor getColor(final CompoundTag bedrockTag) {
+        return DyeColor.getByJavaId(bedrockTag.getByte("color", (byte) -1), DyeColor.RED);
     }
 
 }

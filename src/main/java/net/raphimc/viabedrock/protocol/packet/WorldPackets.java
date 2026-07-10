@@ -58,17 +58,19 @@ import net.raphimc.viabedrock.protocol.data.enums.java.RespawnKeepFlag;
 import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomBlockTags;
 import net.raphimc.viabedrock.protocol.model.BlockChangeEntry;
 import net.raphimc.viabedrock.protocol.model.Position3f;
-import net.raphimc.viabedrock.protocol.rewriter.BlockConnectionResolver;
 import net.raphimc.viabedrock.protocol.rewriter.BlockEntityRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
-import net.raphimc.viabedrock.protocol.rewriter.StairShapeResolver;
 import net.raphimc.viabedrock.protocol.rewriter.blockentity.SignBlockEntityRewriter;
+import net.raphimc.viabedrock.protocol.rewriter.neighbor.BlockNeighborView;
+import net.raphimc.viabedrock.protocol.rewriter.neighbor.NeighborAwareBlockRewriter;
+import net.raphimc.viabedrock.protocol.rewriter.neighbor.TrackerNeighborView;
 import net.raphimc.viabedrock.protocol.storage.*;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 import net.raphimc.viabedrock.protocol.types.array.ByteArrayType;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -93,24 +95,26 @@ public class WorldPackets {
             return;
         }
 
-        // Fix stair shape based on neighboring blocks
-        int finalBlockState = StairShapeResolver.fixSingleStairShape(chunkTracker, position, remappedBlock.keyInt());
-        // Fix block connections (fences, glass panes, iron bars)
-        finalBlockState = BlockConnectionResolver.fixSingleBlockConnection(chunkTracker, position, finalBlockState);
-        wrapper.write(Types.VAR_INT, finalBlockState); // block state
+        // Recompute neighbor-aware blocks (stair shapes, fence/pane connections, door/bed halves) for this change
+        // and every neighbor it affects.
+        final BlockNeighborView view = new TrackerNeighborView(chunkTracker);
+        final Map<BlockPosition, Integer> updates = BedrockProtocol.MAPPINGS.getNeighborRewriter().resolveUpdate(view, position, remappedBlock.keyInt());
+        wrapper.write(Types.VAR_INT, updates.getOrDefault(position, remappedBlock.keyInt())); // block state
 
         // Send the BLOCK_UPDATE explicitly to ensure it arrives before any deferred BlockChangedAck
         wrapper.send(BedrockProtocol.class);
         wrapper.cancel();
 
+        for (Map.Entry<BlockPosition, Integer> entry : updates.entrySet()) {
+            if (entry.getKey().equals(position)) {
+                continue;
+            }
+            PacketFactory.sendJavaBlockUpdate(wrapper.user(), entry.getKey(), entry.getValue());
+        }
+
         if (remappedBlock.value() != null) {
             PacketFactory.sendJavaBlockEntityData(wrapper.user(), position, remappedBlock.value());
         }
-
-        // Update neighboring stairs that may need shape changes due to this block update
-        StairShapeResolver.updateNeighborStairShapes(wrapper.user(), chunkTracker, position);
-        // Update neighboring block connections
-        BlockConnectionResolver.updateNeighborConnections(wrapper.user(), chunkTracker, position);
 
         // Send deferred BlockChangedAck for block placement (experimental feature).
         // The ack must arrive AFTER the BLOCK_UPDATE so the Java client's prediction is cleared
@@ -449,7 +453,7 @@ public class WorldPackets {
 
             final Map<BlockPosition, List<BlockChangeRecord>> blockChanges = new HashMap<>();
             final Map<BlockPosition, BlockEntity> blockEntities = new HashMap<>();
-            final List<BlockPosition> changedPositions = new ArrayList<>();
+            final Map<BlockPosition, Integer> remappedBlockStates = new LinkedHashMap<>();
             for (int layer = 0; layer < blockUpdatesArray.length; layer++) {
                 for (BlockChangeEntry entry : blockUpdatesArray[layer]) {
                     final IntObjectPair<BlockEntity> remappedBlock = chunkTracker.handleBlockChange(entry.position(), layer, entry.blockState());
@@ -459,17 +463,24 @@ public class WorldPackets {
                     if (remappedBlock.value() != null) {
                         blockEntities.put(entry.position(), remappedBlock.value());
                     }
-
-                    // Fix stair shape
-                    int finalBlockState = StairShapeResolver.fixSingleStairShape(chunkTracker, entry.position(), remappedBlock.keyInt());
-                    // Fix block connections
-                    finalBlockState = BlockConnectionResolver.fixSingleBlockConnection(chunkTracker, entry.position(), finalBlockState);
-                    changedPositions.add(entry.position());
-
-                    final BlockPosition chunkPosition = new BlockPosition(entry.position().x() >> 4, entry.position().y() >> 4, entry.position().z() >> 4);
-                    final BlockPosition relative = new BlockPosition(entry.position().x() & 0xF, entry.position().y() & 0xF, entry.position().z() & 0xF);
-                    blockChanges.computeIfAbsent(chunkPosition, k -> new ArrayList<>()).add(new BlockChangeRecord1_16_2(relative.x(), relative.y(), relative.z(), finalBlockState));
+                    remappedBlockStates.put(entry.position(), remappedBlock.keyInt());
                 }
+            }
+
+            // Recompute neighbor-aware fixes (stair shapes, connections, door/bed halves) after every change in this
+            // batch has been applied to the tracker, so cross-block lookups see the final state of the whole batch.
+            final BlockNeighborView view = new TrackerNeighborView(chunkTracker);
+            final NeighborAwareBlockRewriter neighborRewriter = BedrockProtocol.MAPPINGS.getNeighborRewriter();
+            final Map<BlockPosition, Integer> finalBlockStates = new LinkedHashMap<>();
+            for (Map.Entry<BlockPosition, Integer> changed : remappedBlockStates.entrySet()) {
+                finalBlockStates.putAll(neighborRewriter.resolveUpdate(view, changed.getKey(), changed.getValue()));
+            }
+
+            for (Map.Entry<BlockPosition, Integer> entry : finalBlockStates.entrySet()) {
+                final BlockPosition position = entry.getKey();
+                final BlockPosition chunkPosition = new BlockPosition(position.x() >> 4, position.y() >> 4, position.z() >> 4);
+                final BlockPosition relative = new BlockPosition(position.x() & 0xF, position.y() & 0xF, position.z() & 0xF);
+                blockChanges.computeIfAbsent(chunkPosition, k -> new ArrayList<>()).add(new BlockChangeRecord1_16_2(relative.x(), relative.y(), relative.z(), entry.getValue()));
             }
 
             for (Map.Entry<BlockPosition, List<BlockChangeRecord>> entry : blockChanges.entrySet()) {
@@ -484,11 +495,6 @@ public class WorldPackets {
             }
             for (Map.Entry<BlockPosition, BlockEntity> entry : blockEntities.entrySet()) {
                 PacketFactory.sendJavaBlockEntityData(wrapper.user(), entry.getKey(), entry.getValue());
-            }
-            // Update neighboring stairs for all changed positions
-            for (BlockPosition changedPos : changedPositions) {
-                StairShapeResolver.updateNeighborStairShapes(wrapper.user(), chunkTracker, changedPos);
-                BlockConnectionResolver.updateNeighborConnections(wrapper.user(), chunkTracker, changedPos);
             }
         });
         protocol.registerClientbound(ClientboundBedrockPackets.BLOCK_ENTITY_DATA, ClientboundPackets26_1.BLOCK_ENTITY_DATA, new PacketHandlers() {

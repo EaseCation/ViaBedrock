@@ -62,6 +62,7 @@ import net.raphimc.viabedrock.api.util.JsonUtil;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.SoundSource;
 import net.raphimc.viabedrock.protocol.data.generated.java.RegistryKeys;
+import net.raphimc.viabedrock.protocol.rewriter.neighbor.NeighborAwareBlockRewriter;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.io.DataInputStream;
@@ -137,6 +138,7 @@ public class BedrockMappingData extends MappingDataBase {
     private final Map<String, Integer> customBlockEntityTypeIds = new HashMap<>();
     private int vanillaBlockStateCount;
     private int vanillaBlockEntityCount;
+    private NeighborAwareBlockRewriter neighborRewriter;
 
     // Entity Effects
     private BiMap<String, Integer> javaEffects;
@@ -240,8 +242,7 @@ public class BedrockMappingData extends MappingDataBase {
                 this.javaBlockStates.put(blockState, i);
             }
             this.vanillaBlockStateCount = this.javaBlockStates.size();
-            net.raphimc.viabedrock.protocol.rewriter.StairShapeResolver.init(this.javaBlockStates);
-            net.raphimc.viabedrock.protocol.rewriter.BlockConnectionResolver.init(this.javaBlockStates);
+            this.neighborRewriter = new NeighborAwareBlockRewriter(this.javaBlockStates);
             final ListTag<CompoundTag> bedrockBlockStatesTag = this.readNBT("bedrock/block_palette.nbt").getListTag("blocks", CompoundTag.class);
             this.bedrockBlockStates = new LinkedHashSet<>(bedrockBlockStatesTag.size());
             bedrockBlockStatesByIdentifier = HashMultimap.create(bedrockBlockStatesTag.size(), 32);
@@ -1091,6 +1092,10 @@ public class BedrockMappingData extends MappingDataBase {
 
     public BiMap<BlockState, Integer> getJavaBlockStates() {
         return this.javaBlockStates;
+    }
+
+    public NeighborAwareBlockRewriter getNeighborRewriter() {
+        return this.neighborRewriter;
     }
 
     public Set<BedrockBlockState> getBedrockBlockStates() {
