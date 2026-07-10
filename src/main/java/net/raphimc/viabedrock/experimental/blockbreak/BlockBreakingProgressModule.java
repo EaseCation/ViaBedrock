@@ -46,6 +46,8 @@ import net.raphimc.viabedrock.protocol.model.BlockChangeEntry;
 import net.raphimc.viabedrock.protocol.model.Position3f;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.PlayerActionAction;
+import net.raphimc.viabedrock.protocol.rewriter.neighbor.BlockNeighborView;
+import net.raphimc.viabedrock.protocol.rewriter.neighbor.TrackerNeighborView;
 import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
@@ -145,7 +147,10 @@ public final class BlockBreakingProgressModule implements FeatureModule {
         final BlockBreakingProgressTracker tracker = user.get(BlockBreakingProgressTracker.class);
 
         if (gameSession.isImmutableWorld() || !clientPlayer.abilities().getBooleanValue(AbilitiesIndex.Mine)) {
-            PacketFactory.sendJavaBlockUpdate(user, position, chunkTracker.getJavaBlockState(position));
+            final int rawBlockState = chunkTracker.getJavaBlockState(position);
+            final BlockNeighborView view = new TrackerNeighborView(chunkTracker);
+            final int fixedBlockState = BedrockProtocol.MAPPINGS.getNeighborRewriter().resolveUpdate(view, position, rawBlockState).getOrDefault(position, rawBlockState);
+            PacketFactory.sendJavaBlockUpdate(user, position, fixedBlockState);
             PacketFactory.sendJavaBlockChangedAck(user, sequence);
             return;
         }

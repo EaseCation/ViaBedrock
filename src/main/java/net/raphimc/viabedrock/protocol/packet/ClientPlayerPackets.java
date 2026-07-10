@@ -54,6 +54,8 @@ import net.raphimc.viabedrock.protocol.model.Position2f;
 import net.raphimc.viabedrock.protocol.model.Position3f;
 import net.raphimc.viabedrock.protocol.rewriter.GameTypeRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
+import net.raphimc.viabedrock.protocol.rewriter.neighbor.BlockNeighborView;
+import net.raphimc.viabedrock.protocol.rewriter.neighbor.TrackerNeighborView;
 import net.raphimc.viabedrock.protocol.storage.*;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
@@ -335,7 +337,10 @@ public class ClientPlayerPackets {
             final boolean isMining = action == PlayerActionAction.START_DESTROY_BLOCK || action == PlayerActionAction.ABORT_DESTROY_BLOCK || action == PlayerActionAction.STOP_DESTROY_BLOCK;
             if (isMining && (gameSession.isImmutableWorld() || !clientPlayer.abilities().getBooleanValue(AbilitiesIndex.Mine))) {
                 // TODO: Prevent breaking and cancel any packets that would be sent (swing, player action)
-                PacketFactory.sendJavaBlockUpdate(wrapper.user(), position, chunkTracker.getJavaBlockState(position));
+                final int rawBlockState = chunkTracker.getJavaBlockState(position);
+                final BlockNeighborView view = new TrackerNeighborView(chunkTracker);
+                final int fixedBlockState = BedrockProtocol.MAPPINGS.getNeighborRewriter().resolveUpdate(view, position, rawBlockState).getOrDefault(position, rawBlockState);
+                PacketFactory.sendJavaBlockUpdate(wrapper.user(), position, fixedBlockState);
                 PacketFactory.sendJavaBlockChangedAck(wrapper.user(), sequence);
                 return;
             }
