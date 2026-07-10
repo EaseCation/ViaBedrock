@@ -72,10 +72,16 @@ public final class NeighborAwareBlockRewriter {
         for (BlockFace face : NEIGHBOR_FACES) {
             final BlockPosition neighbor = pos.getRelative(face);
             final int now = view.getJavaBlockState(neighbor);
-            final int fixed = fixState(view, neighbor, now);
-            if (fixed != now) {
-                out.put(neighbor, fixed);
+            // A rule-owned neighbor's fixed value is never written back into the tracker, so `now` is not a reliable
+            // baseline to diff against: it can coincidentally match a freshly recomputed value that nonetheless
+            // differs from what the client was actually last sent (e.g. a door half's non-authoritative property is a
+            // constant default guess in the tracker, while the client is showing a value corrected by an earlier
+            // update). Always resend rule-owned neighbors; untouched neighbors are cheap to skip since fixState is a
+            // no-op for them.
+            if (!isHandled(now)) {
+                continue;
             }
+            out.put(neighbor, fixState(view, neighbor, now));
         }
         return out;
     }
