@@ -59,14 +59,17 @@ import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.LongFunction;
 import java.util.logging.Level;
 
 public class EntityPackets {
 
     private static final float PAINTING_POS_OFFSET = -0.46875F;
+    private static final String FISHING_HOOK_IDENTIFIER = "minecraft:fishing_hook";
 
     public static void register(final BedrockProtocol protocol) {
         protocol.registerClientbound(ClientboundBedrockPackets.ADD_ENTITY, ClientboundPackets26_1.ADD_ENTITY, wrapper -> {
@@ -91,6 +94,22 @@ public class EntityPackets {
             final EntityData[] entityData = wrapper.read(BedrockTypes.ENTITY_DATA_ARRAY); // entity data
             final EntityProperties entityProperties = wrapper.read(BedrockTypes.ENTITY_PROPERTIES); // entity properties
             final EntityLink[] entityLinks = wrapper.read(BedrockTypes.ENTITY_LINK_ARRAY); // entity links
+
+            final int javaSpawnData;
+            if (type.equals(FISHING_HOOK_IDENTIFIER)) {
+                final Integer ownerJavaId = getFishingHookOwnerJavaId(entityData, ownerUniqueId -> {
+                    final Entity owner = entityTracker.getEntityByUid(ownerUniqueId);
+                    return owner instanceof PlayerEntity ? owner.javaId() : null;
+                });
+                if (ownerJavaId == null) {
+                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Not spawning fishing hook with unique ID " + entityUniqueId + " and runtime ID " + entityRuntimeId + " because its owner is missing or invalid");
+                    wrapper.cancel();
+                    return;
+                }
+                javaSpawnData = ownerJavaId;
+            } else {
+                javaSpawnData = 0;
+            }
 
             final Entity entity;
             final Entity resolvedEntity = ExperimentalFeatures.dispatchResolveEntity(wrapper.user(), entityUniqueId, entityRuntimeId, type);
@@ -135,7 +154,7 @@ public class EntityPackets {
             wrapper.write(Types.BYTE, MathUtil.float2Byte(rotation.x())); // pitch
             wrapper.write(Types.BYTE, MathUtil.float2Byte(rotation.y())); // yaw
             wrapper.write(Types.BYTE, MathUtil.float2Byte(rotation.z())); // head yaw
-            wrapper.write(Types.VAR_INT, 0); // data
+            wrapper.write(Types.VAR_INT, javaSpawnData); // data
             wrapper.send(BedrockProtocol.class);
             wrapper.cancel();
 
@@ -696,6 +715,20 @@ public class EntityPackets {
             wrapper.write(Types.VAR_INT, collectorEntity.javaId()); // collector entity id
             wrapper.write(Types.VAR_INT, 0); // amount
         });
+    }
+
+    static Integer getFishingHookOwnerJavaId(final EntityData[] entityData, final LongFunction<Integer> ownerJavaIdLookup) {
+        for (EntityData data : entityData) {
+            if (data.id() != ActorDataIDs.OWNER.getValue()) {
+                continue;
+            }
+            if (data.dataType() != EntityDataTypesBedrock.LONG || !(data.getValue() instanceof Long ownerUniqueId) || ownerUniqueId == -1L) {
+                return null;
+            }
+
+            return ownerJavaIdLookup.apply(ownerUniqueId);
+        }
+        return null;
     }
 
 }

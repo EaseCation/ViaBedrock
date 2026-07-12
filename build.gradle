@@ -55,6 +55,16 @@ dependencies {
     compileOnly "com.google.code.gson:gson:2.14.0"
     compileOnly "dev.kastle.netty:netty-transport-raknet:1.7.0"
 
+    testImplementation("com.viaversion:viaversion-common:5.9.2-SNAPSHOT") {
+        attributes {
+            attribute(Bundling.BUNDLING_ATTRIBUTE, objects.named(Bundling, Bundling.SHADOWED))
+        }
+    }
+    testImplementation "org.junit.jupiter:junit-jupiter-api:6.0.3"
+    testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:6.0.3"
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher:6.0.3"
+    testRuntimeOnly "com.google.guava:guava:33.6.0-jre"
+
     api("io.netty:netty-codec-http:4.2.14.Final") {
         transitive = false
     }
@@ -95,4 +105,8 @@ dependencies {
     toolImplementation "org.jsoup:jsoup:1.22.2"
     toolImplementation "org.ow2.asm:asm-tree:9.10"
     toolImplementation "net.lenni0451.commons:asm:1.9.2"
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
 }

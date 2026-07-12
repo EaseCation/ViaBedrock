@@ -335,6 +335,9 @@ public class EntityMetadataRewriter {
                 }
             }
             case OWNER -> {
+                if (entity.javaType().is(EntityTypes1_21_11.FISHING_BOBBER)) {
+                    break; // Fishing hook owners are carried by the Java ADD_ENTITY data field.
+                }
                 long ownerId = readNumber(entityData).longValue();
                 if (ownerId == -1) {
                     break; // No owner
