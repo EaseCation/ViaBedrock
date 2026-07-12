@@ -17,25 +17,40 @@
  */
 package net.raphimc.viabedrock.experimental.inventory;
 
+import com.viaversion.nbt.tag.CompoundTag;
+import com.viaversion.nbt.tag.IntArrayTag;
+import com.viaversion.viaversion.api.Via;
+import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
+import com.viaversion.viaversion.api.minecraft.item.HashedItem;
+import com.viaversion.viaversion.api.minecraft.item.Item;
+import com.viaversion.viaversion.api.minecraft.item.data.Equippable;
+import com.viaversion.viaversion.api.protocol.Protocol;
+import com.viaversion.viaversion.data.item.ItemHasherBase;
 import net.raphimc.viabedrock.api.model.container.Container;
 import net.raphimc.viabedrock.api.model.container.CraftingTableContainer;
 import net.raphimc.viabedrock.experimental.inventory.SlotMapper.BedrockSlotRef;
 import net.raphimc.viabedrock.experimental.model.inventory.InventoryActionData;
 import net.raphimc.viabedrock.experimental.model.inventory.InventorySource;
+import net.raphimc.viabedrock.protocol.BedrockProtocol;
+import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventorySourceType;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventorySource_InventorySourceFlags;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.ContainerInput;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
+import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 public class ClickSimulator {
 
     private static final int MAX_STACK = 64;
+    private static final int MAX_JAVA_STACK_SIZE = 99;
 
     /**
      * Simulates a Java CONTAINER_CLICK and returns the list of Bedrock InventoryActionData.
@@ -48,7 +63,9 @@ public class ClickSimulator {
             final byte button,
             final ContainerInput action,
             final InventoryTracker tracker,
-            final ClientAuthInventoryModule.DragState dragState) {
+            final ClientAuthInventoryModule.DragState dragState,
+            final Map<Short, HashedItem> changedSlots,
+            final HashedItem carriedItem) {
 
         // Intercept crafting output slot clicks
         if (javaSlot == 0) {
@@ -65,7 +82,9 @@ public class ClickSimulator {
 
         return switch (action) {
             case PICKUP -> simulatePickup(javaContainerId, javaSlot, button, tracker);
-            case QUICK_MOVE -> simulateQuickMove(javaContainerId, javaSlot, tracker);
+            case QUICK_MOVE -> javaContainerId == 0 && javaSlot >= 1 && javaSlot <= 45
+                    ? simulatePredictedPlayerQuickMove(javaSlot, button, tracker, changedSlots, carriedItem)
+                    : simulateQuickMove(javaContainerId, javaSlot, tracker);
             case SWAP -> simulateSwap(javaContainerId, javaSlot, button, tracker);
             case CLONE -> simulateClone(javaContainerId, javaSlot, tracker);
             case THROW -> simulateThrow(javaContainerId, javaSlot, button, tracker);
@@ -195,6 +214,250 @@ public class ClickSimulator {
     }
 
     // --- QUICK_MOVE (mode=1, Shift+Click) ---
+
+    // Preserve Java's component-driven equipment rules while accepting only count-conserving
+    // moves of the Bedrock item already present in the authoritative mirror.
+    private static List<InventoryActionData> simulatePredictedPlayerQuickMove(
+            final short javaSlot,
+            final byte button,
+            final InventoryTracker tracker,
+            final Map<Short, HashedItem> changedSlots,
+            final HashedItem carriedItem) {
+        if (button < 0 || button > 1 || changedSlots == null || carriedItem == null) {
+            return null;
+        }
+
+        final Protocol<?, ?, ?, ?> javaProtocol = Via.getManager().getProtocolManager()
+                .getProtocol(ProtocolConstants.JAVA_PROTOCOL_CLASS);
+        if (javaProtocol == null) return null;
+
+        final ItemHasherBase itemHasher = new ItemHasherBase(javaProtocol, tracker.user());
+        final ItemRewriter itemRewriter = tracker.user().get(ItemRewriter.class);
+        final BedrockItem cursorItem = SlotMapper.getCursorItem(tracker);
+        final HashedItem expectedCarried = itemHasher.toHashedItem(itemRewriter.javaItem(cursorItem.copy()), true);
+        if (!sameHashedItem(expectedCarried, carriedItem)) return null;
+
+        final BedrockSlotRef sourceRef = SlotMapper.resolvePlayerInventory(javaSlot, tracker);
+        if (sourceRef == null) return null;
+
+        final BedrockItem sourceItem = sourceRef.container().getItem(sourceRef.slot());
+        if (sourceItem.isEmpty()) {
+            return changedSlots.isEmpty() ? Collections.emptyList() : null;
+        }
+
+        int relevantChanges = changedSlots.size();
+        if (javaSlot <= 4 && changedSlots.containsKey((short) 0)) {
+            relevantChanges--; // Crafting output is a local preview, not an inventory action.
+        }
+        if (relevantChanges == 0) {
+            return Collections.emptyList();
+        }
+
+        int equipmentTarget = -1;
+        for (final short changedSlot : changedSlots.keySet()) {
+            if (changedSlot != javaSlot && ((changedSlot >= 5 && changedSlot <= 8) || changedSlot == 45)) {
+                if (equipmentTarget != -1) return null;
+                equipmentTarget = changedSlot;
+            }
+        }
+        final Item javaSourceItem = itemRewriter.javaItem(sourceItem.copy());
+        final int expectedEquipmentSlot = trustedEquipmentSlot(javaSourceItem);
+        final int maxStackSize = trustedMaxStackSize(javaSourceItem);
+        if (equipmentTarget == -1 && expectedEquipmentSlot == -1) {
+            return simulateQuickMove(0, javaSlot, tracker);
+        }
+
+        final HashedItem expectedSource = itemHasher.toHashedItem(javaSourceItem, true);
+        if (expectedSource.isEmpty()) return null;
+        if (equipmentTarget != -1 && (!isPredictedEquipmentTarget(javaSlot, equipmentTarget)
+                || equipmentTarget != expectedEquipmentSlot)) {
+            return null;
+        }
+
+        final HashedItem predictedSource = changedSlots.get(javaSlot);
+        if (predictedSource == null || predictedSource.amount() < 0) return null;
+
+        final int sourceAmountAfter;
+        if (predictedSource.isEmpty()) {
+            sourceAmountAfter = 0;
+        } else {
+            if (!sameItemShape(expectedSource, predictedSource)
+                    || predictedSource.amount() > MAX_JAVA_STACK_SIZE
+                    || predictedSource.amount() >= sourceItem.amount()) return null;
+            sourceAmountAfter = predictedSource.amount();
+        }
+
+        final int removedAmount = sourceItem.amount() - sourceAmountAfter;
+        if (removedAmount <= 0) return null;
+
+        final List<InventoryActionData> targetActions = new ArrayList<>();
+        final List<Integer> orderedTargetSlots = new ArrayList<>();
+        if (equipmentTarget != -1) orderedTargetSlots.add(equipmentTarget);
+        final List<Integer> fallbackTargetSlots = getQuickMoveTargetSlots(0, javaSlot, tracker);
+        for (final int targetJavaSlot : fallbackTargetSlots) {
+            final BedrockSlotRef targetRef = SlotMapper.resolvePlayerInventory(targetJavaSlot, tracker);
+            if (changedSlots.containsKey((short) targetJavaSlot)
+                    && targetRef != null && !targetRef.container().getItem(targetRef.slot()).isEmpty()) {
+                orderedTargetSlots.add(targetJavaSlot);
+            }
+        }
+        for (final int targetJavaSlot : fallbackTargetSlots) {
+            final BedrockSlotRef targetRef = SlotMapper.resolvePlayerInventory(targetJavaSlot, tracker);
+            if (changedSlots.containsKey((short) targetJavaSlot)
+                    && targetRef != null && targetRef.container().getItem(targetRef.slot()).isEmpty()) {
+                orderedTargetSlots.add(targetJavaSlot);
+            }
+        }
+        int addedAmount = 0;
+        int processedTargets = 0;
+        for (final int targetJavaSlot : orderedTargetSlots) {
+            final HashedItem predictedTarget = changedSlots.get((short) targetJavaSlot);
+            if (predictedTarget == null) continue;
+            if (!isAllowedPredictedQuickMoveTarget(javaSlot, targetJavaSlot)) return null;
+
+            final BedrockSlotRef targetRef = SlotMapper.resolvePlayerInventory(targetJavaSlot, tracker);
+            if (targetRef == null) return null;
+
+            final BedrockItem targetItem = targetRef.container().getItem(targetRef.slot());
+            if (predictedTarget.isEmpty() || predictedTarget.amount() <= 0
+                    || predictedTarget.amount() > MAX_JAVA_STACK_SIZE || predictedTarget.amount() > maxStackSize
+                    || !sameItemShape(expectedSource, predictedTarget)) return null;
+
+            final int targetAmountBefore = targetItem.isEmpty() ? 0 : targetItem.amount();
+            if (!targetItem.isEmpty() && !canStackPredicted(targetItem, sourceItem)) return null;
+            if (predictedTarget.amount() <= targetAmountBefore) return null;
+
+            if (isPredictedEquipmentTarget(javaSlot, targetJavaSlot)) {
+                if (targetJavaSlot != equipmentTarget || !targetItem.isEmpty()) return null;
+                if (targetJavaSlot >= 5 && targetJavaSlot <= 8 && predictedTarget.amount() != 1) return null;
+            }
+
+            final int addedToTarget = predictedTarget.amount() - targetAmountBefore;
+            if (addedToTarget > removedAmount - addedAmount) return null;
+
+            final BedrockItem newTarget = targetItem.isEmpty() ? sourceItem.copy() : targetItem.copy();
+            newTarget.setAmount(predictedTarget.amount());
+            targetActions.add(slotAction(targetRef, targetItem, newTarget));
+            addedAmount += addedToTarget;
+            processedTargets++;
+        }
+
+        if (targetActions.isEmpty() || processedTargets != relevantChanges - 1
+                || addedAmount != removedAmount) return null;
+
+        final BedrockItem newSource = sourceAmountAfter == 0 ? BedrockItem.empty() : sourceItem.copy();
+        if (sourceAmountAfter > 0) newSource.setAmount(sourceAmountAfter);
+
+        final List<InventoryActionData> actions = new ArrayList<>(targetActions.size() + 1);
+        actions.add(slotAction(sourceRef, sourceItem, newSource));
+        actions.addAll(targetActions);
+        return actions;
+    }
+
+    private static boolean isAllowedPredictedQuickMoveTarget(final int sourceSlot, final int targetSlot) {
+        if (sourceSlot >= 1 && sourceSlot <= 8) {
+            return targetSlot >= 9 && targetSlot <= 44;
+        } else if (sourceSlot >= 9 && sourceSlot <= 35) {
+            return (targetSlot >= 36 && targetSlot <= 44) || isPredictedEquipmentTarget(sourceSlot, targetSlot);
+        } else if (sourceSlot >= 36 && sourceSlot <= 44) {
+            return (targetSlot >= 9 && targetSlot <= 35) || isPredictedEquipmentTarget(sourceSlot, targetSlot);
+        } else if (sourceSlot == 45) {
+            return (targetSlot >= 9 && targetSlot <= 44) || isPredictedEquipmentTarget(sourceSlot, targetSlot);
+        }
+        return false;
+    }
+
+    private static boolean isPredictedEquipmentTarget(final int sourceSlot, final int targetSlot) {
+        if (targetSlot >= 5 && targetSlot <= 8) {
+            return sourceSlot >= 9 && sourceSlot <= 45;
+        }
+        return targetSlot == 45 && sourceSlot >= 9 && sourceSlot <= 44;
+    }
+
+    private static boolean sameItemShape(final HashedItem first, final HashedItem second) {
+        return first.identifier() == second.identifier()
+                && first.dataHashesById().equals(second.dataHashesById())
+                && first.removedDataIds().equals(second.removedDataIds());
+    }
+
+    private static boolean sameHashedItem(final HashedItem first, final HashedItem second) {
+        return first.amount() == second.amount() && sameItemShape(first, second);
+    }
+
+    private static boolean canStackPredicted(final BedrockItem first, final BedrockItem second) {
+        return canStack(first, second)
+                && Arrays.equals(first.canPlace(), second.canPlace())
+                && Arrays.equals(first.canBreak(), second.canBreak())
+                && first.blockingTicks() == second.blockingTicks();
+    }
+
+    private static int trustedEquipmentSlot(final Item javaItem) {
+        if (javaItem.dataContainer().hasEmpty(StructuredDataKey.EQUIPPABLE1_21_6)) return -1;
+
+        final Equippable equippable = javaItem.dataContainer().get(StructuredDataKey.EQUIPPABLE1_21_6);
+        if (equippable != null) {
+            return switch (equippable.equipmentSlot()) {
+                case 1 -> 8; // feet
+                case 2 -> 7; // legs
+                case 3 -> 6; // chest
+                case 4 -> 5; // head
+                case 5 -> 45; // offhand
+                default -> -1;
+            };
+        }
+
+        final int identifier = javaItem.identifier();
+        if (isInJavaItemTag(identifier, "minecraft:head_armor")) return 5;
+        if (isInJavaItemTag(identifier, "minecraft:chest_armor")) return 6;
+        if (isInJavaItemTag(identifier, "minecraft:leg_armor")) return 7;
+        if (isInJavaItemTag(identifier, "minecraft:foot_armor")) return 8;
+
+        final String identifierName = BedrockProtocol.MAPPINGS.getJavaItems().inverse().get(identifier);
+        if (identifierName == null) return -1;
+        return switch (identifierName) {
+            case "minecraft:carved_pumpkin", "minecraft:creeper_head", "minecraft:dragon_head",
+                 "minecraft:piglin_head", "minecraft:player_head", "minecraft:skeleton_skull",
+                 "minecraft:wither_skeleton_skull", "minecraft:zombie_head" -> 5;
+            case "minecraft:elytra" -> 6;
+            case "minecraft:shield" -> 45;
+            default -> -1;
+        };
+    }
+
+    private static int trustedMaxStackSize(final Item javaItem) {
+        final Integer maxStackSize = javaItem.dataContainer().get(StructuredDataKey.MAX_STACK_SIZE);
+        if (maxStackSize != null) return maxStackSize;
+        if (javaItem.dataContainer().hasEmpty(StructuredDataKey.MAX_STACK_SIZE)) return 1;
+
+        final int identifier = javaItem.identifier();
+        if (isInJavaItemTag(identifier, "minecraft:head_armor")
+                || isInJavaItemTag(identifier, "minecraft:chest_armor")
+                || isInJavaItemTag(identifier, "minecraft:leg_armor")
+                || isInJavaItemTag(identifier, "minecraft:foot_armor")) {
+            return 1;
+        }
+
+        final String identifierName = BedrockProtocol.MAPPINGS.getJavaItems().inverse().get(identifier);
+        if (identifierName == null) return MAX_JAVA_STACK_SIZE;
+        return switch (identifierName) {
+            case "minecraft:elytra", "minecraft:shield" -> 1;
+            case "minecraft:carved_pumpkin", "minecraft:creeper_head", "minecraft:dragon_head",
+                 "minecraft:piglin_head", "minecraft:player_head", "minecraft:skeleton_skull",
+                 "minecraft:wither_skeleton_skull", "minecraft:zombie_head" -> MAX_STACK;
+            default -> MAX_JAVA_STACK_SIZE;
+        };
+    }
+
+    private static boolean isInJavaItemTag(final int identifier, final String tagName) {
+        if (!(BedrockProtocol.MAPPINGS.getJavaTags().get("minecraft:item") instanceof CompoundTag itemTags)
+                || !(itemTags.get(tagName) instanceof IntArrayTag tag)) {
+            return false;
+        }
+        for (final int taggedIdentifier : tag.getValue()) {
+            if (taggedIdentifier == identifier) return true;
+        }
+        return false;
+    }
 
     private static List<InventoryActionData> simulateQuickMove(int javaContainerId, short javaSlot, InventoryTracker tracker) {
         final BedrockSlotRef sourceRef = SlotMapper.resolve(javaContainerId, javaSlot, tracker);

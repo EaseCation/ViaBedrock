@@ -19,12 +19,14 @@ package net.raphimc.viabedrock.experimental.inventory;
 
 import com.viaversion.viaversion.api.connection.StoredObject;
 import com.viaversion.viaversion.api.connection.UserConnection;
-import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
+import com.viaversion.viaversion.api.minecraft.item.HashedItem;
 import com.viaversion.viaversion.api.minecraft.item.Item;
+import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ServerboundPackets26_1;
+import com.viaversion.viaversion.util.Limit;
 import net.raphimc.viabedrock.api.model.container.Container;
 import net.raphimc.viabedrock.api.model.container.CraftingTableContainer;
 import net.raphimc.viabedrock.api.util.PacketFactory;
@@ -46,10 +48,13 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventorySou
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.ContainerInput;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
 import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
+import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
 import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 public class ClientAuthInventoryModule implements FeatureModule {
 
@@ -92,11 +97,35 @@ public class ClientAuthInventoryModule implements FeatureModule {
 
     private void registerContainerClickHandler(final BedrockProtocol protocol) {
         ProtocolUtil.prependServerbound(protocol, ServerboundPackets26_1.CONTAINER_CLICK, wrapper -> {
+            if (wrapper.user().get(GameSessionStorage.class).isInventoryServerAuthoritative()) {
+                return; // The built-in handler will reject clicks until ItemStackRequest is implemented.
+            }
+
             final int containerId = wrapper.read(Types.VAR_INT); // container id
             final int revision = wrapper.read(Types.VAR_INT); // revision
             final short slot = wrapper.read(Types.SHORT); // slot
             final byte button = wrapper.read(Types.BYTE); // button
-            final ContainerInput action = ContainerInput.values()[wrapper.read(Types.VAR_INT)]; // action
+            final int actionId = wrapper.read(Types.VAR_INT); // action
+            if (actionId < 0 || actionId >= ContainerInput.values().length) {
+                wrapper.cancel();
+                return;
+            }
+            final ContainerInput action = ContainerInput.values()[actionId];
+            final int changedSlotCount = Limit.max(wrapper.read(Types.VAR_INT), 128);
+            if (changedSlotCount < 0) {
+                wrapper.cancel();
+                return;
+            }
+            final Map<Short, HashedItem> changedSlots = new LinkedHashMap<>(changedSlotCount);
+            boolean validPrediction = true;
+            for (int i = 0; i < changedSlotCount; i++) {
+                final short changedSlot = wrapper.read(Types.SHORT);
+                final HashedItem changedItem = wrapper.read(Types.HASHED_ITEM);
+                if (changedSlots.put(changedSlot, changedItem) != null) {
+                    validPrediction = false;
+                }
+            }
+            final HashedItem carriedItem = wrapper.read(Types.HASHED_ITEM);
 
             wrapper.cancel(); // Prevent original handler from executing
 
@@ -118,8 +147,8 @@ public class ClientAuthInventoryModule implements FeatureModule {
             }
 
             final DragState dragState = wrapper.user().get(DragState.class);
-            final List<InventoryActionData> actions = ClickSimulator.simulate(
-                    containerId, slot, button, action, inventoryTracker, dragState);
+            final List<InventoryActionData> actions = validPrediction ? ClickSimulator.simulate(
+                    containerId, slot, button, action, inventoryTracker, dragState, changedSlots, carriedItem) : null;
 
             if (actions == null) {
                 // Unsupported operation — roll back container contents to the authoritative mirror
