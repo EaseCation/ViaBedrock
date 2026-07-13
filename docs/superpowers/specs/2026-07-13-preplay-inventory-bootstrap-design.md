@@ -1,7 +1,7 @@
 # ViaBedrock pre-PLAY inventory bootstrap 设计
 
 - 日期：2026-07-13
-- 状态：设计已批准，待实现
+- 状态：已实现并完成本地测试与构建验证，待 bbdev 运行验收
 - 分支：`fix/defer-preplay-inventory`
 - 范围：ViaBedrock 通用协议修复；不修改 Nukkit、Nemisys、ViaProxy 核心或 `/stuck`
 
@@ -286,3 +286,35 @@ git -C ViaBedrock diff --check
 - ViaBedrock 测试、构建和 diff check 通过。
 - bbdev 连续 Transfer 验收通过，物品无需 `/stuck` 即可见且可正常交互。
 - 正常登录、容器和现有 JoinGate/movement watchdog 没有行为回归。
+
+## 18. 本地实现结果
+
+已完成：
+
+- 新增连接级 `InventoryBootstrapQueue`，定向延迟 `INVENTORY_CONTENT`、`INVENTORY_SLOT`、`PLAYER_HOTBAR` 和 early `ITEM_REGISTRY`。
+- 接入 `BedrockProtocol` pre-PLAY 检查、`JoinPackets` PLAY ready 和 Item Registry ready 钩子。
+- 实现 512 包、4 MiB、10 秒 Registry 等待上限以及失败断开策略。
+- 实现 FIFO 重放、event-loop 调度、重入保护、reconfigure 恢复和所有 buffer 释放路径。
+- 新增 8 个队列测试场景，覆盖顺序、early Registry、重复 Registry、包数/字节上限、timeout、storage 移除、PacketWrapper payload 副本、reconfigure 和重放失败。
+
+ViaBedrock 单独解析远端 ViaVersion snapshot 时缺少本工作区的 `PacketSendInterceptor` 和 `CustomRegistryStorage`，因此验证显式包含本地 ViaVersion composite：
+
+```bash
+./gradlew --include-build /home/ec/workspace/ViaProxyWorkspace/ViaVersion test --no-daemon --rerun-tasks
+./gradlew --include-build /home/ec/workspace/ViaProxyWorkspace/ViaVersion build --no-daemon
+```
+
+结果均为 `BUILD SUCCESSFUL`。生成的主 jar 包含 `InventoryBootstrapQueue`。尚未推送分支、更新 ViaProxyWorkspace gitlink、部署 bbdev 或操作服务；第 15 节运行验收仍待后续发布授权。
+
+另外使用本修复 worktree 作为 composite dependency 完成 ViaProxy 集成构建：
+
+```bash
+/home/ec/workspace/ViaProxyWorkspace/gradlew \
+  -p /home/ec/workspace/ViaProxyWorkspace/ViaProxy \
+  --include-build /home/ec/workspace/ViaBedrock-fix-preplay-inventory \
+  --include-build /home/ec/workspace/ViaProxyWorkspace/ViaVersion \
+  --include-build /home/ec/workspace/ViaProxyWorkspace/ViaBackwards \
+  build --no-daemon
+```
+
+该构建同样为 `BUILD SUCCESSFUL`，最终 `ViaProxy-3.4.12-SNAPSHOT.jar` 和 Java 8 降级 jar 均静态确认包含 `InventoryBootstrapQueue.class`。

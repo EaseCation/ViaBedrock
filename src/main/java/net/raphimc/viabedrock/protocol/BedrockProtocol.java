@@ -156,6 +156,7 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
         user.put(new CustomMappingSyncStorage(user));
         user.put(new PlayerListStorage());
         user.put(new ScoreboardTracker());
+        user.put(new InventoryBootstrapQueue(user));
         user.put(new InventoryTracker(user));
         user.put(new PlayerArmorHudTracker(user));
 
@@ -185,6 +186,10 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
             if (packet == null) {
                 final ByteBuf content = ((PacketWrapperImpl) wrapper).getInputBuffer();
                 ViaBedrock.getPlatform().getLogger().warning("Received unknown packet " + wrapper.getId() + " in state " + serverState + " with content: " + ByteBufUtil.hexDump(content));
+                throw CancelException.generate();
+            }
+            final InventoryBootstrapQueue inventoryBootstrapQueue = wrapper.user().get(InventoryBootstrapQueue.class);
+            if (inventoryBootstrapQueue != null && inventoryBootstrapQueue.deferIfNeeded(packet, wrapper, serverState)) {
                 throw CancelException.generate();
             }
             if (serverState == State.LOGIN && !LOGIN_STATE_WHITELIST.contains(packet) && BEFORE_PLAY_STATE_WHITELIST.contains(packet)) { // Bedrock client can skip the login state

@@ -445,6 +445,9 @@ public class JoinPackets {
                 }
             }
             wrapper.user().get(PlayerArmorHudTracker.class).markDirty();
+            if (!itemRewriter.getItems().isEmpty()) {
+                wrapper.user().get(InventoryBootstrapQueue.class).onItemRegistryReady();
+            }
         });
         protocol.registerClientboundTransition(ClientboundBedrockPackets.AVAILABLE_ENTITY_IDENTIFIERS,
                 State.CONFIGURATION, (PacketHandler) PacketWrapper::cancel, // Bedrock client ignores entity identifiers before start game
@@ -585,6 +588,7 @@ public class JoinPackets {
             // Problematic code: https://github.com/ViaVersion/ViaBackwards/blob/b90b573f1d6f4d59841a3243e5bd072a43ec78e5/common/src/main/java/com/viaversion/viabackwards/protocol/v1_21_4to1_21_2/rewriter/EntityPacketRewriter1_21_4.java#L109
             user.getProtocolInfo().setClientState(State.PLAY); // Wrong, but needed because ViaBackwards expects this and would otherwise send the player loaded packet in configuration state.
         }
+        user.get(InventoryBootstrapQueue.class).onPlayReady();
     }
 
     public static void sendJavaLoginAndInitialPackets(final UserConnection user) {
