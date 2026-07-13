@@ -35,6 +35,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.BuildPlatfor
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.GraphicsMode;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InputMode;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.UIProfile;
+import net.raphimc.viabedrock.protocol.model.JavaSkinData;
 import net.raphimc.viabedrock.protocol.model.SkinData;
 import net.raphimc.viabedrock.protocol.storage.AuthData;
 import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
@@ -67,13 +68,11 @@ public class SkinProvider implements Provider {
         return t;
     });
 
-    public record JavaSkinResult(BufferedImage skin, BufferedImage cape, boolean slim) {}
-
     /**
      * Asynchronously fetches a Java Edition player's skin from Mojang API.
      * Runs on a worker thread to avoid blocking the Netty EventLoop.
      */
-    public CompletableFuture<Object> fetchJavaSkinAsync(final UUID uuid) {
+    public CompletableFuture<JavaSkinData> fetchJavaSkinAsync(final UUID uuid) {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 final String uuidStr = uuid.toString().replace("-", "");
@@ -153,7 +152,7 @@ public class SkinProvider implements Provider {
                 }
 
                 if (skinImage != null) {
-                    return new JavaSkinResult(skinImage, capeImage, isSlim);
+                    return new JavaSkinData(skinImage, capeImage, isSlim, "mojang:" + uuid);
                 }
                 return null;
             } catch (Exception e) {
@@ -202,12 +201,9 @@ public class SkinProvider implements Provider {
         // Try to apply Java Edition skin from async fetch result
         if (authData.getJavaSkinFuture() != null) {
             final int timeout = ViaBedrock.getConfig().getJavaSkinFetchTimeout();
-            JavaSkinResult result = null;
+            JavaSkinData result = null;
             try {
-                final Object rawResult = authData.getJavaSkinFuture().get(timeout, TimeUnit.MILLISECONDS);
-                if (rawResult instanceof JavaSkinResult) {
-                    result = (JavaSkinResult) rawResult;
-                }
+                result = authData.getJavaSkinFuture().get(timeout, TimeUnit.MILLISECONDS);
             } catch (TimeoutException e) {
                 ViaBedrock.getPlatform().getLogger().warning(
                         "Java skin fetch timed out after " + timeout + "ms for "

@@ -19,6 +19,8 @@ package net.raphimc.viabedrock.protocol.storage;
 
 import com.viaversion.viaversion.api.connection.StorableObject;
 import net.raphimc.viabedrock.api.util.Jwt;
+import net.raphimc.viabedrock.protocol.model.JavaSkinData;
+import net.raphimc.viabedrock.protocol.model.JavaSkinSource;
 
 import java.security.KeyPair;
 import java.util.ArrayList;
@@ -41,7 +43,9 @@ public class AuthData implements StorableObject {
     private String skinJwt;
     private String displayName;
     private String xuid;
-    private CompletableFuture<?> javaSkinFuture;
+    private CompletableFuture<JavaSkinData> javaSkinFuture;
+    private JavaSkinSource externalJavaSkinSource;
+    private int javaSkinWaitTimeoutMs;
 
     public AuthData(final String multiplayerToken, final KeyPair sessionKeyPair) {
         this(null, null, multiplayerToken, sessionKeyPair, null);
@@ -125,12 +129,28 @@ public class AuthData implements StorableObject {
         this.skinJwt = skinJwt;
     }
 
-    public CompletableFuture<?> getJavaSkinFuture() {
+    public CompletableFuture<JavaSkinData> getJavaSkinFuture() {
         return this.javaSkinFuture;
     }
 
-    public void setJavaSkinFuture(final CompletableFuture<?> javaSkinFuture) {
+    public void setJavaSkinFuture(final CompletableFuture<JavaSkinData> javaSkinFuture) {
         this.javaSkinFuture = javaSkinFuture;
+    }
+
+    public JavaSkinSource getExternalJavaSkinSource() {
+        return this.externalJavaSkinSource;
+    }
+
+    public void setExternalJavaSkinSource(final JavaSkinSource externalJavaSkinSource) {
+        this.externalJavaSkinSource = externalJavaSkinSource;
+    }
+
+    public int getJavaSkinWaitTimeoutMs() {
+        return this.javaSkinWaitTimeoutMs;
+    }
+
+    public void setJavaSkinWaitTimeoutMs(final int javaSkinWaitTimeoutMs) {
+        this.javaSkinWaitTimeoutMs = javaSkinWaitTimeoutMs;
     }
 
     public String getDisplayName() {
