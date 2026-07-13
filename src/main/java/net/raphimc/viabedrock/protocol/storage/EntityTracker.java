@@ -77,7 +77,9 @@ public class EntityTracker extends StoredObject {
 
     public Entity addEntity(final long uniqueId, final long runtimeId, final String type, final EntityTypes1_21_11 javaType) {
         final UUID javaUuid = UUID.randomUUID();
-        if (javaType.isOrHasParent(EntityTypes1_21_11.ABSTRACT_HORSE)) {
+        if (javaType == EntityTypes1_21_11.ITEM) {
+            return this.addEntity(new DroppedItemEntity(this.user(), uniqueId, runtimeId, type, this.getNextJavaEntityId(), javaUuid, javaType));
+        } else if (javaType.isOrHasParent(EntityTypes1_21_11.ABSTRACT_HORSE)) {
             return this.addEntity(new AbstractHorseEntity(this.user(), uniqueId, runtimeId, type, this.getNextJavaEntityId(), javaUuid, javaType));
         } else if (javaType.isOrHasParent(EntityTypes1_21_11.MOB)) {
             return this.addEntity(new MobEntity(this.user(), uniqueId, runtimeId, type, this.getNextJavaEntityId(), javaUuid, javaType));
@@ -90,7 +92,9 @@ public class EntityTracker extends StoredObject {
 
     public Entity addEntity(final long uniqueId, final long runtimeId, final String type, final EntityTypes1_21_11 javaType, final Integer customJavaTypeId) {
         final UUID javaUuid = UUID.randomUUID();
-        if (javaType.isOrHasParent(EntityTypes1_21_11.ABSTRACT_HORSE)) {
+        if (javaType == EntityTypes1_21_11.ITEM) {
+            return this.addEntity(new DroppedItemEntity(this.user(), uniqueId, runtimeId, type, this.getNextJavaEntityId(), javaUuid, javaType, customJavaTypeId));
+        } else if (javaType.isOrHasParent(EntityTypes1_21_11.ABSTRACT_HORSE)) {
             return this.addEntity(new AbstractHorseEntity(this.user(), uniqueId, runtimeId, type, this.getNextJavaEntityId(), javaUuid, javaType, customJavaTypeId));
         } else if (javaType.isOrHasParent(EntityTypes1_21_11.MOB)) {
             return this.addEntity(new MobEntity(this.user(), uniqueId, runtimeId, type, this.getNextJavaEntityId(), javaUuid, javaType, customJavaTypeId));

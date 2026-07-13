@@ -34,6 +34,7 @@ import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
 import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
 import net.raphimc.viabedrock.api.model.entity.CustomEntity;
+import net.raphimc.viabedrock.api.model.entity.DroppedItemEntity;
 import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.api.model.entity.LivingEntity;
 import net.raphimc.viabedrock.api.model.entity.PlayerEntity;
@@ -176,8 +177,11 @@ public class EntityPackets {
             final EntityData[] entityData = wrapper.read(BedrockTypes.ENTITY_DATA_ARRAY); // entity data
             wrapper.read(Types.BOOLEAN); // from fishing
 
-            final Entity entity = entityTracker.addEntity(entityUniqueId, entityRuntimeId, "minecraft:item", EntityTypes1_21_11.ITEM);
+            final DroppedItemEntity entity = (DroppedItemEntity) entityTracker.addEntity(entityUniqueId, entityRuntimeId, "minecraft:item", EntityTypes1_21_11.ITEM);
             entity.setPosition(position);
+
+            final Item javaItem = itemRewriter.javaItem(item);
+            entity.setItem(javaItem);
 
             wrapper.write(Types.VAR_INT, entity.javaId()); // entity id
             wrapper.write(Types.UUID, entity.javaUuid()); // uuid
@@ -195,7 +199,7 @@ public class EntityPackets {
 
             final List<EntityData> javaEntityData = new ArrayList<>();
             entity.updateEntityData(entityData, javaEntityData);
-            javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.ITEM), VersionedTypes.V26_1.entityDataTypes.itemType, itemRewriter.javaItem(item)));
+            javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.ITEM), VersionedTypes.V26_1.entityDataTypes.itemType, javaItem));
             final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets26_1.SET_ENTITY_DATA, wrapper.user());
             setEntityData.write(Types.VAR_INT, entity.javaId()); // entity id
             setEntityData.write(VersionedTypes.V26_1.entityDataList, javaEntityData); // entity data
@@ -491,6 +495,18 @@ public class EntityPackets {
                     if (entity != entityTracker.getClientPlayer()) {
                         entity.playSound(SharedTypes_Legacy_LevelSoundEvent.Death);
                     }
+                }
+                case UPDATE_STACK_SIZE -> {
+                    wrapper.cancel();
+                    if (!(entity instanceof DroppedItemEntity droppedItemEntity) || data <= 0) {
+                        return;
+                    }
+
+                    final Item updatedItem = droppedItemEntity.updateItemAmount(data);
+                    final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets26_1.SET_ENTITY_DATA, wrapper.user());
+                    setEntityData.write(Types.VAR_INT, entity.javaId()); // entity id
+                    setEntityData.write(VersionedTypes.V26_1.entityDataList, Lists.newArrayList(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.ITEM), VersionedTypes.V26_1.entityDataTypes.itemType, updatedItem))); // entity data
+                    setEntityData.send(BedrockProtocol.class);
                 }
                 default -> {
                     wrapper.cancel();
