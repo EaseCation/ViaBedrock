@@ -51,7 +51,6 @@ import net.raphimc.viabedrock.experimental.inventory.ClientAuthInventoryModule;
 import net.raphimc.viabedrock.experimental.pyrpc.PyRpcDispatcherModule;
 import net.raphimc.viabedrock.experimental.dimension.AlternateDimensionModule;
 import net.raphimc.viabedrock.experimental.entity.CustomEntityTypeResolver;
-import net.raphimc.viabedrock.experimental.light.AsyncLightModule;
 import net.raphimc.viabedrock.experimental.npc.NpcDialogueModule;
 import net.raphimc.viabedrock.experimental.modinterface.ModUIClientModule;
 import net.raphimc.viabedrock.experimental.resourcepack.ResourcePackModule;
@@ -261,16 +260,6 @@ public class ExperimentalFeatures {
         }
     }
 
-    public static void dispatchChunkTrackerCreated(final ChunkTracker tracker) {
-        for (final FeatureModule module : MODULES) {
-            try {
-                module.onChunkTrackerCreated(tracker);
-            } catch (final Throwable e) {
-                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error in module onChunkTrackerCreated", e);
-            }
-        }
-    }
-
     public static boolean dispatchCustomPayload(final String channel, final PacketWrapper wrapper) {
         for (final FeatureModule module : MODULES) {
             try {
@@ -297,7 +286,6 @@ public class ExperimentalFeatures {
         registerModule(new CustomBlockMappingModule());
         registerModule(new ResourcePackModule());
         registerModule(new NpcDialogueModule());
-        registerModule(new AsyncLightModule());
         registerModule(new CraftingDataModule());
         registerModule(new ClientAuthInventoryModule());
         registerModule(new RidingModule());

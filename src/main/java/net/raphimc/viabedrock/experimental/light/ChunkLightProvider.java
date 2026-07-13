@@ -20,21 +20,20 @@ package net.raphimc.viabedrock.experimental.light;
 import com.viaversion.viaversion.api.minecraft.chunks.Chunk;
 import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
 
-/**
- * Interface for custom chunk light computation providers.
- * Implementations replace the default full-bright sky light behavior in ChunkTracker.
- */
+/** Proxy-side light engine contract used only while a connection is in server-computed mode. */
 public interface ChunkLightProvider {
 
     /**
      * Process light data and send the chunk to the Java client.
-     * When this method returns true, the caller should skip its default chunk sending logic.
+     * A false result means the provider became stale or the negotiated mode changed before it
+     * could take ownership; the caller must revalidate the connection state instead of sending a
+     * fallback packet through this path.
      *
      * @param tracker the chunk tracker for the current connection
      * @param chunkX  chunk X coordinate
      * @param chunkZ  chunk Z coordinate
      * @param chunk   the remapped Java chunk ready for sending
-     * @return true if this provider handled sending the chunk, false to use default behavior
+     * @return true if this provider handled sending the chunk, false if it no longer owns the mode
      */
     boolean processAndSendChunk(ChunkTracker tracker, int chunkX, int chunkZ, Chunk chunk);
 

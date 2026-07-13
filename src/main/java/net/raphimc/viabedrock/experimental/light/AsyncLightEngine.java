@@ -27,6 +27,7 @@ import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.experimental.custommapping.CustomMappingAccess;
 import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
+import net.raphimc.viabedrock.protocol.storage.ClientLightStorage;
 import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
 
 import java.util.*;
@@ -49,16 +50,22 @@ public class AsyncLightEngine implements ChunkLightProvider {
     private static final int[][] NEIGHBOR_OFFSETS = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
 
     private final UserConnection user;
+    private final ChunkTracker tracker;
 
     private final Map<Long, ChunkLightState> chunkStates = new HashMap<>();
     private final Set<Long> pendingLightUpdates = new HashSet<>();
 
-    public AsyncLightEngine(final UserConnection user) {
-        this.user = user;
+    public AsyncLightEngine(final ChunkTracker tracker) {
+        this.user = tracker.user();
+        this.tracker = tracker;
     }
 
     @Override
     public boolean processAndSendChunk(final ChunkTracker tracker, final int chunkX, final int chunkZ, final Chunk chunk) {
+        if (!this.allowsProxyComputation()) {
+            return false;
+        }
+
         final int lightSectionCount = chunk.getSections().length + 2;
         final long chunkKey = ChunkPosition.chunkKey(chunkX, chunkZ);
 
@@ -93,7 +100,7 @@ public class AsyncLightEngine implements ChunkLightProvider {
             return true;
         }
 
-        tracker.sendChunkWithLight(chunk, generatePlaceholderSkyLight(lightSectionCount), new byte[lightSectionCount][], lightSectionCount);
+        tracker.sendChunkWithPlaceholderLight(chunk, lightSectionCount);
         this.scheduleLightComputation(input, state);
 
         return true;
@@ -107,12 +114,20 @@ public class AsyncLightEngine implements ChunkLightProvider {
 
     private void scheduleLightComputation(final LightJobInput input, final ChunkLightState state) {
         final long generation = input.generation();
+        if (!this.isCurrentProxyMode(input.clientLightGeneration())) {
+            state.computingGeneration = NO_GENERATION;
+            return;
+        }
         if (state.computingGeneration == generation) {
             return;
         }
         state.computingGeneration = generation;
 
         GlobalLightCache.getInstance().submitAsync(() -> {
+            if (!this.isCurrentProxyMode(input.clientLightGeneration())) {
+                this.user.getChannel().eventLoop().execute(() -> this.cancelLightComputation(input));
+                return;
+            }
             try {
                 final LightComputation result = computeRealLight(input);
                 this.user.getChannel().eventLoop().execute(() -> this.completeLightComputation(input, result));
@@ -142,6 +157,7 @@ public class AsyncLightEngine implements ChunkLightProvider {
                 chunkX,
                 chunkZ,
                 generation,
+                this.currentClientLightGeneration(),
                 state.lightDependencyGeneration,
                 cacheKey,
                 state.sections,
@@ -167,6 +183,10 @@ public class AsyncLightEngine implements ChunkLightProvider {
 
     private void completeLightComputation(final LightJobInput input, final LightComputation result) {
         if (!this.user.getChannel().isActive()) return;
+        if (!this.isCurrentProxyMode(input.clientLightGeneration())) {
+            this.cancelLightComputation(input);
+            return;
+        }
 
         final ChunkLightState state = this.chunkStates.get(input.chunkKey());
         if (!this.isSameChunkGeneration(state, input)) {
@@ -190,11 +210,22 @@ public class AsyncLightEngine implements ChunkLightProvider {
     }
 
     private void failLightComputation(final LightJobInput input, final Throwable e) {
+        if (!this.isCurrentProxyMode(input.clientLightGeneration())) {
+            this.cancelLightComputation(input);
+            return;
+        }
         final ChunkLightState state = this.chunkStates.get(input.chunkKey());
         if (this.isSameChunkGeneration(state, input)) {
             state.computingGeneration = NO_GENERATION;
         }
         ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error computing async chunk light", e);
+    }
+
+    private void cancelLightComputation(final LightJobInput input) {
+        final ChunkLightState state = this.chunkStates.get(input.chunkKey());
+        if (this.isSameChunkGeneration(state, input)) {
+            state.computingGeneration = NO_GENERATION;
+        }
     }
 
     private boolean isSameChunkGeneration(final ChunkLightState state, final LightJobInput input) {
@@ -260,6 +291,10 @@ public class AsyncLightEngine implements ChunkLightProvider {
 
     @Override
     public void tick() {
+        if (!this.allowsProxyComputation()) {
+            this.pendingLightUpdates.clear();
+            return;
+        }
         if (!this.pendingLightUpdates.isEmpty()) {
             int lightBudget = MAX_LIGHT_UPDATES_PER_TICK;
             final Iterator<Long> it = this.pendingLightUpdates.iterator();
@@ -273,15 +308,6 @@ public class AsyncLightEngine implements ChunkLightProvider {
     }
 
     // --- Light computation methods ---
-
-    private static byte[][] generatePlaceholderSkyLight(final int lightSectionCount) {
-        final byte[][] skyLight = new byte[lightSectionCount][];
-        for (int i = 0; i < lightSectionCount; i++) {
-            skyLight[i] = new byte[ChunkSectionLight.LIGHT_LENGTH];
-            Arrays.fill(skyLight[i], (byte) 0xFF);
-        }
-        return skyLight;
-    }
 
     // neighborSections: [0]=-X, [1]=+X, [2]=-Z, [3]=+Z; elements may be null
     // neighborRealSkyLight: completed real sky light from already-sent neighbors; elements may be null
@@ -676,6 +702,9 @@ public class AsyncLightEngine implements ChunkLightProvider {
      * Send a LIGHT_UPDATE packet to update a chunk's light without resending block data.
      */
     private void sendLightUpdate(final int chunkX, final int chunkZ, final byte[][] skyLight, final byte[][] blockLight) {
+        if (!this.allowsProxyComputation()) {
+            return;
+        }
         final int lightSectionCount = skyLight.length;
 
         final BitSet skyLightMask = new BitSet();
@@ -714,6 +743,30 @@ public class AsyncLightEngine implements ChunkLightProvider {
             lightUpdate.write(Types.BYTE_ARRAY_PRIMITIVE, array); // block light
         }
         lightUpdate.send(BedrockProtocol.class);
+    }
+
+    private boolean allowsProxyComputation() {
+        final ClientLightStorage storage = this.user.get(ClientLightStorage.class);
+        return allowsProxyComputation(this.user.get(ChunkTracker.class) == this.tracker, storage);
+    }
+
+    private long currentClientLightGeneration() {
+        final ClientLightStorage storage = this.user.get(ClientLightStorage.class);
+        return storage != null ? storage.modeGeneration() : 0L;
+    }
+
+    private boolean isCurrentProxyMode(final long clientLightGeneration) {
+        final ClientLightStorage storage = this.user.get(ClientLightStorage.class);
+        return isCurrentProxyMode(this.user.get(ChunkTracker.class) == this.tracker, storage, clientLightGeneration);
+    }
+
+    static boolean allowsProxyComputation(final boolean currentTracker, final ClientLightStorage storage) {
+        return currentTracker && (storage == null || storage.allowsProxyComputation());
+    }
+
+    static boolean isCurrentProxyMode(final boolean currentTracker, final ClientLightStorage storage, final long clientLightGeneration) {
+        return currentTracker && (storage == null
+                || (storage.allowsProxyComputation() && storage.modeGeneration() == clientLightGeneration));
     }
 
     // --- Utility methods ---
@@ -836,6 +889,7 @@ public class AsyncLightEngine implements ChunkLightProvider {
             int chunkX,
             int chunkZ,
             long generation,
+            long clientLightGeneration,
             long lightDependencyGeneration,
             long cacheKey,
             ChunkSection[] sections,

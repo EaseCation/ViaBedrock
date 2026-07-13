@@ -73,6 +73,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.logging.Level;
 
@@ -277,6 +278,9 @@ public class WorldPackets {
             final int fRequestSectionCount = requestSectionCount;
             final Consumer<byte[]> dataConsumer = combinedData -> {
                 try {
+                    if (chunkTracker.getChunk(chunkX, chunkZ) != chunk) {
+                        return;
+                    }
                     final ByteBuf dataBuf = Unpooled.wrappedBuffer(combinedData);
 
                     final BedrockChunkSection[] sections = chunk.getSections();
@@ -318,6 +322,9 @@ public class WorldPackets {
                         ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error reading chunk data", e);
                     }
 
+                    if (chunkTracker.getChunk(chunkX, chunkZ) != chunk) {
+                        return;
+                    }
                     if (fRequestSectionCount > 0) {
                         chunkTracker.requestSubChunks(chunkX, chunkZ, startY, MathUtil.clamp(startY + fRequestSectionCount, startY + 1, endY));
                     }
@@ -372,12 +379,13 @@ public class WorldPackets {
                 }
 
                 final BlockPosition absolute = new BlockPosition(center.x() + offset.x(), center.y() + offset.y(), center.z() + offset.z());
+                final boolean waitingForBlob = cachingEnabled && result == SubChunkPacket_SubChunkRequestResult.Success;
+                final ChunkTracker.SubChunkResponseToken responseToken = chunkTracker.captureSubChunkResponse(
+                        absolute.x(), absolute.y(), absolute.z(), waitingForBlob);
                 final Consumer<byte[]> dataConsumer = combinedData -> {
                     try {
                         if (result == SubChunkPacket_SubChunkRequestResult.SuccessAllAir) {
-                            if (chunkTracker.mergeSubChunk(absolute.x(), absolute.y(), absolute.z(), new BedrockChunkSectionImpl(), new ArrayList<>())) {
-                                chunkTracker.sendChunkInNextTick(absolute.x(), absolute.z());
-                            }
+                            chunkTracker.mergeSubChunk(absolute.x(), absolute.y(), absolute.z(), responseToken, new BedrockChunkSectionImpl(), new ArrayList<>());
                         } else if (result == SubChunkPacket_SubChunkRequestResult.Success) {
                             final ByteBuf dataBuf = Unpooled.wrappedBuffer(combinedData);
 
@@ -396,12 +404,27 @@ public class WorldPackets {
                             } catch (Throwable e) {
                                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error reading sub chunk data", e);
                             }
-                            if (chunkTracker.mergeSubChunk(absolute.x(), absolute.y(), absolute.z(), section, blockEntities)) {
-                                chunkTracker.sendChunkInNextTick(absolute.x(), absolute.z());
+                            chunkTracker.mergeSubChunk(absolute.x(), absolute.y(), absolute.z(), responseToken, section, blockEntities);
+                        } else if (shouldRetryFailedSubChunk(result)) {
+                            final ChunkTracker.SubChunkRetryResult retryResult = chunkTracker.retryPendingSubChunk(
+                                    absolute.x(), absolute.y(), absolute.z(), responseToken
+                            );
+                            if (retryResult == ChunkTracker.SubChunkRetryResult.EXHAUSTED) {
+                                ViaBedrock.getPlatform().getLogger().log(
+                                        Level.WARNING,
+                                        "Stopped retrying sub chunk at " + absolute + " after result " + result
+                                );
+                            } else if (retryResult == ChunkTracker.SubChunkRetryResult.REQUEUED) {
+                                ViaBedrock.getPlatform().getLogger().fine(
+                                        "Retrying sub chunk at " + absolute + " after result " + result
+                                );
                             }
                         } else {
-                            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received sub chunk with result " + result);
-                            chunkTracker.requestSubChunk(absolute.x(), absolute.y(), absolute.z());
+                            ViaBedrock.getPlatform().getLogger().log(
+                                    Level.WARNING,
+                                    "Received non-retryable sub chunk result " + result + " at " + absolute
+                            );
+                            chunkTracker.completePendingSubChunk(absolute.x(), absolute.y(), absolute.z(), responseToken);
                         }
                     } catch (Throwable e) {
                         ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error handling sub chunk data at " + absolute + " result=" + result + " bytes=" + combinedData.length, e);
@@ -411,18 +434,47 @@ public class WorldPackets {
 
                 if (cachingEnabled) {
                     final long hash = wrapper.read(BedrockTypes.LONG_LE); // blob id
-                    wrapper.user().get(BlobCache.class).getBlob(hash).thenAccept(blob -> {
-                        if (data.length == 0) {
-                            dataConsumer.accept(blob);
-                        } else if (blob.length == 0) {
-                            dataConsumer.accept(data);
-                        } else {
-                            final byte[] combinedData = new byte[data.length + blob.length];
-                            System.arraycopy(blob, 0, combinedData, 0, blob.length);
-                            System.arraycopy(data, 0, combinedData, blob.length, data.length);
-                            dataConsumer.accept(combinedData);
+                    if (waitingForBlob) {
+                        final CompletableFuture<byte[]> blobFuture;
+                        try {
+                            blobFuture = wrapper.user().get(BlobCache.class).getBlob(hash);
+                        } catch (Throwable throwable) {
+                            handleSubChunkBlobFailure(chunkTracker, absolute, responseToken, throwable);
+                            continue;
                         }
-                    });
+                        if (responseToken == null) {
+                            continue;
+                        }
+                        blobFuture.whenComplete((blob, throwable) -> {
+                            if (throwable != null || blob == null) {
+                                handleSubChunkBlobFailure(
+                                        chunkTracker,
+                                        absolute,
+                                        responseToken,
+                                        throwable != null ? throwable : new IllegalStateException("Sub chunk blob completed without data")
+                                );
+                            } else if (data.length == 0) {
+                                dataConsumer.accept(blob);
+                            } else if (blob.length == 0) {
+                                dataConsumer.accept(data);
+                            } else {
+                                final byte[] combinedData = new byte[data.length + blob.length];
+                                System.arraycopy(blob, 0, combinedData, 0, blob.length);
+                                System.arraycopy(data, 0, combinedData, blob.length, data.length);
+                                dataConsumer.accept(combinedData);
+                            }
+                        });
+                    } else {
+                        try {
+                            wrapper.user().get(BlobCache.class).getBlob(hash);
+                        } catch (Throwable throwable) {
+                            // All-air and explicit failure responses do not depend on the optional cache side effect.
+                            ViaBedrock.getPlatform().getLogger().fine(
+                                    "Failed to acknowledge optional sub chunk blob at " + absolute + ": " + throwable
+                            );
+                        }
+                        dataConsumer.accept(data);
+                    }
                 } else {
                     dataConsumer.accept(data);
                 }
@@ -625,6 +677,33 @@ public class WorldPackets {
             wrapper.write(BedrockTypes.BLOCK_POSITION, position); // position
             wrapper.write(BedrockTypes.NETWORK_TAG, signTag.copy()); // block entity tag
         });
+    }
+
+    static boolean shouldRetryFailedSubChunk(final SubChunkPacket_SubChunkRequestResult result) {
+        // Explicit coordinate/dimension failures are stable; only ambiguous session failures get bounded retries.
+        return result == SubChunkPacket_SubChunkRequestResult.Undefined
+                || result == SubChunkPacket_SubChunkRequestResult.PlayerDoesntExist;
+    }
+
+    private static void handleSubChunkBlobFailure(final ChunkTracker chunkTracker, final BlockPosition position,
+                                                  final ChunkTracker.SubChunkResponseToken token, final Throwable throwable) {
+        final ChunkTracker.SubChunkRetryResult result = chunkTracker.retryPendingSubChunk(
+                position.x(), position.y(), position.z(), token
+        );
+        if (result == ChunkTracker.SubChunkRetryResult.STALE) {
+            return;
+        }
+        if (result == ChunkTracker.SubChunkRetryResult.REQUEUED) {
+            ViaBedrock.getPlatform().getLogger().fine(
+                    "Retrying sub chunk after blob failure at " + position + ": " + throwable
+            );
+        } else {
+            ViaBedrock.getPlatform().getLogger().log(
+                    Level.WARNING,
+                    "Stopped retrying sub chunk after blob failure at " + position,
+                    throwable
+            );
+        }
     }
 
 }

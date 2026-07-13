@@ -22,8 +22,11 @@ import com.viaversion.viaversion.api.protocol.packet.State;
 import com.viaversion.viaversion.api.protocol.remapper.PacketHandlers;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ServerboundPackets26_1;
 import com.viaversion.viaversion.protocols.v1_21_7to1_21_9.packet.ServerboundConfigurationPackets1_21_9;
+import net.raphimc.viabedrock.ViaBedrock;
+import net.raphimc.viabedrock.api.modinterface.ECClientLightInterface;
 import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
+import net.raphimc.viabedrock.protocol.storage.ClientLightStorage;
 import net.raphimc.viabedrock.protocol.storage.JoinGate;
 
 public class ConfigurationPackets {
@@ -34,12 +37,17 @@ public class ConfigurationPackets {
             protected void register() {
                 handler(MultiStatePackets.CLIENT_SETTINGS_HANDLER);
                 handler(PacketWrapper::cancel);
+                handler(wrapper -> ECClientLightInterface.probeClient(wrapper.user()));
                 handler(wrapper -> wrapper.user().get(CustomMappingSyncStorage.class).probeChannelIfNeeded());
             }
         });
         protocol.registerServerboundTransition(ServerboundConfigurationPackets1_21_9.CUSTOM_PAYLOAD, null, MultiStatePackets.CUSTOM_PAYLOAD_HANDLER);
         protocol.registerServerboundTransition(ServerboundConfigurationPackets1_21_9.FINISH_CONFIGURATION, null, wrapper -> {
             wrapper.cancel();
+            final ClientLightStorage clientLightStorage = wrapper.user().get(ClientLightStorage.class);
+            if (clientLightStorage.freeze()) {
+                ViaBedrock.getPlatform().getLogger().fine("Froze ECClientLight negotiation at configuration finish: " + clientLightStorage.mode());
+            }
             wrapper.user().getProtocolInfo().setClientState(State.PLAY);
             final JoinGate joinGate = wrapper.user().get(JoinGate.class);
             if (joinGate != null) {
@@ -52,6 +60,7 @@ public class ConfigurationPackets {
         protocol.registerServerbound(ServerboundPackets26_1.CONFIGURATION_ACKNOWLEDGED, null, wrapper -> {
             wrapper.cancel();
             wrapper.user().getProtocolInfo().setClientState(State.CONFIGURATION);
+            // The outbound START_CONFIGURATION already opened this cycle; a late ACK must not reopen it.
             wrapper.user().get(CustomMappingSyncStorage.class).probeChannelIfNeeded();
         });
     }

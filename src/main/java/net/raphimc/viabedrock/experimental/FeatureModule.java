@@ -127,13 +127,6 @@ public interface FeatureModule {
     }
 
     /**
-     * Called when a new ChunkTracker is created (dimension change, initial join, etc.).
-     * Modules can use this to install custom light providers or other per-dimension state.
-     */
-    default void onChunkTrackerCreated(ChunkTracker tracker) {
-    }
-
-    /**
      * Called when a custom payload packet is received from the Java client.
      * The first module that returns true claims the packet.
      *

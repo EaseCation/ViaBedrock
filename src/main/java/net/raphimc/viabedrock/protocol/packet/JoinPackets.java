@@ -37,6 +37,7 @@ import com.viaversion.viaversion.protocols.base.v1_7.ClientboundBaseProtocol1_7;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import com.viaversion.viaversion.protocols.v1_21_7to1_21_9.packet.ClientboundConfigurationPackets1_21_9;
 import net.raphimc.viabedrock.ViaBedrock;
+import net.raphimc.viabedrock.api.modinterface.ECClientLightInterface;
 import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
 import net.raphimc.viabedrock.api.resourcepack.definition.ItemDefinitions;
 import net.raphimc.viabedrock.api.util.BitSets;
@@ -101,6 +102,7 @@ public class JoinPackets {
 
         wrapper.user().put(new ChunkTracker(wrapper.user(), wrapper.user().get(ChunkTracker.class).getDimension()));
         if (wrapper.user().getProtocolInfo().protocolVersion().newerThanOrEqualTo(ProtocolVersion.v1_20_2)) {
+            wrapper.user().get(ClientLightStorage.class).beginConfigurationCycle();
             final PacketWrapper startConfiguration = PacketWrapper.create(ClientboundPackets26_1.START_CONFIGURATION, wrapper.user());
             startConfiguration.send(BedrockProtocol.class);
             wrapper.user().getProtocolInfo().setServerState(State.CONFIGURATION);
@@ -127,6 +129,10 @@ public class JoinPackets {
                     }
 
                     if (status == PlayStatus.LoginSuccess) {
+                        // Open the initial cycle before LOGIN_FINISHED reaches the Java client. Otherwise
+                        // CLIENT_INFORMATION can start the probe before a later Bedrock pre-play packet
+                        // resets the cycle and accidentally removes the negotiation deadline.
+                        wrapper.user().get(ClientLightStorage.class).beginConfigurationCycle();
                         final ProtocolInfo protocolInfo = wrapper.user().getProtocolInfo();
                         wrapper.setPacketType(ClientboundLoginPackets.LOGIN_FINISHED);
                         wrapper.write(Types.UUID, protocolInfo.getUuid()); // uuid
@@ -498,13 +504,13 @@ public class JoinPackets {
         entityTracker.addEntity(pending.clientPlayer(), false);
         user.put(entityTracker);
 
-        sendJavaConfigurationOutputs(user, "Bedrock" + (!pending.serverEngine().isEmpty() ? " @" + pending.serverEngine() : "") + " v: " + pending.vanillaVersion(), pending.enabledFeatures());
-
-        final PacketWrapper requestChunkRadius = PacketWrapper.create(ServerboundBedrockPackets.REQUEST_CHUNK_RADIUS, user);
-        requestChunkRadius.write(BedrockTypes.VAR_INT, user.get(ClientSettingsStorage.class).viewDistance()); // radius
-        requestChunkRadius.write(Types.BYTE, ProtocolConstants.BEDROCK_REQUEST_CHUNK_RADIUS_MAX_RADIUS); // max radius
-        requestChunkRadius.sendToServer(BedrockProtocol.class);
-        PacketFactory.sendBedrockLoadingScreen(user, ServerboundLoadingScreenPacketType.StartLoadingScreen, null);
+        sendJavaConfigurationOutputs(user, "Bedrock" + (!pending.serverEngine().isEmpty() ? " @" + pending.serverEngine() : "") + " v: " + pending.vanillaVersion(), pending.enabledFeatures(), () -> {
+            final PacketWrapper requestChunkRadius = PacketWrapper.create(ServerboundBedrockPackets.REQUEST_CHUNK_RADIUS, user);
+            requestChunkRadius.write(BedrockTypes.VAR_INT, user.get(ClientSettingsStorage.class).viewDistance()); // radius
+            requestChunkRadius.write(Types.BYTE, ProtocolConstants.BEDROCK_REQUEST_CHUNK_RADIUS_MAX_RADIUS); // max radius
+            requestChunkRadius.sendToServer(BedrockProtocol.class);
+            PacketFactory.sendBedrockLoadingScreen(user, ServerboundLoadingScreenPacketType.StartLoadingScreen, null);
+        });
     }
 
     public static void sendBrandCustomPayload(final UserConnection user, final String brand) {
@@ -541,11 +547,10 @@ public class JoinPackets {
     }
 
     private static void handleJavaClientGameJoin(final UserConnection user) {
-        sendJavaConfigurationOutputs(user, null, Collections.emptyList());
-        sendJavaLoginAndInitialPackets(user);
+        sendJavaConfigurationOutputs(user, null, Collections.emptyList(), () -> sendJavaLoginAndInitialPackets(user));
     }
 
-    public static void sendJavaConfigurationOutputs(final UserConnection user, final String brand, final List<String> enabledFeatures) {
+    public static void sendJavaConfigurationOutputs(final UserConnection user, final String brand, final List<String> enabledFeatures, final Runnable afterFinish) {
         final GameSessionStorage gameSession = user.get(GameSessionStorage.class);
 
         if (brand != null) {
@@ -585,14 +590,23 @@ public class JoinPackets {
         }
         updateTags.send(BedrockProtocol.class);
 
-        final PacketWrapper finishConfiguration = PacketWrapper.create(ClientboundConfigurationPackets1_21_9.FINISH_CONFIGURATION, user);
-        finishConfiguration.send(BedrockProtocol.class);
-        user.getProtocolInfo().setServerState(State.PLAY);
-        if (user.getProtocolInfo().protocolVersion().betweenInclusive(ProtocolVersion.v1_20_2, ProtocolVersion.v1_21_2)) { // VB compatibility
-            // Problematic code: https://github.com/ViaVersion/ViaBackwards/blob/b90b573f1d6f4d59841a3243e5bd072a43ec78e5/common/src/main/java/com/viaversion/viabackwards/protocol/v1_21_4to1_21_2/rewriter/EntityPacketRewriter1_21_4.java#L109
-            user.getProtocolInfo().setClientState(State.PLAY); // Wrong, but needed because ViaBackwards expects this and would otherwise send the player loaded packet in configuration state.
-        }
-        user.get(InventoryBootstrapQueue.class).onPlayReady();
+        ECClientLightInterface.finishConfigurationWhenReady(user, sequenceConfigurationCompletion(() -> {
+            final PacketWrapper finishConfiguration = PacketWrapper.create(ClientboundConfigurationPackets1_21_9.FINISH_CONFIGURATION, user);
+            finishConfiguration.send(BedrockProtocol.class);
+            user.getProtocolInfo().setServerState(State.PLAY);
+            if (user.getProtocolInfo().protocolVersion().betweenInclusive(ProtocolVersion.v1_20_2, ProtocolVersion.v1_21_2)) { // VB compatibility
+                // Problematic code: https://github.com/ViaVersion/ViaBackwards/blob/b90b573f1d6f4d59841a3243e5bd072a43ec78e5/common/src/main/java/com/viaversion/viabackwards/protocol/v1_21_4to1_21_2/rewriter/EntityPacketRewriter1_21_4.java#L109
+                user.getProtocolInfo().setClientState(State.PLAY); // Wrong, but needed because ViaBackwards expects this and would otherwise send the player loaded packet in configuration state.
+            }
+            user.get(InventoryBootstrapQueue.class).onPlayReady();
+        }, afterFinish));
+    }
+
+    static Runnable sequenceConfigurationCompletion(final Runnable finishConfiguration, final Runnable afterFinish) {
+        return () -> {
+            finishConfiguration.run();
+            afterFinish.run();
+        };
     }
 
     public static void sendJavaLoginAndInitialPackets(final UserConnection user) {

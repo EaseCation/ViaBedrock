@@ -31,9 +31,10 @@ import com.viaversion.viaversion.protocols.v1_21_7to1_21_9.packet.ServerboundCon
 import com.viaversion.viaversion.util.Key;
 import net.lenni0451.mcstructs_bedrock.text.utils.BedrockTranslator;
 import net.raphimc.viabedrock.ViaBedrock;
+import net.raphimc.viabedrock.api.modinterface.ECClientLightInterface;
 import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
-import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.api.util.PacketFactory;
+import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
@@ -168,6 +169,10 @@ public class MultiStatePackets {
                 ViaBedrockUtilityInterface.confirmPresence(wrapper.user());
             }
             ExperimentalFeatures.dispatchChannelRegistered(wrapper.user(), new java.util.HashSet<>(channels));
+            if (wrapper.user().getProtocolInfo().getClientState() == State.CONFIGURATION
+                    && channels.contains(ECClientLightInterface.CONFIRM_CHANNEL)) {
+                ECClientLightInterface.confirmPresence(wrapper.user());
+            }
         } else {
             ExperimentalFeatures.dispatchCustomPayload(channel, wrapper);
         }
