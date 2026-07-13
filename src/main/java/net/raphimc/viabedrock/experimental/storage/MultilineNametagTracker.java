@@ -37,7 +37,9 @@ import net.raphimc.viabedrock.experimental.util.ProtocolUtil;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorDataIDs;
+import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorFlags;
 import net.raphimc.viabedrock.protocol.data.enums.java.PlayerTeamMethod;
+import net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.TeamCollisionRule;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.TeamVisibility;
 import net.raphimc.viabedrock.protocol.data.generated.java.Attributes;
@@ -73,6 +75,7 @@ public class MultilineNametagTracker extends StoredObject {
     private static final float LINE_HEIGHT = 0.28f;
     private static final float ARMOR_STAND_BASE_HEIGHT = 1.975f;
     private static final float PASSENGER_OFFSET = 0.0625f;
+    private static final double SNEAKING_NAMETAG_DISTANCE_SQUARED = 32D * 32D;
     private static final String PASSENGER_SOURCE = "multiline-nametag";
 
     private final Map<Long, NametagDisplayInfo> displays = new HashMap<>();
@@ -218,7 +221,8 @@ public class MultilineNametagTracker extends StoredObject {
                 }
             } else {
                 if (existing instanceof ArmorStandInfo armorStandInfo) {
-                    updateArmorStandDisplay((PlayerEntity) entity, armorStandInfo, name);
+                    updateArmorStandDisplay((PlayerEntity) entity, armorStandInfo, name,
+                            resolvePlayerRenderState((PlayerEntity) entity));
                 } else {
                     updateTextDisplay(entity, (TextDisplayInfo) existing, name);
                 }
@@ -261,6 +265,32 @@ public class MultilineNametagTracker extends StoredObject {
         final JavaPassengerTracker passengerTracker = this.user().get(JavaPassengerTracker.class);
         if (passengerTracker != null) {
             passengerTracker.clearSource(PASSENGER_SOURCE);
+        }
+    }
+
+    /**
+     * Reconciles viewer-dependent player nametag state. Stable state sends no packets.
+     */
+    public void tick() {
+        if (this.displays.isEmpty()) return;
+
+        final EntityTracker entityTracker = this.user().get(EntityTracker.class);
+        if (entityTracker == null) return;
+
+        final Iterator<Map.Entry<Long, NametagDisplayInfo>> iterator = this.displays.entrySet().iterator();
+        while (iterator.hasNext()) {
+            final Map.Entry<Long, NametagDisplayInfo> entry = iterator.next();
+            if (!(entry.getValue() instanceof ArmorStandInfo info)) continue;
+
+            final Entity hostEntity = entityTracker.getEntityByUid(info.entityUniqueId);
+            if (!(hostEntity instanceof PlayerEntity player) || hostEntity instanceof ClientPlayerEntity) {
+                this.hostJavaIdToUniqueId.remove(info.hostJavaId);
+                this.removeArmorStandDisplay(info);
+                iterator.remove();
+                continue;
+            }
+
+            this.applyArmorStandRenderState(info, resolvePlayerRenderState(player), info.lines.size());
         }
     }
 
@@ -469,6 +499,7 @@ public class MultilineNametagTracker extends StoredObject {
 
         final String[] allLines = name.split("\n");
         final int armorStandCount = allLines.length - 1; // bottom line goes on player team nametag
+        final PlayerNametagRenderState renderState = resolvePlayerRenderState(entity);
 
         final ArmorStandInfo info = new ArmorStandInfo(entity.uniqueId(), entity.javaId(), name);
         displays.put(entity.uniqueId(), info);
@@ -486,16 +517,21 @@ public class MultilineNametagTracker extends StoredObject {
             info.lines.add(new ArmorStandLine(javaId, uuid, lineText));
 
             spawnArmorStand(entity, javaId, uuid);
-            sendArmorStandEntityData(javaId, lineText);
+            sendArmorStandEntityData(javaId, lineText, renderState);
             sendArmorStandScale(javaId, getArmorStandScale(lineIndex));
         }
+        info.lastRenderState = renderState;
 
         // 3. Make all armor stands ride the player entity
         sendSetPassengers(entity.javaId(), info.getVirtualEntityIds());
     }
 
-    private void updateArmorStandDisplay(final PlayerEntity entity, final ArmorStandInfo info, final String name) {
-        if (name.equals(info.lastNameText)) return;
+    private void updateArmorStandDisplay(final PlayerEntity entity, final ArmorStandInfo info, final String name,
+                                         final PlayerNametagRenderState renderState) {
+        if (name.equals(info.lastNameText)) {
+            applyArmorStandRenderState(info, renderState, info.lines.size());
+            return;
+        }
 
         final EntityTracker entityTracker = this.user().get(EntityTracker.class);
         if (entityTracker == null) return;
@@ -530,7 +566,7 @@ public class MultilineNametagTracker extends StoredObject {
                 final UUID uuid = UUID.randomUUID();
                 info.lines.add(new ArmorStandLine(javaId, uuid, ""));
                 spawnArmorStand(entity, javaId, uuid);
-                sendArmorStandEntityData(javaId, ""); // text updated below
+                sendArmorStandEntityData(javaId, "", renderState); // text updated below
             }
             passengersChanged = true;
         }
@@ -554,6 +590,9 @@ public class MultilineNametagTracker extends StoredObject {
             }
             sendSetPassengers(entity.javaId(), info.getVirtualEntityIds());
         }
+
+        // Newly added lines already have renderState; only retained lines need a state delta.
+        applyArmorStandRenderState(info, renderState, Math.min(currentCount, requiredCount));
     }
 
     private void removeArmorStandDisplay(final ArmorStandInfo info) {
@@ -585,14 +624,15 @@ public class MultilineNametagTracker extends StoredObject {
         addEntity.send(BedrockProtocol.class);
     }
 
-    private void sendArmorStandEntityData(final int javaId, final String text) {
+    private void sendArmorStandEntityData(final int javaId, final String text,
+                                          final PlayerNametagRenderState renderState) {
         final List<EntityData> data = new ArrayList<>();
 
-        // SHARED_FLAGS: 0x20 (invisible — hide the armor stand model)
+        // Always hide the armor stand model; 0x02 mirrors the host's sneaking name style.
         data.add(new EntityData(
                 armorStandIndex(EntityDataFields.SHARED_FLAGS),
                 VersionedTypes.V26_1.entityDataTypes().byteType,
-                (byte) 0x20));
+                renderState.sharedFlags));
 
         // CUSTOM_NAME — the line text
         data.add(new EntityData(
@@ -600,11 +640,11 @@ public class MultilineNametagTracker extends StoredObject {
                 VersionedTypes.V26_1.entityDataTypes().optionalComponentType,
                 TextUtil.stringToNbt(text)));
 
-        // CUSTOM_NAME_VISIBLE = true — always show the nametag
+        // ArmorStandRenderer bypasses player distance/invisibility checks, so visibility is explicit.
         data.add(new EntityData(
                 armorStandIndex(EntityDataFields.CUSTOM_NAME_VISIBLE),
                 VersionedTypes.V26_1.entityDataTypes().booleanType,
-                true));
+                renderState.nameVisible));
 
         // NO_GRAVITY = true
         data.add(new EntityData(
@@ -618,6 +658,47 @@ public class MultilineNametagTracker extends StoredObject {
                 armorStandIndex(EntityDataFields.CLIENT_FLAGS),
                 VersionedTypes.V26_1.entityDataTypes().byteType,
                 (byte) 0x04));
+
+        final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets26_1.SET_ENTITY_DATA, this.user());
+        setEntityData.write(Types.VAR_INT, javaId);
+        setEntityData.write(VersionedTypes.V26_1.entityDataList, data);
+        setEntityData.send(BedrockProtocol.class);
+    }
+
+    private void applyArmorStandRenderState(final ArmorStandInfo info,
+                                            final PlayerNametagRenderState renderState,
+                                            final int existingLineCount) {
+        final PlayerNametagRenderState previousState = info.lastRenderState;
+        if (previousState == renderState) return;
+
+        final boolean sharedFlagsChanged = previousState == null || previousState.sharedFlags != renderState.sharedFlags;
+        final boolean visibilityChanged = previousState == null || previousState.nameVisible != renderState.nameVisible;
+        final int updateCount = Math.min(existingLineCount, info.lines.size());
+        for (int i = 0; i < updateCount; i++) {
+            sendArmorStandRenderStateUpdate(info.lines.get(i).javaId, renderState,
+                    sharedFlagsChanged, visibilityChanged);
+        }
+        info.lastRenderState = renderState;
+    }
+
+    private void sendArmorStandRenderStateUpdate(final int javaId,
+                                                  final PlayerNametagRenderState renderState,
+                                                  final boolean sharedFlagsChanged,
+                                                  final boolean visibilityChanged) {
+        final List<EntityData> data = new ArrayList<>(2);
+        if (sharedFlagsChanged) {
+            data.add(new EntityData(
+                    armorStandIndex(EntityDataFields.SHARED_FLAGS),
+                    VersionedTypes.V26_1.entityDataTypes().byteType,
+                    renderState.sharedFlags));
+        }
+        if (visibilityChanged) {
+            data.add(new EntityData(
+                    armorStandIndex(EntityDataFields.CUSTOM_NAME_VISIBLE),
+                    VersionedTypes.V26_1.entityDataTypes().booleanType,
+                    renderState.nameVisible));
+        }
+        if (data.isEmpty()) return;
 
         final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets26_1.SET_ENTITY_DATA, this.user());
         setEntityData.write(Types.VAR_INT, javaId);
@@ -707,6 +788,46 @@ public class MultilineNametagTracker extends StoredObject {
         }
         // Default: true for entities with a name (Bedrock default behavior)
         return true;
+    }
+
+    private PlayerNametagRenderState resolvePlayerRenderState(final PlayerEntity entity) {
+        final EntityTracker entityTracker = this.user().get(EntityTracker.class);
+        final ClientPlayerEntity clientPlayer = entityTracker != null ? entityTracker.getClientPlayer() : null;
+        final boolean viewerSpectator = clientPlayer != null && clientPlayer.javaGameMode() == GameMode.SPECTATOR;
+        final double distanceSquared = squaredDistance(clientPlayer, entity);
+        return resolvePlayerRenderState(
+                hasPrimaryActorFlag(entity, ActorFlags.SNEAKING),
+                hasPrimaryActorFlag(entity, ActorFlags.INVISIBLE),
+                viewerSpectator,
+                distanceSquared);
+    }
+
+    static PlayerNametagRenderState resolvePlayerRenderState(final boolean hostSneaking,
+                                                              final boolean hostInvisible,
+                                                              final boolean viewerSpectator,
+                                                              final double distanceSquared) {
+        final boolean visible = (!hostInvisible || viewerSpectator)
+                && (!hostSneaking || distanceSquared <= SNEAKING_NAMETAG_DISTANCE_SQUARED);
+        if (hostSneaking) {
+            return visible ? PlayerNametagRenderState.VISIBLE_SNEAKING : PlayerNametagRenderState.HIDDEN_SNEAKING;
+        }
+        return visible ? PlayerNametagRenderState.VISIBLE_NORMAL : PlayerNametagRenderState.HIDDEN_NORMAL;
+    }
+
+    private static boolean hasPrimaryActorFlag(final Entity entity, final ActorFlags flag) {
+        final EntityData flagsData = entity.entityData().get(ActorDataIDs.RESERVED_0);
+        if (flagsData == null || flagsData.getValue() == null || flag.getValue() >= Long.SIZE) return false;
+        return ((((Number) flagsData.getValue()).longValue() >>> flag.getValue()) & 1L) != 0L;
+    }
+
+    private static double squaredDistance(final Entity first, final Entity second) {
+        if (first == null || second == null || first.position() == null || second.position() == null) {
+            return Double.POSITIVE_INFINITY;
+        }
+        final double x = first.position().x() - second.position().x();
+        final double y = first.position().y() - second.position().y();
+        final double z = first.position().z() - second.position().z();
+        return x * x + y * y + z * z;
     }
 
     private static float getEffectiveScale(final Entity entity) {
@@ -807,6 +928,7 @@ public class MultilineNametagTracker extends StoredObject {
 
     private static class ArmorStandInfo extends NametagDisplayInfo {
         final List<ArmorStandLine> lines = new ArrayList<>();
+        PlayerNametagRenderState lastRenderState;
 
         ArmorStandInfo(final long entityUniqueId, final int hostJavaId, final String nameText) {
             super(entityUniqueId, hostJavaId, nameText);
@@ -815,6 +937,21 @@ public class MultilineNametagTracker extends StoredObject {
         @Override
         int[] getVirtualEntityIds() {
             return lines.stream().mapToInt(l -> l.javaId).toArray();
+        }
+    }
+
+    enum PlayerNametagRenderState {
+        VISIBLE_NORMAL((byte) 0x20, true),
+        VISIBLE_SNEAKING((byte) 0x22, true),
+        HIDDEN_NORMAL((byte) 0x20, false),
+        HIDDEN_SNEAKING((byte) 0x22, false);
+
+        final byte sharedFlags;
+        final boolean nameVisible;
+
+        PlayerNametagRenderState(final byte sharedFlags, final boolean nameVisible) {
+            this.sharedFlags = sharedFlags;
+            this.nameVisible = nameVisible;
         }
     }
 

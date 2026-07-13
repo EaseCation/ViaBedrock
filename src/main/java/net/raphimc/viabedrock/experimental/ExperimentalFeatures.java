@@ -62,6 +62,7 @@ import net.raphimc.viabedrock.experimental.storage.MapTracker;
 import net.raphimc.viabedrock.experimental.storage.MultilineNametagTracker;
 import net.raphimc.viabedrock.experimental.storage.ScriptDebugTextTracker;
 import net.raphimc.viabedrock.experimental.task.BlockBreakingProgressTickTask;
+import net.raphimc.viabedrock.experimental.task.MultilineNametagTickTask;
 import net.raphimc.viabedrock.experimental.task.ScriptDebugTextTickTask;
 import net.raphimc.viabedrock.experimental.util.JavaMapPaletteUtil;
 import net.raphimc.viabedrock.experimental.util.ProtocolUtil;
@@ -1242,6 +1243,7 @@ public class ExperimentalFeatures {
     public static void registerTasks() {
         Via.getPlatform().runRepeatingSync(new ScriptDebugTextTickTask(), 1L);
         Via.getPlatform().runRepeatingSync(new BlockBreakingProgressTickTask(), 1L);
+        Via.getPlatform().runRepeatingSync(new MultilineNametagTickTask(), 1L);
     }
 
     // Maps a Bedrock MapDecoration_Type value (index) to a Java minecraft:map_decoration_type registry id.
