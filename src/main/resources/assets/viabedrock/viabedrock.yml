@@ -33,6 +33,15 @@ enable-server-entity-animation: true
 # time is typically much shorter than this value.
 java-skin-fetch-timeout: 1000
 
+# Customizes the Java Edition tab list shown when joining a Bedrock server.
+# Supported placeholders: %level_name%, %version%. Use an empty string to clear the header or footer.
+# In quoted strings, use \n for line breaks and \u00A7 for Minecraft formatting codes.
+tab-list:
+  # If false, ViaBedrock will not send a custom tab list header or footer.
+  enabled: true
+  header: "%level_name%\n"
+  footer: "\u00A7aViaBedrock \u00A73v%version%\n\u00A77https://github.com/RaphiMC/ViaBedrock"
+
 # If true, applies Floyd-Steinberg dithering when converting Bedrock map pixels to the limited Java map color
 # palette. This trades hard color banding for fine noise and greatly improves smooth gradients (faces/portraits).
 # Set to false for crisp nearest-color output (better for flat-color / text / UI maps). Requires experimental features.

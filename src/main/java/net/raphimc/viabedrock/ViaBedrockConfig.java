@@ -29,6 +29,9 @@ import java.util.logging.Logger;
 
 public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.platform.ViaBedrockConfig {
 
+    private static final String DEFAULT_TAB_LIST_HEADER = "%level_name%\n";
+    private static final String DEFAULT_TAB_LIST_FOOTER = "\u00A7aViaBedrock \u00A73v%version%\n\u00A77https://github.com/RaphiMC/ViaBedrock";
+
     private boolean enableExperimentalFeatures;
     private BlobCacheMode blobCacheMode;
     private boolean translateResourcePacks;
@@ -42,6 +45,9 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
     private String viaProxyAuthSecret;
     private boolean enableServerEntityAnimation;
     private int javaSkinFetchTimeout;
+    private boolean sendTabList;
+    private String tabListHeader;
+    private String tabListFooter;
     private boolean ditherMaps;
     private boolean customMappingSyncEnabled;
     private int customMappingSyncTimeoutMs;
@@ -83,6 +89,10 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
         this.viaProxyAuthSecret = this.getString("viaproxy-auth-secret", "");
         this.enableServerEntityAnimation = this.getBoolean("enable-server-entity-animation", true);
         this.javaSkinFetchTimeout = this.getInt("java-skin-fetch-timeout", 1000);
+        final ConfigSection tabList = this.getSection("tab-list");
+        this.sendTabList = getBoolean(tabList, "enabled", true);
+        this.tabListHeader = getString(tabList, "header", DEFAULT_TAB_LIST_HEADER);
+        this.tabListFooter = getString(tabList, "footer", DEFAULT_TAB_LIST_FOOTER);
         this.ditherMaps = this.getBoolean("dither-maps", true);
         final ConfigSection customMappingSync = this.getSection("customMappingSync");
         this.customMappingSyncEnabled = getBoolean(customMappingSync, "enabled", true);
@@ -192,6 +202,21 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
     @Override
     public int getJavaSkinFetchTimeout() {
         return this.javaSkinFetchTimeout;
+    }
+
+    @Override
+    public boolean shouldSendTabList() {
+        return this.sendTabList;
+    }
+
+    @Override
+    public String getTabListHeader() {
+        return this.tabListHeader;
+    }
+
+    @Override
+    public String getTabListFooter() {
+        return this.tabListFooter;
     }
 
     @Override

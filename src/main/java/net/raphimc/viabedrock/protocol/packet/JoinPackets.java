@@ -111,6 +111,10 @@ public class JoinPackets {
         }
     };
 
+    static String resolveTabListPlaceholders(final String template, final String levelName) {
+        return template.replace("%version%", ViaBedrock.VERSION).replace("%level_name%", levelName);
+    }
+
     public static void register(final BedrockProtocol protocol) {
         protocol.registerClientboundTransition(ClientboundBedrockPackets.PLAY_STATUS,
                 State.LOGIN, (PacketHandler) wrapper -> {
@@ -662,10 +666,15 @@ public class JoinPackets {
         serverDifficulty.write(Types.BOOLEAN, false); // locked
         serverDifficulty.send(BedrockProtocol.class);
 
-        final PacketWrapper tabList = PacketWrapper.create(ClientboundPackets26_1.TAB_LIST, user);
-        tabList.write(Types.TAG, TextUtil.stringToNbt(joinGameStorage.levelName() + "\n")); // header
-        tabList.write(Types.TAG, TextUtil.stringToNbt("§aViaBedrock §3v" + ViaBedrock.VERSION + "\n§7https://github.com/RaphiMC/ViaBedrock")); // footer
-        tabList.send(BedrockProtocol.class);
+        final ViaBedrockConfig config = ViaBedrock.getConfig();
+        if (config.shouldSendTabList()) {
+            final PacketWrapper tabList = PacketWrapper.create(ClientboundPackets26_1.TAB_LIST, user);
+            final String header = resolveTabListPlaceholders(config.getTabListHeader(), joinGameStorage.levelName());
+            final String footer = resolveTabListPlaceholders(config.getTabListFooter(), joinGameStorage.levelName());
+            tabList.write(Types.TAG, TextUtil.stringToNbt(header));
+            tabList.write(Types.TAG, TextUtil.stringToNbt(footer));
+            tabList.send(BedrockProtocol.class);
+        }
 
         final PacketWrapper playerInfoUpdate = PacketWrapper.create(ClientboundPackets26_1.PLAYER_INFO_UPDATE, user);
         playerInfoUpdate.write(Types.PROFILE_ACTIONS_ENUM1_21_4, BitSets.create(8, PlayerInfoUpdateAction.ADD_PLAYER, PlayerInfoUpdateAction.UPDATE_GAME_MODE)); // actions

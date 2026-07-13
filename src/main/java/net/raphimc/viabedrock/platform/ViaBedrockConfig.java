@@ -95,6 +95,21 @@ public interface ViaBedrockConfig extends Config {
     int getJavaSkinFetchTimeout();
 
     /**
+     * @return If true, sends a custom Java tab list header and footer when joining the server.
+     */
+    boolean shouldSendTabList();
+
+    /**
+     * @return The Java tab list header template.
+     */
+    String getTabListHeader();
+
+    /**
+     * @return The Java tab list footer template.
+     */
+    String getTabListFooter();
+
+    /**
      * @return If true, applies Floyd-Steinberg dithering when converting Bedrock map pixels (true ARGB) to the
      * limited Java map color palette. This trades hard color banding for fine noise, which greatly improves
      * smooth gradients such as faces/portraits. Requires experimental features.
