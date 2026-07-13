@@ -21,6 +21,7 @@ import com.viaversion.viaversion.api.connection.StoredObject;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.minecraft.entities.EntityTypes1_21_11;
 import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
+import com.viaversion.viaversion.libs.fastutil.ints.IntArrayList;
 import com.viaversion.viaversion.libs.fastutil.longs.Long2ObjectMap;
 import com.viaversion.viaversion.libs.fastutil.longs.Long2ObjectOpenHashMap;
 import com.viaversion.viaversion.libs.fastutil.longs.LongArrayList;
@@ -262,25 +263,24 @@ public class RidingTracker extends StoredObject {
             return;
         }
 
-        if (usesVanillaRiding(vehicle)) {
-            final com.viaversion.viaversion.libs.fastutil.ints.IntArrayList passengerJavaIds = new com.viaversion.viaversion.libs.fastutil.ints.IntArrayList(passengerUids.size());
-            for (int i = 0; i < passengerUids.size(); i++) {
-                final long passengerUniqueId = passengerUids.getLong(i);
+        final boolean usesVanillaRiding = usesVanillaRiding(vehicle);
+        final IntArrayList directPassengerJavaIds = new IntArrayList(passengerUids.size());
+        for (int i = 0; i < passengerUids.size(); i++) {
+            final long passengerUniqueId = passengerUids.getLong(i);
+            final Entity passenger = entityTracker.getEntityByUid(passengerUniqueId);
+            if (passenger != null && (usesVanillaRiding || this.canRideDirectly(vehicle, passenger))) {
                 this.removeAnchor(passengerUniqueId);
-
-                final Entity passenger = entityTracker.getEntityByUid(passengerUniqueId);
-                if (passenger != null) {
-                    passengerJavaIds.add(passenger.javaId());
-                }
+                directPassengerJavaIds.add(passenger.javaId());
             }
-            passengerTracker.setBedrockPassengers(vehicle.javaId(), passengerJavaIds.toIntArray());
+        }
+        passengerTracker.setBedrockPassengers(vehicle.javaId(), directPassengerJavaIds.toIntArray());
+        if (usesVanillaRiding) {
             return;
         }
 
-        passengerTracker.setBedrockPassengers(vehicle.javaId());
         for (int i = 0; i < passengerUids.size(); i++) {
             final Entity passenger = entityTracker.getEntityByUid(passengerUids.getLong(i));
-            if (passenger != null) {
+            if (passenger != null && !this.canRideDirectly(vehicle, passenger)) {
                 this.ensureAnchor(vehicle, passenger);
             }
         }
@@ -357,6 +357,15 @@ public class RidingTracker extends StoredObject {
             return Position3f.ZERO;
         }
         return offset;
+    }
+
+    private boolean canRideDirectly(final Entity vehicle, final Entity passenger) {
+        if (!this.isLocalPlayer(vehicle)) {
+            return false;
+        }
+
+        final Position3f offset = this.rawSeatOffset(passenger);
+        return offset.x() == 0F && offset.y() == 0F && offset.z() == 0F;
     }
 
     private Position3f seatOffset(final Entity vehicle, final Entity passenger, final Position3f offset, final float anchorYOffset) {
