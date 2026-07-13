@@ -17,6 +17,9 @@
  */
 package net.raphimc.viabedrock.protocol.packet;
 
+import com.viaversion.viaversion.api.Via;
+import com.viaversion.viaversion.api.connection.UserConnection;
+import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.protocol.packet.State;
 import com.viaversion.viaversion.api.protocol.remapper.PacketHandler;
 import com.viaversion.viaversion.api.type.Types;
@@ -40,15 +43,19 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.Connection_D
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.MinecraftPacketIds;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketViolationSeverity;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketViolationType;
+import net.raphimc.viabedrock.protocol.provider.NettyPipelineProvider;
 import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
 import net.raphimc.viabedrock.protocol.storage.ClientSettingsStorage;
+import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 import net.raphimc.viabedrock.protocol.storage.PacketSyncStorage;
+import net.raphimc.viabedrock.protocol.storage.PlayerListStorage;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.function.Function;
 import java.util.logging.Level;
 
@@ -99,9 +106,16 @@ public class MultiStatePackets {
     private static final PacketHandler PONG_HANDLER = wrapper -> {
         final PacketSyncStorage packetSyncStorage = wrapper.user().get(PacketSyncStorage.class);
         final int id = wrapper.read(Types.INT); // parameter
-        final Long timestamp = packetSyncStorage.getNetworkStackLatencyResponse(id);
-        if (timestamp != null) {
-            wrapper.write(BedrockTypes.LONG_LE, timestamp * 1_000_000L); // timestamp
+        final PacketSyncStorage.NetworkStackLatencyResponse response = packetSyncStorage.getNetworkStackLatencyResponse(id);
+        if (response != null) {
+            if (wrapper.user().getProtocolInfo().getServerState() != State.LOGIN) {
+                final long nowNanos = System.nanoTime();
+                final int serverTransportLatencyMillis = Via.getManager().getProviders().get(NettyPipelineProvider.class).getServerTransportLatencyMillis(wrapper.user());
+                packetSyncStorage.updateLatency(nowNanos - response.requestNanos(), serverTransportLatencyMillis);
+                publishJavaPlayerLatency(wrapper.user(), packetSyncStorage, nowNanos);
+            }
+
+            wrapper.write(BedrockTypes.LONG_LE, response.timestamp() * 1_000_000L); // timestamp
             wrapper.write(Types.BOOLEAN, true); // from server
         } else {
             wrapper.cancel();
@@ -110,6 +124,20 @@ public class MultiStatePackets {
             }
         }
     };
+
+    private static void publishJavaPlayerLatency(final UserConnection user, final PacketSyncStorage packetSyncStorage, final long nowNanos) {
+        if (user.getProtocolInfo().getServerState() != State.PLAY || !packetSyncStorage.shouldPublishLatency(nowNanos)) return;
+
+        final EntityTracker entityTracker = user.get(EntityTracker.class);
+        if (entityTracker.getClientPlayer() == null) return;
+
+        final UUID javaUuid = entityTracker.getClientPlayer().javaUuid();
+        if (!user.get(PlayerListStorage.class).containsPlayer(javaUuid)) return;
+
+        final PacketWrapper playerInfoUpdate = PacketFactory.createJavaPlayerLatencyUpdate(user, javaUuid, packetSyncStorage.latencyMillis());
+        playerInfoUpdate.send(BedrockProtocol.class);
+        packetSyncStorage.markLatencyPublished(nowNanos);
+    }
 
     public static final PacketHandler CLIENT_SETTINGS_HANDLER = wrapper -> {
         final String locale = wrapper.read(Types.STRING); // locale

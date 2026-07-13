@@ -1,0 +1,86 @@
+/*
+ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
+ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+package net.raphimc.viabedrock.protocol.storage;
+
+import com.viaversion.viaversion.connection.UserConnectionImpl;
+import io.netty.channel.embedded.EmbeddedChannel;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+
+import java.util.concurrent.TimeUnit;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class PacketSyncStorageTest {
+
+    private final EmbeddedChannel channel = new EmbeddedChannel();
+    private final PacketSyncStorage storage = new PacketSyncStorage(new UserConnectionImpl(this.channel));
+
+    @AfterEach
+    void closeChannel() {
+        this.channel.finishAndReleaseAll();
+    }
+
+    @Test
+    void consumesNetworkStackLatencyResponseOnce() {
+        final int id = this.storage.addNetworkStackLatencyResponse(1234L, 5678L);
+
+        assertEquals(new PacketSyncStorage.NetworkStackLatencyResponse(1234L, 5678L), this.storage.getNetworkStackLatencyResponse(id));
+        assertNull(this.storage.getNetworkStackLatencyResponse(id));
+    }
+
+    @Test
+    void combinesClientAndServerTransportLatency() {
+        assertEquals(60, this.storage.updateLatency(TimeUnit.MILLISECONDS.toNanos(42L), 18));
+        assertEquals(60, this.storage.latencyMillis());
+    }
+
+    @Test
+    void fallsBackToClientLatencyAndClampsInvalidValues() {
+        assertEquals(42, this.storage.updateLatency(TimeUnit.MILLISECONDS.toNanos(42L), -1));
+        assertEquals(0, this.storage.updateLatency(-1L, -1));
+        assertEquals(Integer.MAX_VALUE, this.storage.updateLatency(Long.MAX_VALUE, Integer.MAX_VALUE));
+    }
+
+    @Test
+    void publishesFirstChangedValueAtMostOncePerSecond() {
+        final long firstPublishNanos = 100L;
+        assertFalse(this.storage.shouldPublishLatency(firstPublishNanos));
+
+        this.storage.updateLatency(TimeUnit.MILLISECONDS.toNanos(50L), -1);
+        assertTrue(this.storage.shouldPublishLatency(firstPublishNanos));
+        this.storage.markLatencyPublished(firstPublishNanos);
+        assertFalse(this.storage.shouldPublishLatency(firstPublishNanos + PacketSyncStorage.LATENCY_UPDATE_INTERVAL_NANOS));
+
+        this.storage.updateLatency(TimeUnit.MILLISECONDS.toNanos(75L), -1);
+        assertFalse(this.storage.shouldPublishLatency(firstPublishNanos + PacketSyncStorage.LATENCY_UPDATE_INTERVAL_NANOS - 1L));
+        assertTrue(this.storage.shouldPublishLatency(firstPublishNanos + PacketSyncStorage.LATENCY_UPDATE_INTERVAL_NANOS));
+    }
+
+    @Test
+    void markingUnknownLatencyDoesNotDelayFirstMeasurement() {
+        this.storage.markLatencyPublished(100L);
+        this.storage.updateLatency(TimeUnit.MILLISECONDS.toNanos(25L), -1);
+
+        assertTrue(this.storage.shouldPublishLatency(101L));
+    }
+
+}

@@ -36,11 +36,27 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ServerboundL
 import net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent;
 import net.raphimc.viabedrock.protocol.data.enums.java.GameEventType;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.CustomChatCompletionsAction;
+import net.raphimc.viabedrock.protocol.data.enums.java.generated.PlayerInfoUpdateAction;
 import net.raphimc.viabedrock.protocol.model.Position3f;
 import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
+import java.util.UUID;
+
 public class PacketFactory {
+
+    public static PacketWrapper createJavaPlayerLatencyUpdate(final UserConnection user, final UUID uuid, final int latencyMillis) {
+        final PacketWrapper playerInfoUpdate = PacketWrapper.create(ClientboundPackets26_1.PLAYER_INFO_UPDATE, user);
+        writeJavaPlayerLatencyUpdate(playerInfoUpdate, uuid, latencyMillis);
+        return playerInfoUpdate;
+    }
+
+    static void writeJavaPlayerLatencyUpdate(final PacketWrapper playerInfoUpdate, final UUID uuid, final int latencyMillis) {
+        playerInfoUpdate.write(Types.PROFILE_ACTIONS_ENUM1_21_4, BitSets.create(8, PlayerInfoUpdateAction.UPDATE_LATENCY)); // actions
+        playerInfoUpdate.write(Types.VAR_INT, 1); // length
+        playerInfoUpdate.write(Types.UUID, uuid); // uuid
+        playerInfoUpdate.write(Types.VAR_INT, latencyMillis); // latency
+    }
 
     public static void sendJavaSystemChat(final UserConnection user, final Tag message) {
         final PacketWrapper systemChat = PacketWrapper.create(ClientboundPackets26_1.SYSTEM_CHAT, user);

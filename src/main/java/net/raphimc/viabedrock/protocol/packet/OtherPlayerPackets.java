@@ -48,6 +48,7 @@ import net.raphimc.viabedrock.protocol.rewriter.GameTypeRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
+import net.raphimc.viabedrock.protocol.storage.PacketSyncStorage;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.util.UUID;
@@ -81,7 +82,7 @@ public class OtherPlayerPackets {
             entity.updateName(username);
 
             final PacketWrapper playerInfoUpdate = PacketWrapper.create(ClientboundPackets26_1.PLAYER_INFO_UPDATE, wrapper.user());
-            playerInfoUpdate.write(Types.PROFILE_ACTIONS_ENUM1_21_4, BitSets.create(8, PlayerInfoUpdateAction.ADD_PLAYER, PlayerInfoUpdateAction.UPDATE_GAME_MODE)); // actions
+            playerInfoUpdate.write(Types.PROFILE_ACTIONS_ENUM1_21_4, BitSets.create(8, PlayerInfoUpdateAction.ADD_PLAYER, PlayerInfoUpdateAction.UPDATE_GAME_MODE, PlayerInfoUpdateAction.UPDATE_LATENCY)); // actions
             playerInfoUpdate.write(Types.VAR_INT, 1); // length
             playerInfoUpdate.write(Types.UUID, uuid); // uuid
             playerInfoUpdate.write(Types.STRING, StringUtil.encodeUUID(uuid)); // username
@@ -91,6 +92,7 @@ public class OtherPlayerPackets {
                     new GameProfile.Property("device_os", wrapper.read(BedrockTypes.INT_LE).toString()) // device os
             }); // properties
             playerInfoUpdate.write(Types.VAR_INT, GameTypeRewriter.getEffectiveGameMode(gameType, gameSession.getLevelGameType()).ordinal()); // game mode
+            playerInfoUpdate.write(Types.VAR_INT, PacketSyncStorage.UNKNOWN_LATENCY); // latency
             playerInfoUpdate.send(BedrockProtocol.class);
 
             wrapper.write(Types.VAR_INT, entity.javaId()); // entity id

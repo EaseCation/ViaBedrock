@@ -72,15 +72,17 @@ public class HudPackets {
                     final UUID[] uuids = new UUID[length];
                     final long[] entityUniqueIds = new long[length];
                     final String[] names = new String[length];
-                    wrapper.write(Types.PROFILE_ACTIONS_ENUM1_21_4, BitSets.create(8, PlayerInfoUpdateAction.ADD_PLAYER, PlayerInfoUpdateAction.UPDATE_LISTED, PlayerInfoUpdateAction.UPDATE_DISPLAY_NAME)); // actions
+                    final PacketSyncStorage packetSyncStorage = wrapper.user().get(PacketSyncStorage.class);
+                    wrapper.write(Types.PROFILE_ACTIONS_ENUM1_21_4, BitSets.create(8, PlayerInfoUpdateAction.ADD_PLAYER, PlayerInfoUpdateAction.UPDATE_LISTED, PlayerInfoUpdateAction.UPDATE_LATENCY, PlayerInfoUpdateAction.UPDATE_DISPLAY_NAME)); // actions
                     wrapper.write(Types.VAR_INT, length); // length
                     for (int i = 0; i < length; i++) {
                         uuids[i] = wrapper.read(BedrockTypes.UUID); // uuid
                         entityUniqueIds[i] = wrapper.read(BedrockTypes.VAR_LONG); // entity unique id
 
                         // Remap local player UUID: Bedrock server assigns a different UUID than the Java UUID generated during login
-                        if (entityTracker.getClientPlayer() != null
-                                && entityTracker.getClientPlayer().uniqueId() == entityUniqueIds[i]) {
+                        final boolean localPlayer = entityTracker.getClientPlayer() != null
+                                && entityTracker.getClientPlayer().uniqueId() == entityUniqueIds[i];
+                        if (localPlayer) {
                             // Capture the server-assigned UUID before overwriting it, so the PLAYER_SKIN handler
                             // (which only has the UUID, not the entityUniqueId) can recognise the local player.
                             entityTracker.getClientPlayer().setBedrockUuid(uuids[i]);
@@ -107,7 +109,12 @@ public class HudPackets {
                                 new GameProfile.Property("is_subclient", String.valueOf(isSubClient))
                         }); // properties
                         wrapper.write(Types.BOOLEAN, true); // listed
+                        wrapper.write(Types.VAR_INT, localPlayer ? packetSyncStorage.latencyMillis() : PacketSyncStorage.UNKNOWN_LATENCY); // latency
                         wrapper.write(Types.OPTIONAL_TAG, TextUtil.stringToNbt(names[i])); // display name
+
+                        if (localPlayer) {
+                            packetSyncStorage.markLatencyPublished(System.nanoTime());
+                        }
 
                         Via.getManager().getProviders().get(SkinProvider.class).setSkin(wrapper.user(), uuids[i], skin);
                     }

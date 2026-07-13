@@ -29,32 +29,70 @@ import com.viaversion.viaversion.protocols.v1_21_7to1_21_9.packet.ClientboundCon
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 
 public class PacketSyncStorage extends StoredObject {
 
+    public static final int UNKNOWN_LATENCY = -1;
+    static final long LATENCY_UPDATE_INTERVAL_NANOS = TimeUnit.SECONDS.toNanos(1L);
+
     private final AtomicInteger ID_COUNTER = new AtomicInteger(0);
-    private final Int2ObjectMap<Long> pendingNetworkStackLatencyResponses = new Int2ObjectOpenHashMap<>();
+    private final Int2ObjectMap<NetworkStackLatencyResponse> pendingNetworkStackLatencyResponses = new Int2ObjectOpenHashMap<>();
     private final Int2ObjectMap<Runnable> pendingActions = new Int2ObjectOpenHashMap<>();
+    private int latencyMillis = UNKNOWN_LATENCY;
+    private int lastPublishedLatencyMillis = UNKNOWN_LATENCY;
+    private long lastLatencyPublishNanos;
+    private boolean hasPublishedLatency;
 
     public PacketSyncStorage(final UserConnection user) {
         super(user);
     }
 
     public int addNetworkStackLatencyResponse(final long timestamp) {
+        return this.addNetworkStackLatencyResponse(timestamp, System.nanoTime());
+    }
+
+    int addNetworkStackLatencyResponse(final long timestamp, final long requestNanos) {
         if (ID_COUNTER.get() >= Short.MAX_VALUE) { // VB compatibility
             ID_COUNTER.set(0);
         }
         final int id = this.ID_COUNTER.getAndIncrement();
-        if (this.pendingNetworkStackLatencyResponses.put(id, Long.valueOf(timestamp)) != null) {
+        if (this.pendingNetworkStackLatencyResponses.put(id, new NetworkStackLatencyResponse(timestamp, requestNanos)) != null) {
             ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Overwrote pending network stack latency response with id " + id);
         }
         return id;
     }
 
-    public Long getNetworkStackLatencyResponse(final int id) {
+    public NetworkStackLatencyResponse getNetworkStackLatencyResponse(final int id) {
         return this.pendingNetworkStackLatencyResponses.remove(id);
+    }
+
+    public int updateLatency(final long clientLatencyNanos, final int serverTransportLatencyMillis) {
+        final long clientLatencyMillis = TimeUnit.NANOSECONDS.toMillis(Math.max(0L, clientLatencyNanos));
+        final long combinedLatencyMillis = clientLatencyMillis + Math.max(0, serverTransportLatencyMillis);
+        this.latencyMillis = (int) Math.min(Integer.MAX_VALUE, combinedLatencyMillis);
+        return this.latencyMillis;
+    }
+
+    public int latencyMillis() {
+        return this.latencyMillis;
+    }
+
+    public boolean shouldPublishLatency(final long nowNanos) {
+        if (this.latencyMillis == UNKNOWN_LATENCY || this.latencyMillis == this.lastPublishedLatencyMillis) {
+            return false;
+        }
+        return !this.hasPublishedLatency || nowNanos - this.lastLatencyPublishNanos >= LATENCY_UPDATE_INTERVAL_NANOS;
+    }
+
+    public void markLatencyPublished(final long nowNanos) {
+        if (this.latencyMillis == UNKNOWN_LATENCY) return;
+
+        this.lastPublishedLatencyMillis = this.latencyMillis;
+        this.lastLatencyPublishNanos = nowNanos;
+        this.hasPublishedLatency = true;
     }
 
     public void syncWithClient(final Runnable runnable) {
@@ -80,6 +118,9 @@ public class PacketSyncStorage extends StoredObject {
         } else {
             return false;
         }
+    }
+
+    public record NetworkStackLatencyResponse(long timestamp, long requestNanos) {
     }
 
 }

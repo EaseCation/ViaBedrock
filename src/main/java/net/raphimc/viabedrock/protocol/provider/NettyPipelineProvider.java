@@ -26,6 +26,16 @@ import javax.crypto.SecretKey;
 public abstract class NettyPipelineProvider implements Provider {
 
     /**
+     * Returns the transport RTT between the proxy and Bedrock server.
+     *
+     * @param user The user
+     * @return RTT in milliseconds, or {@code -1} when unavailable
+     */
+    public int getServerTransportLatencyMillis(final UserConnection user) {
+        return -1;
+    }
+
+    /**
      * Enables compression/decompression for the given user. May get called multiple times for the same user.
      *
      * @param user                          The user
