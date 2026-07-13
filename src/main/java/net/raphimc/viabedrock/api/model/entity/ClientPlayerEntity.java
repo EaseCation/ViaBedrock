@@ -196,6 +196,9 @@ public class ClientPlayerEntity extends PlayerEntity {
         final Position3f newPosition = new Position3f((float) x, (float) y + this.eyeOffset(), (float) z);
         final boolean newOnGround = (flags & MovePlayerFlag.ON_GROUND.getBit()) != 0;
 
+        if (this.rejectImmobilePosition(newPosition, null)) {
+            return;
+        }
         if (!this.preMove(newPosition, null, newOnGround)) {
             return;
         }
@@ -210,6 +213,9 @@ public class ClientPlayerEntity extends PlayerEntity {
         final Position3f newRotation = new Position3f(pitch, yaw, yaw);
         final boolean newOnGround = (flags & MovePlayerFlag.ON_GROUND.getBit()) != 0;
 
+        if (this.rejectImmobilePosition(newPosition, newRotation)) {
+            return;
+        }
         if (!this.preMove(newPosition, newRotation, newOnGround)) {
             return;
         }
@@ -283,6 +289,10 @@ public class ClientPlayerEntity extends PlayerEntity {
 
     public Set<PlayerAuthInputPacket_InputData> authInputData() {
         return this.authInputData;
+    }
+
+    private boolean isImmobile() {
+        return this.entityFlags().contains(ActorFlags.NOAI);
     }
 
     public void addAuthInputData(final PlayerAuthInputPacket_InputData data) {
@@ -617,6 +627,24 @@ public class ClientPlayerEntity extends PlayerEntity {
         }
 
         return false;
+    }
+
+    private boolean rejectImmobilePosition(final Position3f newPosition, final Position3f newRotation) {
+        if (!shouldRejectImmobilePosition(this.initiallySpawned, this.isImmobile(), this.position, newPosition)) {
+            return false;
+        }
+
+        if (newRotation != null) {
+            this.rotation = newRotation;
+        }
+        if (!this.waitingForPositionSync) {
+            this.beginPositionSync(Relative.ROTATION);
+        }
+        return true;
+    }
+
+    static boolean shouldRejectImmobilePosition(final boolean initiallySpawned, final boolean immobile, final Position3f currentPosition, final Position3f newPosition) {
+        return initiallySpawned && immobile && newPosition != null && !currentPosition.equals(newPosition);
     }
 
     /**

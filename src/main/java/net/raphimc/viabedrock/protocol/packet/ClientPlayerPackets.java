@@ -59,12 +59,44 @@ import net.raphimc.viabedrock.protocol.rewriter.neighbor.TrackerNeighborView;
 import net.raphimc.viabedrock.protocol.storage.*;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
+import java.util.EnumSet;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 import java.util.logging.Level;
 
 public class ClientPlayerPackets {
+
+    private static final Set<PlayerAuthInputPacket_InputData> IMMOBILE_MOVEMENT_INPUTS = EnumSet.of(
+            PlayerAuthInputPacket_InputData.Ascend,
+            PlayerAuthInputPacket_InputData.Descend,
+            PlayerAuthInputPacket_InputData.JumpDown,
+            PlayerAuthInputPacket_InputData.SprintDown,
+            PlayerAuthInputPacket_InputData.ChangeHeight,
+            PlayerAuthInputPacket_InputData.Jumping,
+            PlayerAuthInputPacket_InputData.AutoJumpingInWater,
+            PlayerAuthInputPacket_InputData.SneakDown,
+            PlayerAuthInputPacket_InputData.Up,
+            PlayerAuthInputPacket_InputData.Down,
+            PlayerAuthInputPacket_InputData.Left,
+            PlayerAuthInputPacket_InputData.Right,
+            PlayerAuthInputPacket_InputData.UpLeft,
+            PlayerAuthInputPacket_InputData.UpRight,
+            PlayerAuthInputPacket_InputData.WantUp,
+            PlayerAuthInputPacket_InputData.WantDown,
+            PlayerAuthInputPacket_InputData.WantDownSlow,
+            PlayerAuthInputPacket_InputData.WantUpSlow,
+            PlayerAuthInputPacket_InputData.Sprinting,
+            PlayerAuthInputPacket_InputData.AscendBlock,
+            PlayerAuthInputPacket_InputData.DescendBlock,
+            PlayerAuthInputPacket_InputData.DownLeft,
+            PlayerAuthInputPacket_InputData.DownRight,
+            PlayerAuthInputPacket_InputData.StartJumping,
+            PlayerAuthInputPacket_InputData.JumpPressedRaw,
+            PlayerAuthInputPacket_InputData.JumpCurrentRaw,
+            PlayerAuthInputPacket_InputData.SneakPressedRaw,
+            PlayerAuthInputPacket_InputData.SneakCurrentRaw
+    );
 
     private static final PacketHandler CLIENT_PLAYER_GAME_MODE_INFO_UPDATE = wrapper -> {
         final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
@@ -486,6 +518,7 @@ public class ClientPlayerPackets {
             final boolean prevOnGround = clientPlayer.prevOnGround();
             final Set<InputFlag> prevInputFlags = clientPlayer.prevInputFlags();
             clientPlayer.tick();
+            final boolean immobile = clientPlayer.entityFlags().contains(ActorFlags.NOAI);
 
             if (prevOnGround && clientPlayer.inputFlags().contains(InputFlag.JUMP)) {
                 clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StartJumping);
@@ -541,7 +574,9 @@ public class ClientPlayerPackets {
 
             final Position3f positionDelta = clientPlayer.position().subtract(prevPosition);
             final Position3f velocity;
-            if (!clientPlayer.isInitiallySpawned() || clientPlayer.dimensionChangeInfo() != null || clientPlayer.abilities().getBooleanValue(AbilitiesIndex.Flying)) {
+            if (immobile) {
+                velocity = Position3f.ZERO;
+            } else if (!clientPlayer.isInitiallySpawned() || clientPlayer.dimensionChangeInfo() != null || clientPlayer.abilities().getBooleanValue(AbilitiesIndex.Flying)) {
                 velocity = positionDelta;
             } else {
                 float dx = positionDelta.x() * 0.98F;
@@ -563,11 +598,16 @@ public class ClientPlayerPackets {
 
             final PlayerAuthInputContext authInputContext = new PlayerAuthInputContext(clientPlayer.position(), velocity);
             ExperimentalFeatures.dispatchPlayerAuthInput(wrapper.user(), clientPlayer, authInputContext);
+            if (immobile) {
+                removeImmobileMovementInput(clientPlayer.authInputData());
+                authInputContext.setPosition(clientPlayer.position());
+                authInputContext.setDelta(Position3f.ZERO);
+            }
 
             wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().x()); // pitch
             wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().y()); // yaw
             wrapper.write(BedrockTypes.POSITION_3F, authInputContext.position()); // position
-            wrapper.write(BedrockTypes.POSITION_2F, MathUtil.calculateMovementDirections(clientPlayer.authInputData(), clientPlayer.isSneaking())); // move vector
+            wrapper.write(BedrockTypes.POSITION_2F, immobile ? new Position2f(0F, 0F) : MathUtil.calculateMovementDirections(clientPlayer.authInputData(), clientPlayer.isSneaking())); // move vector
             wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().z()); // head yaw
             wrapper.write(BedrockTypes.UNSIGNED_VAR_BIG_INTEGER, EnumUtil.getBigBitmaskFromEnumSet(clientPlayer.authInputData(), PlayerAuthInputPacket_InputData::getValue)); // input flags
             wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, InputMode.Mouse.getValue()); // input mode
@@ -603,7 +643,7 @@ public class ClientPlayerPackets {
             }
             wrapper.write(BedrockTypes.POSITION_2F, new Position2f(0F, 0F)); // analog move vector
             wrapper.write(BedrockTypes.POSITION_3F, MathUtil.calculateCameraOrientation(clientPlayer.rotation().y(), clientPlayer.rotation().x())); // camera orientation
-            wrapper.write(BedrockTypes.POSITION_2F, MathUtil.calculateMovementDirections(clientPlayer.authInputData(), false)); // raw move vector
+            wrapper.write(BedrockTypes.POSITION_2F, immobile ? new Position2f(0F, 0F) : MathUtil.calculateMovementDirections(clientPlayer.authInputData(), false)); // raw move vector
 
             clientPlayer.authInputData().clear();
             clientPlayer.authInputBlockActions().clear();
@@ -661,5 +701,9 @@ public class ClientPlayerPackets {
                 clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.MissedSwing);
             }
         });
+    }
+
+    static void removeImmobileMovementInput(final Set<PlayerAuthInputPacket_InputData> inputData) {
+        inputData.removeAll(IMMOBILE_MOVEMENT_INPUTS);
     }
 }
