@@ -1,8 +1,8 @@
 # ViaBedrock Bedrock 盔甲 HUD 同步设计
 
-日期：2026-07-13  
-状态：设计已确认，等待实现  
-范围：ViaBedrock 本地源码、测试与构建；不发布、不部署、不操作服务
+- 日期：2026-07-13
+- 状态：设计已确认，等待实现
+- 范围：ViaBedrock 本地源码、测试与构建；不发布、不部署、不操作服务
 
 ## 1. 结论
 
@@ -264,4 +264,3 @@ git -C ViaBedrock diff --check
 - 最终 ViaProxy jar 静态证明包含 armor 属性同步逻辑。
 - 交付本地 jar 路径、SHA256、变更文件清单和手动验收步骤。
 - 没有 push、远端 CI、bbdev/生产部署或服务操作。
-
