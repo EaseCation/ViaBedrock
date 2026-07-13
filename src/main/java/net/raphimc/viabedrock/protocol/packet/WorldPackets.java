@@ -217,6 +217,7 @@ public class WorldPackets {
             chunkTracker.resetJavaChunkLoading();
             clientPlayer.sendPlayerPositionPacketToClient(Relative.NONE);
             clientPlayer.sendAttribute("minecraft:health"); // Java client always resets health on respawn, but Bedrock client keeps health when switching dimensions
+            wrapper.user().get(PlayerArmorHudTracker.class).forceSync();
             clientPlayer.sendEffects(); // Java client always resets effects on respawn. Resend them
             clientPlayer.setAbilities(clientPlayer.abilities()); // Java client always resets abilities on respawn. Resend them
 

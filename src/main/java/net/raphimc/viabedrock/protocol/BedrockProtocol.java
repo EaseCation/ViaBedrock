@@ -157,6 +157,7 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
         user.put(new PlayerListStorage());
         user.put(new ScoreboardTracker());
         user.put(new InventoryTracker(user));
+        user.put(new PlayerArmorHudTracker(user));
 
         if (ViaBedrock.getConfig().shouldEnableExperimentalFeatures()) {
             ExperimentalFeatures.registerStorages(user);

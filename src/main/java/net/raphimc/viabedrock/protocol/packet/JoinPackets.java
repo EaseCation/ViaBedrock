@@ -444,6 +444,7 @@ public class JoinPackets {
                     itemDefinitions.addFromNetworkTag(itemEntry.identifier(), itemEntry.componentData());
                 }
             }
+            wrapper.user().get(PlayerArmorHudTracker.class).markDirty();
         });
         protocol.registerClientboundTransition(ClientboundBedrockPackets.AVAILABLE_ENTITY_IDENTIFIERS,
                 State.CONFIGURATION, (PacketHandler) PacketWrapper::cancel, // Bedrock client ignores entity identifiers before start game
@@ -630,6 +631,7 @@ public class JoinPackets {
         if (inventoryTracker != null) {
             PacketFactory.sendJavaContainerSetContent(user, inventoryTracker.getInventoryContainer());
         }
+        user.get(PlayerArmorHudTracker.class).forceSync();
         chunkTracker.sendCurrentCacheSettingsToJava();
 
         final PacketWrapper initializeBorder = PacketWrapper.create(ClientboundPackets26_1.INITIALIZE_BORDER, user);

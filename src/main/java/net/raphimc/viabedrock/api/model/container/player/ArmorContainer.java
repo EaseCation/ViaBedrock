@@ -20,8 +20,12 @@ package net.raphimc.viabedrock.api.model.container.player;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
+import net.raphimc.viabedrock.protocol.model.BedrockItem;
+import net.raphimc.viabedrock.protocol.storage.PlayerArmorHudTracker;
 
 public class ArmorContainer extends InventorySubContainer {
+
+    private boolean batchUpdate;
 
     public ArmorContainer(final UserConnection user) {
         super(user, (byte) ContainerID.CONTAINER_ID_ARMOR.getValue(), ContainerType.ARMOR, 4);
@@ -30,6 +34,41 @@ public class ArmorContainer extends InventorySubContainer {
     @Override
     public int javaSlot(final int slot) {
         return 5 + slot;
+    }
+
+    @Override
+    public boolean setItems(final BedrockItem[] items) {
+        this.batchUpdate = true;
+        final boolean result;
+        try {
+            result = super.setItems(items);
+        } finally {
+            this.batchUpdate = false;
+        }
+        if (result) {
+            this.notifyArmorChanged();
+        }
+        return result;
+    }
+
+    @Override
+    public void clearItems() {
+        super.clearItems();
+        this.notifyArmorChanged();
+    }
+
+    @Override
+    protected void onSlotChanged(final int slot, final BedrockItem oldItem, final BedrockItem newItem) {
+        if (!this.batchUpdate) {
+            this.notifyArmorChanged();
+        }
+    }
+
+    private void notifyArmorChanged() {
+        final PlayerArmorHudTracker armorHudTracker = this.user.get(PlayerArmorHudTracker.class);
+        if (armorHudTracker != null) {
+            armorHudTracker.markDirty();
+        }
     }
 
 }

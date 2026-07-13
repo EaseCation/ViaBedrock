@@ -155,6 +155,7 @@ public class ClientPlayerPackets {
                         wrapper.write(Types.BYTE, (byte) (RespawnKeepFlag.ATTRIBUTE_MODIFIERS.getBit() | RespawnKeepFlag.ENTITY_DATA.getBit())); // keep data mask
                         wrapper.send(BedrockProtocol.class);
                         clientPlayer.sendAttribute("minecraft:health"); // Ensure health is synced
+                        wrapper.user().get(PlayerArmorHudTracker.class).forceSync();
                         clientPlayer.setAbilities(clientPlayer.abilities()); // Java client always resets abilities on respawn. Resend them
                         chunkTracker.resetJavaChunkLoading();
                         clientPlayer.setDimensionChangeInfo(null);

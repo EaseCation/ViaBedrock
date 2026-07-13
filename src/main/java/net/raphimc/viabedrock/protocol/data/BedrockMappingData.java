@@ -120,6 +120,7 @@ public class BedrockMappingData extends MappingDataBase {
     private Set<String> bedrockBlockItems;
     private Set<String> bedrockMetaItems;
     private Map<String, Set<String>> bedrockItemTags;
+    private Map<String, Integer> bedrockArmorProtection;
     private Map<String, String> bedrockCustomItemTags;
     private Map<String, Map<BlockState, JavaItemMapping>> bedrockToJavaBlockItems;
     private Map<String, Map<Integer, JavaItemMapping>> bedrockToJavaMetaItems;
@@ -465,6 +466,26 @@ public class BedrockMappingData extends MappingDataBase {
                     if (!this.bedrockItemTags.get(bedrockIdentifier).add(tagName)) {
                         throw new RuntimeException("Duplicate bedrock item tag " + tagName + " for " + bedrockIdentifier);
                     }
+                }
+            }
+
+            final JsonObject bedrockArmorProtectionJson = this.readJson("bedrock/armor_protection.json");
+            this.bedrockArmorProtection = new HashMap<>(bedrockArmorProtectionJson.size());
+            for (Map.Entry<String, JsonElement> entry : bedrockArmorProtectionJson.entrySet()) {
+                final String bedrockIdentifier = entry.getKey();
+                if (!bedrockItems.contains(bedrockIdentifier)) {
+                    throw new RuntimeException("Unknown bedrock armor item: " + bedrockIdentifier);
+                }
+                final JsonElement protectionJson = entry.getValue();
+                if (!protectionJson.isJsonPrimitive() || !protectionJson.getAsJsonPrimitive().isNumber()) {
+                    throw new RuntimeException("Invalid bedrock armor protection for " + bedrockIdentifier + ": " + protectionJson);
+                }
+                final double protectionValue = protectionJson.getAsDouble();
+                if (!Double.isFinite(protectionValue) || protectionValue < 0D || protectionValue > Integer.MAX_VALUE || protectionValue != Math.rint(protectionValue)) {
+                    throw new RuntimeException("Invalid bedrock armor protection for " + bedrockIdentifier + ": " + protectionJson);
+                }
+                if (this.bedrockArmorProtection.put(bedrockIdentifier, (int) protectionValue) != null) {
+                    throw new RuntimeException("Duplicate bedrock armor protection for " + bedrockIdentifier);
                 }
             }
 
@@ -1194,6 +1215,10 @@ public class BedrockMappingData extends MappingDataBase {
 
     public Map<String, Set<String>> getBedrockItemTags() {
         return this.bedrockItemTags;
+    }
+
+    public Map<String, Integer> getBedrockArmorProtection() {
+        return this.bedrockArmorProtection;
     }
 
     public Map<String, String> getBedrockCustomItemTags() {

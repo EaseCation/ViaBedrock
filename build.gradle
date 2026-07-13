@@ -64,6 +64,7 @@ dependencies {
     testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:6.0.3"
     testRuntimeOnly "org.junit.platform:junit-platform-launcher:6.0.3"
     testRuntimeOnly "com.google.guava:guava:33.6.0-jre"
+    testRuntimeOnly "io.netty:netty-transport:4.2.14.Final"
 
     api("io.netty:netty-codec-http:4.2.14.Final") {
         transitive = false
