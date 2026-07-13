@@ -42,9 +42,11 @@ import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.AuthenticationType;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketCompressionAlgorithm;
+import net.raphimc.viabedrock.protocol.model.JavaSkinData;
 import net.raphimc.viabedrock.protocol.provider.NettyPipelineProvider;
 import net.raphimc.viabedrock.protocol.provider.SkinProvider;
 import net.raphimc.viabedrock.protocol.storage.AuthData;
+import net.raphimc.viabedrock.protocol.storage.ExternalJavaSkinStorage;
 import net.raphimc.viabedrock.protocol.storage.HandshakeStorage;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
@@ -62,6 +64,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Function;
 
 public class LoginPackets {
 
@@ -259,9 +263,31 @@ public class LoginPackets {
         }
         if (authData.getSkinJwt() == null) {
             final int skinFetchTimeout = ViaBedrock.getConfig().getJavaSkinFetchTimeout();
-            if (skinFetchTimeout > 0 && javaUuid != null && javaUuid.version() == 4) {
-                authData.setJavaSkinFuture(Via.getManager().getProviders().get(SkinProvider.class).fetchJavaSkinAsync(javaUuid));
-            }
+            configureJavaSkinFuture(
+                    authData,
+                    user.get(ExternalJavaSkinStorage.class),
+                    skinFetchTimeout,
+                    javaUuid,
+                    uuid -> Via.getManager().getProviders().get(SkinProvider.class).fetchJavaSkinAsync(uuid));
+        }
+    }
+
+    static void configureJavaSkinFuture(
+            final AuthData authData,
+            final ExternalJavaSkinStorage externalSkin,
+            final int mojangFetchTimeoutMs,
+            final UUID javaUuid,
+            final Function<UUID, CompletableFuture<JavaSkinData>> mojangFetcher) {
+        if (externalSkin != null) {
+            authData.setJavaSkinFuture(externalSkin.future());
+            authData.setExternalJavaSkinSource(externalSkin.source());
+            authData.setJavaSkinWaitTimeoutMs(externalSkin.waitTimeoutMs());
+            return;
+        }
+        if (mojangFetchTimeoutMs > 0 && javaUuid != null && javaUuid.version() == 4) {
+            authData.setJavaSkinFuture(mojangFetcher.apply(javaUuid));
+            authData.setExternalJavaSkinSource(null);
+            authData.setJavaSkinWaitTimeoutMs(mojangFetchTimeoutMs);
         }
     }
 

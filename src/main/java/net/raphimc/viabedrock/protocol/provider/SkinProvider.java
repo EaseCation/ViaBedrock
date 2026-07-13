@@ -57,6 +57,7 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
@@ -200,42 +201,31 @@ public class SkinProvider implements Provider {
 
         // Try to apply Java Edition skin from async fetch result
         if (authData.getJavaSkinFuture() != null) {
-            final int timeout = ViaBedrock.getConfig().getJavaSkinFetchTimeout();
+            final int timeout = authData.getJavaSkinWaitTimeoutMs() > 0
+                    ? authData.getJavaSkinWaitTimeoutMs()
+                    : ViaBedrock.getConfig().getJavaSkinFetchTimeout();
             JavaSkinData result = null;
             try {
-                result = authData.getJavaSkinFuture().get(timeout, TimeUnit.MILLISECONDS);
+                result = awaitJavaSkin(
+                        authData.getJavaSkinFuture(),
+                        timeout,
+                        authData.getExternalJavaSkinSource() == null);
             } catch (TimeoutException e) {
                 ViaBedrock.getPlatform().getLogger().warning(
                         "Java skin fetch timed out after " + timeout + "ms for "
                                 + user.getProtocolInfo().getUsername() + ", using Steve skin");
-                authData.getJavaSkinFuture().cancel(true);
             } catch (Exception e) {
                 ViaBedrock.getPlatform().getLogger().warning(
-                        "Failed to fetch Java skin for "
-                                + user.getProtocolInfo().getUsername() + ": " + e.getMessage());
+                        "Failed to fetch Java skin for " + user.getProtocolInfo().getUsername()
+                                + "; using Steve skin");
             }
 
-            if (result != null && result.skin() != null) {
+            if (result != null) {
                 ViaBedrock.getPlatform().getLogger().info(
                         "Using Java skin for " + user.getProtocolInfo().getUsername()
                                 + " (" + result.skin().getWidth() + "x" + result.skin().getHeight()
                                 + ", " + (result.slim() ? "slim" : "wide") + ")");
-
-                claims.put("SkinData", Base64.getEncoder().encodeToString(ImageType.getImageData(result.skin())));
-                claims.put("SkinImageWidth", result.skin().getWidth());
-                claims.put("SkinImageHeight", result.skin().getHeight());
-                claims.put("ArmSize", result.slim() ? "slim" : "wide");
-
-                final String geoName = result.slim() ? "geometry.humanoid.customSlim" : "geometry.humanoid.custom";
-                claims.put("SkinResourcePatch", Base64.getEncoder().encodeToString(
-                        ("{\"geometry\":{\"default\":\"" + geoName + "\"}}").getBytes(StandardCharsets.UTF_8)));
-
-                if (result.cape() != null) {
-                    claims.put("CapeData", Base64.getEncoder().encodeToString(ImageType.getImageData(result.cape())));
-                    claims.put("CapeImageWidth", result.cape().getWidth());
-                    claims.put("CapeImageHeight", result.cape().getHeight());
-                    claims.put("CapeId", UUID.randomUUID().toString());
-                }
+                applyJavaSkinClaims(claims, result);
             }
         }
 
@@ -285,6 +275,39 @@ public class SkinProvider implements Provider {
         }
 
         return claims;
+    }
+
+    static JavaSkinData awaitJavaSkin(
+            final CompletableFuture<JavaSkinData> future,
+            final int timeoutMs,
+            final boolean cancelOnTimeout
+    ) throws InterruptedException, ExecutionException, TimeoutException {
+        try {
+            return future.get(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            if (cancelOnTimeout) {
+                future.cancel(true);
+            }
+            throw e;
+        }
+    }
+
+    static void applyJavaSkinClaims(final Map<String, Object> claims, final JavaSkinData result) {
+        claims.put("SkinData", Base64.getEncoder().encodeToString(ImageType.getImageData(result.skin())));
+        claims.put("SkinImageWidth", result.skin().getWidth());
+        claims.put("SkinImageHeight", result.skin().getHeight());
+        claims.put("ArmSize", result.slim() ? "slim" : "wide");
+
+        final String geoName = result.slim() ? "geometry.humanoid.customSlim" : "geometry.humanoid.custom";
+        claims.put("SkinResourcePatch", Base64.getEncoder().encodeToString(
+                ("{\"geometry\":{\"default\":\"" + geoName + "\"}}").getBytes(StandardCharsets.UTF_8)));
+
+        if (result.cape() != null) {
+            claims.put("CapeData", Base64.getEncoder().encodeToString(ImageType.getImageData(result.cape())));
+            claims.put("CapeImageWidth", result.cape().getWidth());
+            claims.put("CapeImageHeight", result.cape().getHeight());
+            claims.put("CapeId", UUID.randomUUID().toString());
+        }
     }
 
     private static String computeHmacSha256(final String secret, final String data) {
