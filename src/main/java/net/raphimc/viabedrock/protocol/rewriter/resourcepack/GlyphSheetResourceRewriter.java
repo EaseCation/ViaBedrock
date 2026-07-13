@@ -53,7 +53,7 @@ public class GlyphSheetResourceRewriter implements ResourcePackRewriter.Rewriter
                 providers.add(glyphPage);
                 glyphPage.addProperty("type", "bitmap");
                 glyphPage.addProperty("file", "viabedrock:" + javaPath);
-                glyphPage.addProperty("ascent", glyphHeight / 2 + 5);
+                glyphPage.addProperty("ascent", glyphHeight / 2 + 3);
                 glyphPage.addProperty("height", glyphHeight);
                 final JsonArray chars = new JsonArray();
                 glyphPage.add("chars", chars);
