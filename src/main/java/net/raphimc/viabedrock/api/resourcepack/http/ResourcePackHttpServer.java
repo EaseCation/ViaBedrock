@@ -189,6 +189,11 @@ public class ResourcePackHttpServer {
         }
     }
 
+    public String getArtifactUrl(final String hash) {
+        final String baseUrl = this.getUrl();
+        return (baseUrl.endsWith("/") ? baseUrl : baseUrl + "/") + "packs/" + hash + ".zip";
+    }
+
     public Channel getChannel() {
         return this.channelFuture.channel();
     }

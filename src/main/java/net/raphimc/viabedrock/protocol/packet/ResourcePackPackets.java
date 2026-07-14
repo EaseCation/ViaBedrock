@@ -102,20 +102,29 @@ public class ResourcePackPackets {
                         final String cacheKey = JavaPackCache.computeCacheKey(keys, supportsFreeRotation);
                         final JavaPackCache cache = ViaBedrock.getJavaPackCache();
 
-                        final UUID httpToken = UUID.randomUUID();
-                        ViaBedrock.getResourcePackServer().addConnection(httpToken, wrapper.user(), cacheKey);
-
                         String cachedHash = "";
                         try {
-                            if (cache != null && cache.has(cacheKey)) {
-                                cachedHash = cache.getHash(cacheKey);
+                            if (cache != null) {
+                                final String validHash = cache.getValidHash(cacheKey);
+                                if (validHash != null) {
+                                    cachedHash = validHash;
+                                }
                             }
                         } catch (Throwable e) {
                             ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to read java pack cache", e);
                         }
 
+                        final String resourcePackUrl;
+                        if (!cachedHash.isEmpty()) {
+                            resourcePackUrl = ViaBedrock.getResourcePackServer().getArtifactUrl(cachedHash);
+                        } else {
+                            final UUID httpToken = UUID.randomUUID();
+                            ViaBedrock.getResourcePackServer().addConnection(httpToken, wrapper.user(), cacheKey);
+                            resourcePackUrl = ViaBedrock.getResourcePackServer().getUrl() + "?token=" + httpToken;
+                        }
+
                         wrapper.write(Types.UUID, UUID.nameUUIDFromBytes(cacheKey.getBytes(StandardCharsets.UTF_8))); // id
-                        wrapper.write(Types.STRING, ViaBedrock.getResourcePackServer().getUrl() + "?token=" + httpToken); // url
+                        wrapper.write(Types.STRING, resourcePackUrl); // url
                         wrapper.write(Types.STRING, cachedHash); // hash
                         wrapper.write(Types.BOOLEAN, false); // required
                         wrapper.write(Types.OPTIONAL_TAG, TextUtil.stringToNbt(
