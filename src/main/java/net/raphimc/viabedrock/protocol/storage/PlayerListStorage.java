@@ -21,18 +21,23 @@ import com.viaversion.viaversion.api.connection.StorableObject;
 import com.viaversion.viaversion.util.Pair;
 
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 
 public class PlayerListStorage implements StorableObject {
 
     private final Map<UUID, Pair<Long, String>> playerList = new HashMap<>();
+    private final Map<UUID, Integer> serverLatencies = new HashMap<>();
+    private final Map<UUID, Integer> publishedLatencies = new HashMap<>();
+    private boolean invalidLatencyPayloadLogged;
 
     public Pair<Long, String> addPlayer(final UUID uuid, final long entityUniqueId, final String name) {
         return this.playerList.put(uuid, new Pair<>(entityUniqueId, name));
     }
 
     public Pair<Long, String> removePlayer(final UUID uuid) {
+        this.publishedLatencies.remove(uuid);
         return this.playerList.remove(uuid);
     }
 
@@ -52,6 +57,41 @@ public class PlayerListStorage implements StorableObject {
         }
 
         return null;
+    }
+
+    public int serverLatency(final UUID uuid) {
+        return this.serverLatencies.getOrDefault(uuid, PacketSyncStorage.UNKNOWN_LATENCY);
+    }
+
+    public Map<UUID, Integer> replaceServerLatencies(final Map<UUID, Integer> latencies, final UUID localPlayerUuid) {
+        this.serverLatencies.clear();
+        this.serverLatencies.putAll(latencies);
+
+        final Map<UUID, Integer> updates = new LinkedHashMap<>();
+        for (UUID uuid : this.playerList.keySet()) {
+            if (uuid.equals(localPlayerUuid)) continue;
+
+            final int latency = this.serverLatency(uuid);
+            if (this.publishedLatencies.getOrDefault(uuid, PacketSyncStorage.UNKNOWN_LATENCY) != latency) {
+                updates.put(uuid, latency);
+            }
+        }
+        return updates;
+    }
+
+    public void markLatencyPublished(final UUID uuid, final int latency) {
+        this.publishedLatencies.put(uuid, latency);
+    }
+
+    public void markLatenciesPublished(final Map<UUID, Integer> latencies) {
+        this.publishedLatencies.putAll(latencies);
+    }
+
+    public boolean markInvalidLatencyPayloadLogged() {
+        if (this.invalidLatencyPayloadLogged) return false;
+
+        this.invalidLatencyPayloadLogged = true;
+        return true;
     }
 
 }

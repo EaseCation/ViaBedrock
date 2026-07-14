@@ -41,21 +41,32 @@ import net.raphimc.viabedrock.protocol.model.Position3f;
 import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
+import java.util.Map;
 import java.util.UUID;
 
 public class PacketFactory {
 
     public static PacketWrapper createJavaPlayerLatencyUpdate(final UserConnection user, final UUID uuid, final int latencyMillis) {
+        return createJavaPlayerLatencyUpdate(user, Map.of(uuid, latencyMillis));
+    }
+
+    public static PacketWrapper createJavaPlayerLatencyUpdate(final UserConnection user, final Map<UUID, Integer> latencies) {
         final PacketWrapper playerInfoUpdate = PacketWrapper.create(ClientboundPackets26_1.PLAYER_INFO_UPDATE, user);
-        writeJavaPlayerLatencyUpdate(playerInfoUpdate, uuid, latencyMillis);
+        writeJavaPlayerLatencyUpdate(playerInfoUpdate, latencies);
         return playerInfoUpdate;
     }
 
     static void writeJavaPlayerLatencyUpdate(final PacketWrapper playerInfoUpdate, final UUID uuid, final int latencyMillis) {
+        writeJavaPlayerLatencyUpdate(playerInfoUpdate, Map.of(uuid, latencyMillis));
+    }
+
+    static void writeJavaPlayerLatencyUpdate(final PacketWrapper playerInfoUpdate, final Map<UUID, Integer> latencies) {
         playerInfoUpdate.write(Types.PROFILE_ACTIONS_ENUM1_21_4, BitSets.create(8, PlayerInfoUpdateAction.UPDATE_LATENCY)); // actions
-        playerInfoUpdate.write(Types.VAR_INT, 1); // length
-        playerInfoUpdate.write(Types.UUID, uuid); // uuid
-        playerInfoUpdate.write(Types.VAR_INT, latencyMillis); // latency
+        playerInfoUpdate.write(Types.VAR_INT, latencies.size()); // length
+        for (Map.Entry<UUID, Integer> entry : latencies.entrySet()) {
+            playerInfoUpdate.write(Types.UUID, entry.getKey()); // uuid
+            playerInfoUpdate.write(Types.VAR_INT, entry.getValue()); // latency
+        }
     }
 
     public static void sendJavaSystemChat(final UserConnection user, final Tag message) {

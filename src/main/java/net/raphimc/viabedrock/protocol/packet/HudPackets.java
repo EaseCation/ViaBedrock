@@ -109,11 +109,14 @@ public class HudPackets {
                                 new GameProfile.Property("is_subclient", String.valueOf(isSubClient))
                         }); // properties
                         wrapper.write(Types.BOOLEAN, true); // listed
-                        wrapper.write(Types.VAR_INT, localPlayer ? packetSyncStorage.latencyMillis() : PacketSyncStorage.UNKNOWN_LATENCY); // latency
+                        final int latency = localPlayer ? packetSyncStorage.latencyMillis() : playerListStorage.serverLatency(uuids[i]);
+                        wrapper.write(Types.VAR_INT, latency); // latency
                         wrapper.write(Types.OPTIONAL_TAG, TextUtil.stringToNbt(names[i])); // display name
 
                         if (localPlayer) {
                             packetSyncStorage.markLatencyPublished(System.nanoTime());
+                        } else {
+                            playerListStorage.markLatencyPublished(uuids[i], latency);
                         }
 
                         Via.getManager().getProviders().get(SkinProvider.class).setSkin(wrapper.user(), uuids[i], skin);
