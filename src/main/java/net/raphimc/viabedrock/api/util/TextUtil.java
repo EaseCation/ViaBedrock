@@ -114,6 +114,13 @@ public class TextUtil {
         return ProtocolConstants.JAVA_TEXT_COMPONENT_SERIALIZER.serializeNbtTree(textComponent);
     }
 
+    /**
+     * Parses the Java 1.21.8 JSON text component format and serializes it for the current Java target.
+     */
+    public static Tag javaTellrawJsonToNbt(final String json) {
+        return textComponentToNbt(ProtocolConstants.JAVA_TELLRAW_SERIALIZER.toComponent(json));
+    }
+
     public static TextComponent stringToTextComponent(final String text) {
         final TextComponent textComponent = LegacyStringDeserializer.parse(appendFormattingCodesAfterColorCode(text), TextFormatting.COLOR_CHAR, ResetTrackingStyle::new, BEDROCK_FORMATTING_RESOLVER);
         final AtomicBoolean wasReset = new AtomicBoolean(false);

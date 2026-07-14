@@ -23,6 +23,7 @@ import com.viaversion.viaversion.api.protocol.Protocol;
 import com.viaversion.viaversion.api.protocol.version.ProtocolVersion;
 import com.viaversion.viaversion.libs.mcstructs.text.serializer.TextComponentCodec;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.Protocol1_21_11To26_1;
+import com.viaversion.viaversion.util.SerializerVersion;
 
 public class ProtocolConstants {
 
@@ -30,6 +31,9 @@ public class ProtocolConstants {
     public static final Class<? extends Protocol<?, ?, ?, ?>> JAVA_PROTOCOL_CLASS = Protocol1_21_11To26_1.class;
     public static final int JAVA_PACK_VERSION = 84;
     public static final TextComponentCodec JAVA_TEXT_COMPONENT_SERIALIZER = TextComponentCodec.V26_1;
+    public static final SerializerVersion JAVA_TELLRAW_SERIALIZER = SerializerVersion.V1_21_6;
+    public static final String JAVA_TELLRAW_MAGIC_HEADER = "EC_JAVA_TELLRAW_V1:";
+    public static final int JAVA_TELLRAW_MAX_WIRE_BYTES = 32 * 1024;
     public static final int JAVA_AIR_ID = 0;
 
     public static final String BEDROCK_VERSION_NAME = "1.26.20";
