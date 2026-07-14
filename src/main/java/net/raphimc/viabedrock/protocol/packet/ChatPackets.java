@@ -17,6 +17,7 @@
  */
 package net.raphimc.viabedrock.protocol.packet;
 
+import com.google.common.base.Utf8;
 import com.google.common.collect.Sets;
 import com.mojang.brigadier.suggestion.Suggestion;
 import com.mojang.brigadier.suggestion.Suggestions;
@@ -99,6 +100,7 @@ public class ChatPackets {
 
                     final Function<String, String> translator = wrapper.user().get(ResourcePackStorage.class).getTexts().lookup();
                     String originalMessage = null;
+                    boolean javaTellrawMessage = false;
                     try {
                         switch (type) {
                             case chat, whisper, announcement -> {
@@ -133,7 +135,18 @@ public class ChatPackets {
                             }
                             case raw, systemMessage, tip -> {
                                 String message = originalMessage = wrapper.read(BedrockTypes.STRING); // message
-                                if (localize) {
+                                if (type == TextPacketType.raw && message.startsWith(ProtocolConstants.JAVA_TELLRAW_MAGIC_HEADER)) {
+                                    javaTellrawMessage = true;
+                                    final int wireSize = Utf8.encodedLength(message);
+                                    if (wireSize > ProtocolConstants.JAVA_TELLRAW_MAX_WIRE_BYTES) {
+                                        throw new IllegalArgumentException("Java tellraw envelope exceeds " + ProtocolConstants.JAVA_TELLRAW_MAX_WIRE_BYTES + " UTF-8 bytes: " + wireSize);
+                                    }
+
+                                    final String json = message.substring(ProtocolConstants.JAVA_TELLRAW_MAGIC_HEADER.length());
+                                    wrapper.write(Types.TAG, TextUtil.javaTellrawJsonToNbt(json));
+                                    wrapper.write(Types.BOOLEAN, false); // overlay
+                                    break;
+                                } else if (localize) {
                                     message = BedrockTranslator.translate(message, translator, new Object[0]);
                                 }
 
@@ -153,7 +166,11 @@ public class ChatPackets {
                             default -> throw new IllegalStateException("Unhandled TextPacketType: " + type);
                         }
                     } catch (Throwable e) { // Bedrock client silently ignores errors
-                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error while translating '" + originalMessage + "'", e);
+                        if (javaTellrawMessage) {
+                            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error while parsing Java tellraw message", e);
+                        } else {
+                            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error while translating '" + originalMessage + "'", e);
+                        }
                         wrapper.cancel();
                     }
                 });
