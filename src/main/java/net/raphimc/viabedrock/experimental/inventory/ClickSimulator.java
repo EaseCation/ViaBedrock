@@ -19,20 +19,16 @@ package net.raphimc.viabedrock.experimental.inventory;
 
 import com.viaversion.nbt.tag.CompoundTag;
 import com.viaversion.nbt.tag.IntArrayTag;
-import com.viaversion.viaversion.api.Via;
 import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
 import com.viaversion.viaversion.api.minecraft.item.HashedItem;
 import com.viaversion.viaversion.api.minecraft.item.Item;
 import com.viaversion.viaversion.api.minecraft.item.data.Equippable;
-import com.viaversion.viaversion.api.protocol.Protocol;
-import com.viaversion.viaversion.data.item.ItemHasherBase;
 import net.raphimc.viabedrock.api.model.container.Container;
 import net.raphimc.viabedrock.api.model.container.CraftingTableContainer;
 import net.raphimc.viabedrock.experimental.inventory.SlotMapper.BedrockSlotRef;
 import net.raphimc.viabedrock.experimental.model.inventory.InventoryActionData;
 import net.raphimc.viabedrock.experimental.model.inventory.InventorySource;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
-import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventorySourceType;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventorySource_InventorySourceFlags;
@@ -227,14 +223,11 @@ public class ClickSimulator {
             return null;
         }
 
-        final Protocol<?, ?, ?, ?> javaProtocol = Via.getManager().getProtocolManager()
-                .getProtocol(ProtocolConstants.JAVA_PROTOCOL_CLASS);
-        if (javaProtocol == null) return null;
-
-        final ItemHasherBase itemHasher = new ItemHasherBase(javaProtocol, tracker.user());
+        final JavaItemHasher itemHasher = JavaItemHasher.forConnection(tracker.user());
+        if (itemHasher == null) return null;
         final ItemRewriter itemRewriter = tracker.user().get(ItemRewriter.class);
         final BedrockItem cursorItem = SlotMapper.getCursorItem(tracker);
-        final HashedItem expectedCarried = itemHasher.toHashedItem(itemRewriter.javaItem(cursorItem.copy()), true);
+        final HashedItem expectedCarried = itemHasher.toHashedItem(itemRewriter.javaItem(cursorItem.copy()));
         if (!sameHashedItem(expectedCarried, carriedItem)) return null;
 
         final BedrockSlotRef sourceRef = SlotMapper.resolvePlayerInventory(javaSlot, tracker);
@@ -267,7 +260,7 @@ public class ClickSimulator {
             return simulateQuickMove(0, javaSlot, tracker);
         }
 
-        final HashedItem expectedSource = itemHasher.toHashedItem(javaSourceItem, true);
+        final HashedItem expectedSource = itemHasher.toHashedItem(javaSourceItem);
         if (expectedSource.isEmpty()) return null;
         if (equipmentTarget != -1 && (!isPredictedEquipmentTarget(javaSlot, equipmentTarget)
                 || equipmentTarget != expectedEquipmentSlot)) {

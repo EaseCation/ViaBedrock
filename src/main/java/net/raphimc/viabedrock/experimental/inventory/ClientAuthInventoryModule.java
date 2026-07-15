@@ -27,6 +27,7 @@ import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ServerboundPackets26_1;
 import com.viaversion.viaversion.util.Limit;
+import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.model.container.Container;
 import net.raphimc.viabedrock.api.model.container.CraftingTableContainer;
 import net.raphimc.viabedrock.api.util.PacketFactory;
@@ -55,6 +56,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
+import java.util.logging.Level;
 
 public class ClientAuthInventoryModule implements FeatureModule {
 
@@ -147,8 +151,10 @@ public class ClientAuthInventoryModule implements FeatureModule {
             }
 
             final DragState dragState = wrapper.user().get(DragState.class);
-            final List<InventoryActionData> actions = validPrediction ? ClickSimulator.simulate(
-                    containerId, slot, button, action, inventoryTracker, dragState, changedSlots, carriedItem) : null;
+            final List<InventoryActionData> actions = validPrediction ? runOrRollback(
+                    () -> ClickSimulator.simulate(containerId, slot, button, action, inventoryTracker, dragState, changedSlots, carriedItem),
+                    error -> ViaBedrock.getPlatform().getLogger().log(Level.WARNING,
+                            "Failed to simulate Java container click; rolling back to the authoritative inventory", error)) : null;
 
             if (actions == null) {
                 // Unsupported operation — roll back container contents to the authoritative mirror
@@ -191,6 +197,15 @@ public class ClientAuthInventoryModule implements FeatureModule {
             updateCraftingOutputPreview(wrapper.user());
             // NOTE: real Bedrock clients never send an InventoryMismatch after a normal transaction.
         });
+    }
+
+    static <T> T runOrRollback(final Supplier<T> simulation, final Consumer<RuntimeException> failureHandler) {
+        try {
+            return simulation.get();
+        } catch (final RuntimeException e) {
+            failureHandler.accept(e);
+            return null;
+        }
     }
 
     private static final int HUD_OUTPUT_SLOT = 50;
