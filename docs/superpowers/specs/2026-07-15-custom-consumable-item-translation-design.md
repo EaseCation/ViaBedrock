@@ -1,7 +1,7 @@
 # ViaBedrock 自定义可消耗物品翻译设计
 
 - 日期：2026-07-15
-- 状态：设计已确认，待实现
+- 状态：设计已确认，实现中
 - worktree：`/home/ec/workspace/worktrees/viabedrock-custom-consumables/ViaProxyWorkspace`
 - 分支：ViaProxyWorkspace 与 ViaBedrock 均使用 `fix/custom-consumable-items`
 - 范围：ViaBedrock 源码、测试与本地构建；不修改 CodeFunCore/Nukkit/BedrockLoader，不推送、不部署、不重启服务
@@ -131,7 +131,13 @@ Bedrock `ITEM_REGISTRY` 中的组件是 gameplay 使用语义的权威来源。�
 - eat 显示粒子，drink 不显示粒子。
 - consume effects 为空数组，由 Bedrock 服务端执行效果。
 
-不添加 Java `FOOD` 或本地药水效果组件，避免 Java 端抢占 gameplay 权威。现有最大堆叠数量由载体和服务端库存同步保持。
+同时附加数值为零的 `StructuredDataKey.FOOD1_21_2` 兼容组件：
+
+- `nutrition = 0`。
+- `saturationModifier = 0`。
+- `canAlwaysEat = true`。
+
+这是 ViaVersion 向 1.21 及更旧 Java 协议降级所需的触发组件：降级器只有看到 `FOOD1_21_2` 时，才会把 `CONSUMABLE1_21_2` 的使用时长转换为旧版 `FOOD1_21`。零营养、零饱和度且无本地效果不会接管 gameplay；Nukkit 仍负责效果、扣除和残留物。现有最大堆叠数量由载体和服务端库存同步保持。
 
 所有使用 `minecraft:paper` fallback 的自定义物品还必须附加 `StructuredDataKey.CUSTOM_DATA`，写入私有键 `viabedrock:bedrock_identifier`。该值使用 Item Registry 中的完整 namespaced identifier，例如 `easecation:stackable_potion_heal`。
 
@@ -203,6 +209,7 @@ ItemUseDefinition
 - 明确 Java mapping 或 BedrockLoader custom item ID 路径不添加 paper fallback 身份标记。
 - drink 生成 animation type 2、1.6 秒、drink sound、无粒子、无本地效果。
 - eat 生成 animation type 1、eat sound和消费粒子。
+- consumable 同时生成零营养、零饱和度、`canAlwaysEat=true` 的兼容 FOOD 组件。
 - 非 consumable 自定义物品不附加 `CONSUMABLE`。
 - 自定义堆叠数量不因 consumable 注入变成 1。
 

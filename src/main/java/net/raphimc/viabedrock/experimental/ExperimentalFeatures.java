@@ -99,9 +99,6 @@ import java.util.logging.Level;
  */
 public class ExperimentalFeatures {
 
-    private static final int FOOD_USE_TICKS = 32;
-    private static final int DRINK_USE_TICKS = 32;
-    private static final int MILK_BUCKET_USE_TICKS = 32;
     private static final int CROSSBOW_CHARGE_TICKS = 23;
     private static final int CROSSBOW_AUTO_FINISH_TICKS = 40;
     private static final long FINISH_USE_RELEASE_DELAY_MS = 50L;
@@ -110,19 +107,6 @@ public class ExperimentalFeatures {
     private static final int AIR_USE_BLOCK_FACE = 255;
     private static final int AIR_USE_BLOCK_RUNTIME_ID = 0;
     private static final byte DEFAULT_COOLDOWN_STATE = 0;
-    private static final String FOOD_ITEM_TAG = "minecraft:is_food";
-    private static final Set<String> CONSUME_ON_RELEASE_ITEMS = Set.of(
-            "minecraft:potion",
-            "minecraft:milk_bucket"
-    );
-    private static final Set<String> RELEASE_ON_RELEASE_ITEMS = Set.of(
-            "minecraft:bow",
-            "minecraft:crossbow",
-            "minecraft:trident",
-            "minecraft:brush",
-            "minecraft:spyglass"
-    );
-
     private static final List<FeatureModule> MODULES = new ArrayList<>();
 
     private record ReleaseItemSnapshot(byte hotbarSlot, BedrockItem itemInHand, Position3f headPosition) {
@@ -294,40 +278,14 @@ public class ExperimentalFeatures {
 
     private static ItemReleaseInventoryTransaction_ActionType releaseActionForItem(final ItemRewriter itemRewriter, final BedrockItem item, final int usingTicks) {
         final String identifier = itemRewriter.bedrockIdentifier(item);
-        if (identifier == null) {
-            return ItemReleaseInventoryTransaction_ActionType.Release;
-        }
-        if (RELEASE_ON_RELEASE_ITEMS.contains(identifier)) {
-            return ItemReleaseInventoryTransaction_ActionType.Release;
-        }
-        final Set<String> itemTags = BedrockProtocol.MAPPINGS.getBedrockItemTags().get(identifier);
-        if (CONSUME_ON_RELEASE_ITEMS.contains(identifier) || (itemTags != null && itemTags.contains(FOOD_ITEM_TAG))) {
-            return usingTicks >= consumableUseTicks(identifier) ? ItemReleaseInventoryTransaction_ActionType.Use : ItemReleaseInventoryTransaction_ActionType.Release;
-        }
-        return ItemReleaseInventoryTransaction_ActionType.Release;
-    }
-
-    private static int consumableUseTicks(final String identifier) {
-        return switch (identifier) {
-            case "minecraft:potion" -> DRINK_USE_TICKS;
-            case "minecraft:milk_bucket" -> MILK_BUCKET_USE_TICKS;
-            default -> FOOD_USE_TICKS;
-        };
+        final Set<String> itemTags = identifier != null ? BedrockProtocol.MAPPINGS.getBedrockItemTags().get(identifier) : null;
+        return ItemUseSemantics.releaseAction(identifier, itemTags, itemRewriter.itemUseDefinition(item), usingTicks);
     }
 
     private static boolean isContinuousUseItem(final ItemRewriter itemRewriter, final BedrockItem item) {
         final String identifier = itemRewriter.bedrockIdentifier(item);
-        if (identifier == null) {
-            return false;
-        }
-        if ("minecraft:crossbow".equals(identifier) && isChargedCrossbow(item)) {
-            return false;
-        }
-        if (RELEASE_ON_RELEASE_ITEMS.contains(identifier) || CONSUME_ON_RELEASE_ITEMS.contains(identifier)) {
-            return true;
-        }
-        final Set<String> itemTags = BedrockProtocol.MAPPINGS.getBedrockItemTags().get(identifier);
-        return itemTags != null && itemTags.contains(FOOD_ITEM_TAG);
+        final Set<String> itemTags = identifier != null ? BedrockProtocol.MAPPINGS.getBedrockItemTags().get(identifier) : null;
+        return ItemUseSemantics.isContinuousUseItem(identifier, itemTags, itemRewriter.itemUseDefinition(item), isChargedCrossbow(item));
     }
 
     private static boolean isBow(final ItemRewriter itemRewriter, final BedrockItem item) {
