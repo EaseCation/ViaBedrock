@@ -223,12 +223,10 @@ public class ClickSimulator {
             return null;
         }
 
-        final JavaItemHasher itemHasher = JavaItemHasher.forConnection(tracker.user());
-        if (itemHasher == null) return null;
         final ItemRewriter itemRewriter = tracker.user().get(ItemRewriter.class);
         final BedrockItem cursorItem = SlotMapper.getCursorItem(tracker);
-        final HashedItem expectedCarried = itemHasher.toHashedItem(itemRewriter.javaItem(cursorItem.copy()));
-        if (!sameHashedItem(expectedCarried, carriedItem)) return null;
+        final Item javaCarriedItem = itemRewriter.javaItem(cursorItem.copy());
+        if (!samePredictedStack(javaCarriedItem, carriedItem)) return null;
 
         final BedrockSlotRef sourceRef = SlotMapper.resolvePlayerInventory(javaSlot, tracker);
         if (sourceRef == null) return null;
@@ -260,8 +258,7 @@ public class ClickSimulator {
             return simulateQuickMove(0, javaSlot, tracker);
         }
 
-        final HashedItem expectedSource = itemHasher.toHashedItem(javaSourceItem);
-        if (expectedSource.isEmpty()) return null;
+        if (javaSourceItem.isEmpty()) return null;
         if (equipmentTarget != -1 && (!isPredictedEquipmentTarget(javaSlot, equipmentTarget)
                 || equipmentTarget != expectedEquipmentSlot)) {
             return null;
@@ -274,7 +271,7 @@ public class ClickSimulator {
         if (predictedSource.isEmpty()) {
             sourceAmountAfter = 0;
         } else {
-            if (!sameItemShape(expectedSource, predictedSource)
+            if (!samePredictedItem(javaSourceItem, predictedSource)
                     || predictedSource.amount() > MAX_JAVA_STACK_SIZE
                     || predictedSource.amount() >= sourceItem.amount()) return null;
             sourceAmountAfter = predictedSource.amount();
@@ -314,7 +311,7 @@ public class ClickSimulator {
             final BedrockItem targetItem = targetRef.container().getItem(targetRef.slot());
             if (predictedTarget.isEmpty() || predictedTarget.amount() <= 0
                     || predictedTarget.amount() > MAX_JAVA_STACK_SIZE || predictedTarget.amount() > maxStackSize
-                    || !sameItemShape(expectedSource, predictedTarget)) return null;
+                    || !samePredictedItem(javaSourceItem, predictedTarget)) return null;
 
             final int targetAmountBefore = targetItem.isEmpty() ? 0 : targetItem.amount();
             if (!targetItem.isEmpty() && !canStackPredicted(targetItem, sourceItem)) return null;
@@ -367,14 +364,21 @@ public class ClickSimulator {
         return targetSlot == 45 && sourceSlot >= 9 && sourceSlot <= 44;
     }
 
-    private static boolean sameItemShape(final HashedItem first, final HashedItem second) {
-        return first.identifier() == second.identifier()
-                && first.dataHashesById().equals(second.dataHashesById())
-                && first.removedDataIds().equals(second.removedDataIds());
+    static boolean samePredictedStack(final Item authoritativeItem, final HashedItem predictedItem) {
+        if (authoritativeItem.isEmpty()) {
+            return predictedItem.isEmpty();
+        }
+        return !predictedItem.isEmpty()
+                && authoritativeItem.amount() == predictedItem.amount()
+                && samePredictedItem(authoritativeItem, predictedItem);
     }
 
-    private static boolean sameHashedItem(final HashedItem first, final HashedItem second) {
-        return first.amount() == second.amount() && sameItemShape(first, second);
+    // Component hashes can change across registry and ViaVersion transformations. They are not trusted
+    // transaction data: every Bedrock item is copied from the authoritative mirror below.
+    static boolean samePredictedItem(final Item authoritativeItem, final HashedItem predictedItem) {
+        return !authoritativeItem.isEmpty()
+                && !predictedItem.isEmpty()
+                && authoritativeItem.identifier() == predictedItem.identifier();
     }
 
     private static boolean canStackPredicted(final BedrockItem first, final BedrockItem second) {
