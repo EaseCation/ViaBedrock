@@ -1,7 +1,7 @@
 # ViaBedrock 自定义可消耗物品翻译设计
 
 - 日期：2026-07-15
-- 状态：设计已确认，实现中
+- 状态：实现完成，本地验证通过
 - worktree：`/home/ec/workspace/worktrees/viabedrock-custom-consumables/ViaProxyWorkspace`
 - 分支：ViaProxyWorkspace 与 ViaBedrock 均使用 `fix/custom-consumable-items`
 - 范围：ViaBedrock 源码、测试与本地构建；不修改 CodeFunCore/Nukkit/BedrockLoader，不推送、不部署、不重启服务
