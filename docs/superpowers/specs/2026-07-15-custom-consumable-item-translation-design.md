@@ -19,6 +19,7 @@ ViaBedrock 当前只从自定义物品定义中保留图标、显示名和护甲
 - 修复全部 16 种 `easecation:stackable_potion_*` 在 Java/ViaBedrock 下无法正常饮用的问题。
 - 通用支持通过 Bedrock 组件声明的自定义食物和饮料，包括现有 `stackable_milk_bucket` 与 `spinach`。
 - 保持自定义物品现有名称、lore、模型和最大堆叠数量。
+- 为每个 paper fallback 保存隐藏的 Bedrock identifier，保证不同自定义物品不会因为使用同一 Java 载体而互相合并。
 - Java 客户端显示正确的 eat/drink 动画，并在配置的使用时长后完成消费协议时序。
 - Nukkit 继续作为 gameplay 权威端，负责效果、营养、扣除数量和容器残留物。
 - 缺失或损坏的组件安全降级，不中断登录或游戏连接。
@@ -26,6 +27,7 @@ ViaBedrock 当前只从自定义物品定义中保留图标、显示名和护甲
 ## 3. 非目标
 
 - 不在 ViaBedrock 中解释或复制 `custom_effects` NBT，也不在 Java 客户端本地施加药水效果。
+- 不在本次改动中实现完整 Java-to-Bedrock item 反向序列化；隐藏 identifier 只负责客户端身份隔离。
 - 不修改 CodeFunCore 的 `ECStackablePotion`、Nukkit `ItemEdible`、Food 注册或资源包文件。
 - 不修改 BedrockLoader custom mapping snapshot schema。
 - 不把所有带 `use_animation` 的物品都视为可消耗物；弓、弩、盾牌等继续走现有路径。
@@ -131,6 +133,10 @@ Bedrock `ITEM_REGISTRY` 中的组件是 gameplay 使用语义的权威来源。�
 
 不添加 Java `FOOD` 或本地药水效果组件，避免 Java 端抢占 gameplay 权威。现有最大堆叠数量由载体和服务端库存同步保持。
 
+所有使用 `minecraft:paper` fallback 的自定义物品还必须附加 `StructuredDataKey.CUSTOM_DATA`，写入私有键 `viabedrock:bedrock_identifier`。该值使用 Item Registry 中的完整 namespaced identifier，例如 `easecation:stackable_potion_heal`。
+
+这个隐藏字段参与 Java 物品组件相等性判断，因此两个表现组件完全相同但 Bedrock identifier 不同的物品也不能互相堆叠。相同 identifier 的相同物品仍可正常堆叠。明确 Bedrock-to-Java mapping 和 BedrockLoader 同步 custom item ID 已有独立 Java item 身份，不添加此 paper fallback 标记。
+
 ### 6.5 `ExperimentalFeatures`
 
 现有原版集合和静态 food tag 判断保留。对其他物品，增加查询 `ItemUseDefinition`：
@@ -155,6 +161,7 @@ Bedrock ITEM_REGISTRY
 
 ItemUseDefinition
   -> ItemRewriter adds Java CONSUMABLE to paper/custom carrier
+  -> paper fallback also stores hidden Bedrock identifier in CUSTOM_DATA
   -> Java client starts eat/drink animation and sends use/release packets
   -> ExperimentalFeatures tracks Bedrock use state for configured ticks
   -> existing Bedrock consume completion transaction
@@ -169,6 +176,7 @@ ItemUseDefinition
 - animation 字符串忽略大小写；只映射 `eat` 和 `drink`。
 - food 存在但 animation 未识别时使用 eat 动画和音效。
 - animation 存在但 food 不存在时不生成 consumable。
+- paper fallback 缺少 Bedrock identifier 时视为翻译错误并使用现有 missing-item 降级；不能生成无身份标记的普通 paper。
 - 损坏组件最多按 identifier 每连接警告一次，不逐 tick、逐 slot 或逐包刷日志。
 - 解析异常不离开 Item Registry 协议线程；该物品退化为现有非 consumable 翻译。
 
@@ -189,6 +197,10 @@ ItemUseDefinition
 ### 9.2 Java item 数据测试
 
 - paper fallback 保留原 identifier 对应名称、模型与 lore。
+- 每个 paper fallback 的 `CUSTOM_DATA` 包含准确的 Bedrock identifier。
+- 两个显示组件相同但 identifier 不同的 fallback item 具有不同 `CUSTOM_DATA`，不能被 Java 判为同一物品。
+- 相同 identifier 的相同物品仍具有相同身份标记并可正常堆叠。
+- 明确 Java mapping 或 BedrockLoader custom item ID 路径不添加 paper fallback 身份标记。
 - drink 生成 animation type 2、1.6 秒、drink sound、无粒子、无本地效果。
 - eat 生成 animation type 1、eat sound和消费粒子。
 - 非 consumable 自定义物品不附加 `CONSUMABLE`。
@@ -228,6 +240,7 @@ git -C ViaBedrock diff --check
 | stackable milk bucket | drink 动画与服务端效果正常 |
 | spinach | eat 动画与服务端效果正常 |
 | 普通自定义纸张/图标 | 仍不可食用 |
+| 两个同模型同名但 identifier 不同的自定义物品 | Java 不能将它们合并为同一堆 |
 | 原版药水与食物 | 行为与修复前一致 |
 | 旧版 Java 客户端 | 经 ViaVersion 降级后不崩溃、不导致断线 |
 
@@ -236,6 +249,7 @@ git -C ViaBedrock diff --check
 - `ECStackablePotion` 代表样例在自动化测试中具有 drink/32 tick consumable 语义。
 - 资源包与网络定义合并不会丢失任一来源的有效字段。
 - Java item 与 ViaBedrock 状态机读取同一份使用定义。
+- 所有 paper fallback 都携带隐藏 identifier，不再只依赖模型、名称和 lore 区分身份。
 - 定向测试、编译、diff check 和可执行的 workspace 验证通过。
 - 主工作区与其他 worktree 未被修改。
 - 未推送、未部署、未重启任何服务。
