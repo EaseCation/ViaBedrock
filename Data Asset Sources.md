@@ -59,6 +59,9 @@ This file has been dumped using a fabric mod.
 ### data/java/heightmap_blockstates.nbt
 This file has been dumped using a fabric mod.
 
+### data/java/item_max_stack_sizes.json
+[misode/mcmeta Java 26.1 item components report](https://github.com/misode/mcmeta/blob/e7068326fb23dcdff9fff17c7eabcd59f46e7460/item_components/data.json)
+
 ### data/java/registries.nbt
 This file has been dumped from a vanilla server using a fabric mod.
 

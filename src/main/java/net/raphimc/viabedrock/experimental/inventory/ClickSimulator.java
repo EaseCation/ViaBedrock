@@ -253,7 +253,7 @@ public class ClickSimulator {
         }
         final Item javaSourceItem = itemRewriter.javaItem(sourceItem.copy());
         final int expectedEquipmentSlot = trustedEquipmentSlot(javaSourceItem);
-        final int maxStackSize = trustedMaxStackSize(javaSourceItem);
+        final int maxStackSize = javaMaxStackSize(javaSourceItem);
         if (equipmentTarget == -1 && expectedEquipmentSlot == -1) {
             return simulateQuickMove(0, javaSlot, tracker);
         }
@@ -421,28 +421,14 @@ public class ClickSimulator {
         };
     }
 
-    private static int trustedMaxStackSize(final Item javaItem) {
+    private static int javaMaxStackSize(final Item javaItem) {
         final Integer maxStackSize = javaItem.dataContainer().get(StructuredDataKey.MAX_STACK_SIZE);
-        if (maxStackSize != null) return maxStackSize;
-        if (javaItem.dataContainer().hasEmpty(StructuredDataKey.MAX_STACK_SIZE)) return 1;
-
-        final int identifier = javaItem.identifier();
-        if (isInJavaItemTag(identifier, "minecraft:head_armor")
-                || isInJavaItemTag(identifier, "minecraft:chest_armor")
-                || isInJavaItemTag(identifier, "minecraft:leg_armor")
-                || isInJavaItemTag(identifier, "minecraft:foot_armor")) {
-            return 1;
+        if (maxStackSize != null) {
+            return maxStackSize >= 1 && maxStackSize <= MAX_JAVA_STACK_SIZE ? maxStackSize : 1;
         }
-
-        final String identifierName = BedrockProtocol.MAPPINGS.getJavaItems().inverse().get(identifier);
-        if (identifierName == null) return MAX_JAVA_STACK_SIZE;
-        return switch (identifierName) {
-            case "minecraft:elytra", "minecraft:shield" -> 1;
-            case "minecraft:carved_pumpkin", "minecraft:creeper_head", "minecraft:dragon_head",
-                 "minecraft:piglin_head", "minecraft:player_head", "minecraft:skeleton_skull",
-                 "minecraft:wither_skeleton_skull", "minecraft:zombie_head" -> MAX_STACK;
-            default -> MAX_JAVA_STACK_SIZE;
-        };
+        if (javaItem.dataContainer().hasEmpty(StructuredDataKey.MAX_STACK_SIZE)) return 1;
+        if (javaItem.identifier() < 0 || javaItem.identifier() >= BedrockProtocol.MAPPINGS.getJavaItems().size()) return 1;
+        return BedrockProtocol.MAPPINGS.getJavaItemMaxStackSize(javaItem.identifier());
     }
 
     private static boolean isInJavaItemTag(final int identifier, final String tagName) {
@@ -465,6 +451,8 @@ public class ClickSimulator {
 
         // Ordered list of target Java menu slots, in the exact order Java's ScreenHandler#insertItem visits them
         final List<Integer> targetSlots = getQuickMoveTargetSlots(javaContainerId, javaSlot, tracker);
+        final int maxStackSize = resolveQuickMoveMaxStackSize(sourceItem, tracker);
+        if (maxStackSize <= 0) return null;
 
         int remaining = sourceItem.amount();
         final List<InventoryActionData> actions = new ArrayList<>();
@@ -475,10 +463,10 @@ public class ClickSimulator {
             final BedrockSlotRef targetRef = SlotMapper.resolve(javaContainerId, targetJavaSlot, tracker);
             if (targetRef == null) continue;
             final BedrockItem targetItem = targetRef.container().getItem(targetRef.slot());
-            if (targetItem.isEmpty() || !canStack(targetItem, sourceItem)) continue;
-            if (targetItem.amount() >= MAX_STACK) continue;
+            if (targetItem.isEmpty() || !canStackPredicted(targetItem, sourceItem)) continue;
+            if (targetItem.amount() >= maxStackSize) continue;
 
-            int addAmount = Math.min(remaining, MAX_STACK - targetItem.amount());
+            int addAmount = Math.min(remaining, maxStackSize - targetItem.amount());
             BedrockItem newTarget = targetItem.copy();
             newTarget.setAmount(targetItem.amount() + addAmount);
             actions.add(slotAction(targetRef, targetItem, newTarget));
@@ -493,11 +481,12 @@ public class ClickSimulator {
             final BedrockItem targetItem = targetRef.container().getItem(targetRef.slot());
             if (!targetItem.isEmpty()) continue;
 
-            int addAmount = Math.min(remaining, MAX_STACK);
+            int addAmount = Math.min(remaining, maxStackSize);
             BedrockItem newTarget = sourceItem.copy();
             newTarget.setAmount(addAmount);
             actions.add(slotAction(targetRef, targetItem, newTarget));
             remaining -= addAmount;
+            break;
         }
 
         if (actions.isEmpty()) return Collections.emptyList();
@@ -508,6 +497,15 @@ public class ClickSimulator {
         actions.add(0, slotAction(sourceRef, sourceItem, newSource));
 
         return actions;
+    }
+
+    private static int resolveQuickMoveMaxStackSize(final BedrockItem sourceItem, final InventoryTracker tracker) {
+        try {
+            final Item javaItem = tracker.user().get(ItemRewriter.class).javaItem(sourceItem.copy());
+            return javaMaxStackSize(javaItem);
+        } catch (final RuntimeException e) {
+            return 0;
+        }
     }
 
     /**

@@ -50,8 +50,11 @@ public class ExperimentalItemRewriter {
 
         if (bedrockTag != null) {
 
-            if (bedrockTag.get("Damage") instanceof NumberTag durability)  {
-                javaItem.dataContainer().set(StructuredDataKey.DAMAGE, durability.asInt());
+            if (bedrockTag.get("Damage") instanceof NumberTag durability) {
+                final int damage = durability.asInt();
+                if (damage != 0) {
+                    javaItem.dataContainer().set(StructuredDataKey.DAMAGE, damage);
+                }
             }
 
             if (bedrockTag.get("map_uuid") instanceof NumberTag uuidTag) {

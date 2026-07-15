@@ -117,6 +117,7 @@ public class BedrockMappingData extends MappingDataBase {
     // Items
     private ItemUpgrader bedrockItemUpgrader;
     private BiMap<String, Integer> javaItems;
+    private int[] javaItemMaxStackSizes;
     private Set<String> bedrockBlockItems;
     private Set<String> bedrockMetaItems;
     private Map<String, Set<String>> bedrockItemTags;
@@ -433,6 +434,35 @@ public class BedrockMappingData extends MappingDataBase {
             this.javaItems = HashBiMap.create(javaItemsJson.size());
             for (int i = 0; i < javaItemsJson.size(); i++) {
                 this.javaItems.put(Key.namespaced(javaItemsJson.get(i).getAsString()), i);
+            }
+
+            final JsonObject javaItemMaxStackSizesJson = this.readJson("java/item_max_stack_sizes.json");
+            if (javaItemMaxStackSizesJson.size() != this.javaItems.size()) {
+                throw new RuntimeException("Java item max stack size count does not match the item registry");
+            }
+            this.javaItemMaxStackSizes = new int[this.javaItems.size()];
+            for (Map.Entry<String, JsonElement> entry : javaItemMaxStackSizesJson.entrySet()) {
+                final String identifier = Key.namespaced(entry.getKey());
+                final Integer id = this.javaItems.get(identifier);
+                if (id == null) {
+                    throw new RuntimeException("Unknown java item max stack size entry: " + identifier);
+                }
+                final JsonElement maxStackSizeJson = entry.getValue();
+                if (!maxStackSizeJson.isJsonPrimitive() || !maxStackSizeJson.getAsJsonPrimitive().isNumber()) {
+                    throw new RuntimeException("Invalid java item max stack size for " + identifier + ": " + maxStackSizeJson);
+                }
+                final double maxStackSizeValue = maxStackSizeJson.getAsDouble();
+                if (!Double.isFinite(maxStackSizeValue) || maxStackSizeValue < 1D || maxStackSizeValue > 99D
+                        || maxStackSizeValue != Math.rint(maxStackSizeValue)) {
+                    throw new RuntimeException("Java item max stack size is out of range for " + identifier + ": " + maxStackSizeJson);
+                }
+                final int maxStackSize = (int) maxStackSizeValue;
+                this.javaItemMaxStackSizes[id] = maxStackSize;
+            }
+            for (int id = 0; id < this.javaItemMaxStackSizes.length; id++) {
+                if (this.javaItemMaxStackSizes[id] == 0) {
+                    throw new RuntimeException("Missing java item max stack size: " + this.javaItems.inverse().get(id));
+                }
             }
 
             final JsonArray bedrockItemsJson = this.readJson("bedrock/runtime_item_states.json", JsonArray.class);
@@ -1203,6 +1233,13 @@ public class BedrockMappingData extends MappingDataBase {
 
     public BiMap<String, Integer> getJavaItems() {
         return this.javaItems;
+    }
+
+    public int getJavaItemMaxStackSize(final int id) {
+        if (id < 0 || id >= this.javaItemMaxStackSizes.length) {
+            throw new IllegalArgumentException("Unknown java item id: " + id);
+        }
+        return this.javaItemMaxStackSizes[id];
     }
 
     public Set<String> getBedrockBlockItems() {
