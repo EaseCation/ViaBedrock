@@ -31,8 +31,6 @@ import java.util.*;
 
 public class CraftingSimulator {
 
-    private static final int MAX_STACK = 64;
-
     // Nukkit SOURCE_TODO windowId values
     private static final int TODO_USE_INGREDIENT = -5;
     private static final int TODO_CRAFTING_RESULT = -4;
@@ -42,6 +40,11 @@ public class CraftingSimulator {
      * Returns the list of Bedrock InventoryActionData, or null if no recipe matches.
      */
     public static List<InventoryActionData> simulateCraftPickup(final boolean is3x3, final InventoryTracker tracker) {
+        return simulateCraftPickup(is3x3, tracker, JavaItemStackLimits.forTracker(tracker));
+    }
+
+    static List<InventoryActionData> simulateCraftPickup(final boolean is3x3, final InventoryTracker tracker,
+                                                         final JavaItemStackLimits.Resolver stackLimits) {
         final BedrockItem[] gridItems = getGridItems(is3x3, tracker);
         final RecipeRegistry registry = tracker.user().get(RecipeRegistry.class);
         final BedrockRecipe recipe = registry.matchRecipe(gridItems, is3x3);
@@ -51,13 +54,17 @@ public class CraftingSimulator {
 
         final BedrockItem cursorItem = SlotMapper.getCursorItem(tracker);
         final BedrockItem primaryOutput = recipe.primaryOutput().copy();
+        final int maxStackSize = stackLimits.maxStackSize(primaryOutput);
+        if (maxStackSize <= 0 || primaryOutput.amount() > maxStackSize) {
+            return null;
+        }
 
         // If cursor already has items, check if we can stack
         if (!cursorItem.isEmpty()) {
             if (cursorItem.isDifferent(primaryOutput)) {
                 return Collections.emptyList(); // Can't take result — cursor has different item
             }
-            if (cursorItem.amount() + primaryOutput.amount() > MAX_STACK) {
+            if (cursorItem.amount() > maxStackSize || cursorItem.amount() + primaryOutput.amount() > maxStackSize) {
                 return Collections.emptyList(); // Can't take result — would exceed max stack
             }
         }
@@ -95,6 +102,11 @@ public class CraftingSimulator {
      * Returns the list of Bedrock InventoryActionData, or null if no recipe matches.
      */
     public static List<InventoryActionData> simulateCraftQuickMove(final boolean is3x3, final InventoryTracker tracker) {
+        return simulateCraftQuickMove(is3x3, tracker, JavaItemStackLimits.forTracker(tracker));
+    }
+
+    static List<InventoryActionData> simulateCraftQuickMove(final boolean is3x3, final InventoryTracker tracker,
+                                                            final JavaItemStackLimits.Resolver stackLimits) {
         final BedrockItem[] gridItems = getGridItems(is3x3, tracker);
         final RecipeRegistry registry = tracker.user().get(RecipeRegistry.class);
         final BedrockRecipe recipe = registry.matchRecipe(gridItems, is3x3);
@@ -103,6 +115,10 @@ public class CraftingSimulator {
         }
 
         final BedrockItem primaryOutput = recipe.primaryOutput().copy();
+        final int maxStackSize = stackLimits.maxStackSize(primaryOutput);
+        if (maxStackSize <= 0) {
+            return null;
+        }
 
         final List<InventoryActionData> actions = new ArrayList<>();
 
@@ -120,18 +136,18 @@ public class CraftingSimulator {
 
         // Round 1: fill existing stacks in main inventory (9-35) then hotbar (0-8)
         for (int invSlot = 9; invSlot <= 35 && remaining > 0; invSlot++) {
-            remaining = tryMergeIntoSlot(actions, tracker, invSlot, primaryOutput, remaining);
+            remaining = tryMergeIntoSlot(actions, tracker, invSlot, primaryOutput, remaining, maxStackSize);
         }
         for (int invSlot = 0; invSlot <= 8 && remaining > 0; invSlot++) {
-            remaining = tryMergeIntoSlot(actions, tracker, invSlot, primaryOutput, remaining);
+            remaining = tryMergeIntoSlot(actions, tracker, invSlot, primaryOutput, remaining, maxStackSize);
         }
 
         // Round 2: fill empty slots in main inventory (9-35) then hotbar (0-8)
         for (int invSlot = 9; invSlot <= 35 && remaining > 0; invSlot++) {
-            remaining = tryPlaceIntoEmptySlot(actions, tracker, invSlot, primaryOutput, remaining);
+            remaining = tryPlaceIntoEmptySlot(actions, tracker, invSlot, primaryOutput, remaining, maxStackSize);
         }
         for (int invSlot = 0; invSlot <= 8 && remaining > 0; invSlot++) {
-            remaining = tryPlaceIntoEmptySlot(actions, tracker, invSlot, primaryOutput, remaining);
+            remaining = tryPlaceIntoEmptySlot(actions, tracker, invSlot, primaryOutput, remaining, maxStackSize);
         }
 
         if (remaining > 0) {
@@ -142,12 +158,14 @@ public class CraftingSimulator {
         return actions;
     }
 
-    private static int tryMergeIntoSlot(final List<InventoryActionData> actions, final InventoryTracker tracker, final int invSlot, final BedrockItem output, int remaining) {
+    private static int tryMergeIntoSlot(final List<InventoryActionData> actions, final InventoryTracker tracker,
+                                        final int invSlot, final BedrockItem output, int remaining,
+                                        final int maxStackSize) {
         final BedrockItem targetItem = tracker.getInventoryContainer().getItem(invSlot);
-        if (targetItem.isEmpty() || targetItem.isDifferent(output) || targetItem.amount() >= MAX_STACK) {
+        if (targetItem.isEmpty() || targetItem.isDifferent(output) || targetItem.amount() >= maxStackSize) {
             return remaining;
         }
-        int addAmount = Math.min(remaining, MAX_STACK - targetItem.amount());
+        int addAmount = Math.min(remaining, maxStackSize - targetItem.amount());
         BedrockItem newTarget = targetItem.copy();
         newTarget.setAmount(targetItem.amount() + addAmount);
         actions.add(new InventoryActionData(
@@ -157,12 +175,14 @@ public class CraftingSimulator {
         return remaining - addAmount;
     }
 
-    private static int tryPlaceIntoEmptySlot(final List<InventoryActionData> actions, final InventoryTracker tracker, final int invSlot, final BedrockItem output, int remaining) {
+    private static int tryPlaceIntoEmptySlot(final List<InventoryActionData> actions, final InventoryTracker tracker,
+                                             final int invSlot, final BedrockItem output, int remaining,
+                                             final int maxStackSize) {
         final BedrockItem targetItem = tracker.getInventoryContainer().getItem(invSlot);
         if (!targetItem.isEmpty()) {
             return remaining;
         }
-        int addAmount = Math.min(remaining, MAX_STACK);
+        int addAmount = Math.min(remaining, maxStackSize);
         BedrockItem newTarget = output.copy();
         newTarget.setAmount(addAmount);
         actions.add(new InventoryActionData(

@@ -45,9 +45,6 @@ import java.util.Map;
 
 public class ClickSimulator {
 
-    private static final int MAX_STACK = 64;
-    private static final int MAX_JAVA_STACK_SIZE = 99;
-
     /**
      * Simulates a Java CONTAINER_CLICK and returns the list of Bedrock InventoryActionData.
      * Returns null if the operation is unsupported (caller should rollback).
@@ -62,6 +59,20 @@ public class ClickSimulator {
             final ClientAuthInventoryModule.DragState dragState,
             final Map<Short, HashedItem> changedSlots,
             final HashedItem carriedItem) {
+        return simulate(javaContainerId, javaSlot, button, action, tracker, dragState, changedSlots, carriedItem,
+                JavaItemStackLimits.forTracker(tracker));
+    }
+
+    static List<InventoryActionData> simulate(
+            final int javaContainerId,
+            final short javaSlot,
+            final byte button,
+            final ContainerInput action,
+            final InventoryTracker tracker,
+            final ClientAuthInventoryModule.DragState dragState,
+            final Map<Short, HashedItem> changedSlots,
+            final HashedItem carriedItem,
+            final JavaItemStackLimits.Resolver stackLimits) {
 
         // Intercept crafting output slot clicks
         if (javaSlot == 0) {
@@ -69,29 +80,30 @@ public class ClickSimulator {
             final boolean is2x2 = javaContainerId == 0;
             if (is3x3 || is2x2) {
                 return switch (action) {
-                    case PICKUP -> CraftingSimulator.simulateCraftPickup(is3x3, tracker);
-                    case QUICK_MOVE -> CraftingSimulator.simulateCraftQuickMove(is3x3, tracker);
+                    case PICKUP -> CraftingSimulator.simulateCraftPickup(is3x3, tracker, stackLimits);
+                    case QUICK_MOVE -> CraftingSimulator.simulateCraftQuickMove(is3x3, tracker, stackLimits);
                     default -> null;
                 };
             }
         }
 
         return switch (action) {
-            case PICKUP -> simulatePickup(javaContainerId, javaSlot, button, tracker);
+            case PICKUP -> simulatePickup(javaContainerId, javaSlot, button, tracker, stackLimits);
             case QUICK_MOVE -> javaContainerId == 0 && javaSlot >= 1 && javaSlot <= 45
-                    ? simulatePredictedPlayerQuickMove(javaSlot, button, tracker, changedSlots, carriedItem)
-                    : simulateQuickMove(javaContainerId, javaSlot, tracker);
+                    ? simulatePredictedPlayerQuickMove(javaSlot, button, tracker, changedSlots, carriedItem, stackLimits)
+                    : simulateQuickMove(javaContainerId, javaSlot, tracker, stackLimits);
             case SWAP -> simulateSwap(javaContainerId, javaSlot, button, tracker);
-            case CLONE -> simulateClone(javaContainerId, javaSlot, tracker);
+            case CLONE -> simulateClone(javaContainerId, javaSlot, tracker, stackLimits);
             case THROW -> simulateThrow(javaContainerId, javaSlot, button, tracker);
-            case QUICK_CRAFT -> simulateQuickCraft(javaContainerId, javaSlot, button, tracker, dragState);
-            case PICKUP_ALL -> simulatePickupAll(javaContainerId, javaSlot, tracker);
+            case QUICK_CRAFT -> simulateQuickCraft(javaContainerId, javaSlot, button, tracker, dragState, stackLimits);
+            case PICKUP_ALL -> simulatePickupAll(javaContainerId, javaSlot, tracker, stackLimits);
         };
     }
 
     // --- PICKUP (mode=0) ---
 
-    private static List<InventoryActionData> simulatePickup(int javaContainerId, short javaSlot, byte button, InventoryTracker tracker) {
+    private static List<InventoryActionData> simulatePickup(int javaContainerId, short javaSlot, byte button,
+                                                            InventoryTracker tracker, JavaItemStackLimits.Resolver stackLimits) {
         if (javaSlot == -999) {
             // Click outside window — drop cursor item
             return simulateDropCursor(button, tracker);
@@ -102,6 +114,12 @@ public class ClickSimulator {
 
         final BedrockItem slotItem = ref.container().getItem(ref.slot());
         final BedrockItem cursorItem = SlotMapper.getCursorItem(tracker);
+        final int slotLimit = resolvedLimit(slotItem, stackLimits);
+        final int cursorLimit = resolvedLimit(cursorItem, stackLimits);
+        if ((!slotItem.isEmpty() && (slotLimit <= 0 || slotItem.amount() > slotLimit))
+                || (!cursorItem.isEmpty() && (cursorLimit <= 0 || cursorItem.amount() > cursorLimit))) {
+            return null;
+        }
 
         if (button == 0) {
             // Left click
@@ -121,7 +139,10 @@ public class ClickSimulator {
                 );
             } else if (canStack(slotItem, cursorItem)) {
                 // Merge cursor into slot
-                int merged = Math.min(slotItem.amount() + cursorItem.amount(), MAX_STACK);
+                if (slotItem.amount() >= cursorLimit) {
+                    return Collections.emptyList();
+                }
+                int merged = Math.min(slotItem.amount() + cursorItem.amount(), cursorLimit);
                 int remaining = slotItem.amount() + cursorItem.amount() - merged;
                 BedrockItem newSlot = slotItem.copy();
                 newSlot.setAmount(merged);
@@ -164,7 +185,10 @@ public class ClickSimulator {
                         slotAction(ref, slotItem, newSlot),
                         cursorAction(cursorItem, newCursor)
                 );
-            } else if (canStack(slotItem, cursorItem) && slotItem.amount() < MAX_STACK) {
+            } else if (canStack(slotItem, cursorItem)) {
+                if (slotItem.amount() >= cursorLimit) {
+                    return Collections.emptyList();
+                }
                 // Place one into stackable slot
                 BedrockItem newSlot = slotItem.copy();
                 newSlot.setAmount(slotItem.amount() + 1);
@@ -218,7 +242,8 @@ public class ClickSimulator {
             final byte button,
             final InventoryTracker tracker,
             final Map<Short, HashedItem> changedSlots,
-            final HashedItem carriedItem) {
+            final HashedItem carriedItem,
+            final JavaItemStackLimits.Resolver stackLimits) {
         if (button < 0 || button > 1 || changedSlots == null || carriedItem == null) {
             return null;
         }
@@ -253,9 +278,10 @@ public class ClickSimulator {
         }
         final Item javaSourceItem = itemRewriter.javaItem(sourceItem.copy());
         final int expectedEquipmentSlot = trustedEquipmentSlot(javaSourceItem);
-        final int maxStackSize = javaMaxStackSize(javaSourceItem);
+        final int maxStackSize = stackLimits.maxStackSize(sourceItem);
+        if (maxStackSize <= 0) return null;
         if (equipmentTarget == -1 && expectedEquipmentSlot == -1) {
-            return simulateQuickMove(0, javaSlot, tracker);
+            return simulateQuickMove(0, javaSlot, tracker, stackLimits);
         }
 
         if (javaSourceItem.isEmpty()) return null;
@@ -272,7 +298,7 @@ public class ClickSimulator {
             sourceAmountAfter = 0;
         } else {
             if (!samePredictedItem(javaSourceItem, predictedSource)
-                    || predictedSource.amount() > MAX_JAVA_STACK_SIZE
+                    || predictedSource.amount() > JavaItemStackLimits.MAX_SUPPORTED
                     || predictedSource.amount() >= sourceItem.amount()) return null;
             sourceAmountAfter = predictedSource.amount();
         }
@@ -309,8 +335,7 @@ public class ClickSimulator {
             if (targetRef == null) return null;
 
             final BedrockItem targetItem = targetRef.container().getItem(targetRef.slot());
-            if (predictedTarget.isEmpty() || predictedTarget.amount() <= 0
-                    || predictedTarget.amount() > MAX_JAVA_STACK_SIZE || predictedTarget.amount() > maxStackSize
+            if (!isValidPredictedTargetAmount(predictedTarget, maxStackSize)
                     || !samePredictedItem(javaSourceItem, predictedTarget)) return null;
 
             final int targetAmountBefore = targetItem.isEmpty() ? 0 : targetItem.amount();
@@ -381,6 +406,14 @@ public class ClickSimulator {
                 && authoritativeItem.identifier() == predictedItem.identifier();
     }
 
+    static boolean isValidPredictedTargetAmount(final HashedItem predictedItem, final int maxStackSize) {
+        return !predictedItem.isEmpty()
+                && predictedItem.amount() > 0
+                && predictedItem.amount() <= JavaItemStackLimits.MAX_SUPPORTED
+                && maxStackSize > 0
+                && predictedItem.amount() <= maxStackSize;
+    }
+
     private static boolean canStackPredicted(final BedrockItem first, final BedrockItem second) {
         return canStack(first, second)
                 && Arrays.equals(first.canPlace(), second.canPlace())
@@ -421,16 +454,6 @@ public class ClickSimulator {
         };
     }
 
-    private static int javaMaxStackSize(final Item javaItem) {
-        final Integer maxStackSize = javaItem.dataContainer().get(StructuredDataKey.MAX_STACK_SIZE);
-        if (maxStackSize != null) {
-            return maxStackSize >= 1 && maxStackSize <= MAX_JAVA_STACK_SIZE ? maxStackSize : 1;
-        }
-        if (javaItem.dataContainer().hasEmpty(StructuredDataKey.MAX_STACK_SIZE)) return 1;
-        if (javaItem.identifier() < 0 || javaItem.identifier() >= BedrockProtocol.MAPPINGS.getJavaItems().size()) return 1;
-        return BedrockProtocol.MAPPINGS.getJavaItemMaxStackSize(javaItem.identifier());
-    }
-
     private static boolean isInJavaItemTag(final int identifier, final String tagName) {
         if (!(BedrockProtocol.MAPPINGS.getJavaTags().get("minecraft:item") instanceof CompoundTag itemTags)
                 || !(itemTags.get(tagName) instanceof IntArrayTag tag)) {
@@ -442,7 +465,8 @@ public class ClickSimulator {
         return false;
     }
 
-    private static List<InventoryActionData> simulateQuickMove(int javaContainerId, short javaSlot, InventoryTracker tracker) {
+    static List<InventoryActionData> simulateQuickMove(int javaContainerId, short javaSlot, InventoryTracker tracker,
+                                                       JavaItemStackLimits.Resolver stackLimits) {
         final BedrockSlotRef sourceRef = SlotMapper.resolve(javaContainerId, javaSlot, tracker);
         if (sourceRef == null) return null;
 
@@ -451,7 +475,7 @@ public class ClickSimulator {
 
         // Ordered list of target Java menu slots, in the exact order Java's ScreenHandler#insertItem visits them
         final List<Integer> targetSlots = getQuickMoveTargetSlots(javaContainerId, javaSlot, tracker);
-        final int maxStackSize = resolveQuickMoveMaxStackSize(sourceItem, tracker);
+        final int maxStackSize = stackLimits.maxStackSize(sourceItem);
         if (maxStackSize <= 0) return null;
 
         int remaining = sourceItem.amount();
@@ -497,15 +521,6 @@ public class ClickSimulator {
         actions.add(0, slotAction(sourceRef, sourceItem, newSource));
 
         return actions;
-    }
-
-    private static int resolveQuickMoveMaxStackSize(final BedrockItem sourceItem, final InventoryTracker tracker) {
-        try {
-            final Item javaItem = tracker.user().get(ItemRewriter.class).javaItem(sourceItem.copy());
-            return javaMaxStackSize(javaItem);
-        } catch (final RuntimeException e) {
-            return 0;
-        }
     }
 
     /**
@@ -618,15 +633,18 @@ public class ClickSimulator {
 
     // --- CLONE (mode=3, Creative middle click) ---
 
-    private static List<InventoryActionData> simulateClone(int javaContainerId, short javaSlot, InventoryTracker tracker) {
+    private static List<InventoryActionData> simulateClone(int javaContainerId, short javaSlot, InventoryTracker tracker,
+                                                           JavaItemStackLimits.Resolver stackLimits) {
         final BedrockSlotRef ref = SlotMapper.resolve(javaContainerId, javaSlot, tracker);
         if (ref == null) return null;
 
         final BedrockItem slotItem = ref.container().getItem(ref.slot());
         if (slotItem.isEmpty()) return Collections.emptyList();
+        final int maxStackSize = stackLimits.maxStackSize(slotItem);
+        if (maxStackSize <= 0) return null;
 
         final BedrockItem cloned = slotItem.copy();
-        cloned.setAmount(MAX_STACK);
+        cloned.setAmount(maxStackSize);
 
         final BedrockItem cursorItem = SlotMapper.getCursorItem(tracker);
 
@@ -675,7 +693,9 @@ public class ClickSimulator {
 
     // --- QUICK_CRAFT (mode=5, Drag) ---
 
-    private static List<InventoryActionData> simulateQuickCraft(int javaContainerId, short javaSlot, byte button, InventoryTracker tracker, ClientAuthInventoryModule.DragState dragState) {
+    private static List<InventoryActionData> simulateQuickCraft(int javaContainerId, short javaSlot, byte button,
+                                                               InventoryTracker tracker, ClientAuthInventoryModule.DragState dragState,
+                                                               JavaItemStackLimits.Resolver stackLimits) {
         int stage = button & 3;
         int mode = button >> 2;
 
@@ -689,7 +709,7 @@ public class ClickSimulator {
                 return Collections.emptyList();
 
             case 2: // End drag
-                return finishQuickCraft(javaContainerId, tracker, dragState);
+                return finishQuickCraft(javaContainerId, tracker, dragState, stackLimits);
 
             default:
                 dragState.reset();
@@ -697,15 +717,19 @@ public class ClickSimulator {
         }
     }
 
-    private static List<InventoryActionData> finishQuickCraft(int javaContainerId, InventoryTracker tracker, ClientAuthInventoryModule.DragState dragState) {
+    private static List<InventoryActionData> finishQuickCraft(int javaContainerId, InventoryTracker tracker,
+                                                              ClientAuthInventoryModule.DragState dragState,
+                                                              JavaItemStackLimits.Resolver stackLimits) {
         final int dragMode = dragState.getDragMode();
         final List<Short> dragSlots = new ArrayList<>(dragState.getDragSlots());
         dragState.reset();
 
         final BedrockItem cursorItem = SlotMapper.getCursorItem(tracker);
-        if (dragSlots.isEmpty() || (dragMode != 2 && cursorItem.isEmpty())) {
+        if (dragSlots.isEmpty() || cursorItem.isEmpty()) {
             return null;
         }
+        final int maxStackSize = stackLimits.maxStackSize(cursorItem);
+        if (maxStackSize <= 0 || cursorItem.amount() > maxStackSize) return null;
 
         final List<InventoryActionData> actions = new ArrayList<>();
         int totalDistributed = 0;
@@ -722,7 +746,7 @@ public class ClickSimulator {
                     if (!slotItem.isEmpty() && !canStack(slotItem, cursorItem)) continue;
 
                     int currentAmount = slotItem.isEmpty() ? 0 : slotItem.amount();
-                    int addAmount = Math.min(amountPerSlot, MAX_STACK - currentAmount);
+                    int addAmount = Math.min(amountPerSlot, maxStackSize - currentAmount);
                     if (addAmount <= 0) continue;
 
                     BedrockItem newSlot = cursorItem.copy();
@@ -738,7 +762,7 @@ public class ClickSimulator {
                     final BedrockSlotRef ref = SlotMapper.resolve(javaContainerId, slot, tracker);
                     if (ref == null) continue;
                     final BedrockItem slotItem = ref.container().getItem(ref.slot());
-                    if (!slotItem.isEmpty() && (!canStack(slotItem, cursorItem) || slotItem.amount() >= MAX_STACK)) continue;
+                    if (!slotItem.isEmpty() && (!canStack(slotItem, cursorItem) || slotItem.amount() >= maxStackSize)) continue;
 
                     int currentAmount = slotItem.isEmpty() ? 0 : slotItem.amount();
                     BedrockItem newSlot = cursorItem.copy();
@@ -754,7 +778,7 @@ public class ClickSimulator {
                     if (ref == null) continue;
                     final BedrockItem slotItem = ref.container().getItem(ref.slot());
                     BedrockItem newSlot = cursorItem.copy();
-                    newSlot.setAmount(MAX_STACK);
+                    newSlot.setAmount(maxStackSize);
                     actions.add(slotAction(ref, slotItem, newSlot));
                 }
                 break;
@@ -781,11 +805,14 @@ public class ClickSimulator {
 
     // --- PICKUP_ALL (mode=6, Double click) ---
 
-    private static List<InventoryActionData> simulatePickupAll(int javaContainerId, short javaSlot, InventoryTracker tracker) {
+    private static List<InventoryActionData> simulatePickupAll(int javaContainerId, short javaSlot, InventoryTracker tracker,
+                                                               JavaItemStackLimits.Resolver stackLimits) {
         final BedrockItem cursorItem = SlotMapper.getCursorItem(tracker);
         if (cursorItem.isEmpty()) return Collections.emptyList();
+        final int maxStackSize = stackLimits.maxStackSize(cursorItem);
+        if (maxStackSize <= 0 || cursorItem.amount() > maxStackSize) return null;
 
-        int remaining = MAX_STACK - cursorItem.amount();
+        int remaining = maxStackSize - cursorItem.amount();
         if (remaining <= 0) return Collections.emptyList();
 
         final List<InventoryActionData> actions = new ArrayList<>();
@@ -813,8 +840,8 @@ public class ClickSimulator {
                 final BedrockItem slotItem = ref.container().getItem(ref.slot());
                 if (slotItem.isEmpty() || !canStack(slotItem, cursorItem)) continue;
 
-                if (round == 1 && slotItem.amount() >= MAX_STACK) continue;
-                if (round == 2 && slotItem.amount() < MAX_STACK) continue;
+                if (round == 1 && slotItem.amount() >= maxStackSize) continue;
+                if (round == 2 && slotItem.amount() < maxStackSize) continue;
 
                 int take = Math.min(slotItem.amount(), remaining - collected);
                 int newSlotAmount = slotItem.amount() - take;
@@ -836,6 +863,10 @@ public class ClickSimulator {
     }
 
     // --- Helper methods ---
+
+    private static int resolvedLimit(final BedrockItem item, final JavaItemStackLimits.Resolver stackLimits) {
+        return item.isEmpty() ? JavaItemStackLimits.UNSUPPORTED : stackLimits.maxStackSize(item);
+    }
 
     private static InventoryActionData slotAction(BedrockSlotRef ref, BedrockItem from, BedrockItem to) {
         return new InventoryActionData(
