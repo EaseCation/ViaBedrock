@@ -406,6 +406,31 @@ public class ClickSimulator {
                 && authoritativeItem.identifier() == predictedItem.identifier();
     }
 
+    static List<InventoryActionData> validateArmorActions(final List<InventoryActionData> actions, final InventoryTracker tracker) {
+        if (actions == null) return null;
+
+        final ItemRewriter itemRewriter = tracker.user().get(ItemRewriter.class);
+        for (final InventoryActionData action : actions) {
+            if (action.source().type() != InventorySourceType.ContainerInventory
+                    || action.source().containerId() != ContainerID.CONTAINER_ID_ARMOR.getValue()) {
+                continue;
+            }
+            if (action.slot() < 0 || action.slot() > 3) return null;
+            if (action.toItem().isEmpty()) continue;
+
+            final Item javaItem = itemRewriter.javaItem(action.toItem().copy());
+            if (!isValidArmorTarget(action.slot(), javaItem)) return null;
+        }
+        return actions;
+    }
+
+    static boolean isValidArmorTarget(final int armorSlot, final Item javaItem) {
+        return armorSlot >= 0 && armorSlot <= 3
+                && !javaItem.isEmpty()
+                && javaItem.amount() == 1
+                && trustedEquipmentSlot(javaItem) == armorSlot + 5;
+    }
+
     static boolean isValidPredictedTargetAmount(final HashedItem predictedItem, final int maxStackSize) {
         return !predictedItem.isEmpty()
                 && predictedItem.amount() > 0

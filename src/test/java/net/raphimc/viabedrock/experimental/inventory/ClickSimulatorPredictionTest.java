@@ -17,6 +17,7 @@
  */
 package net.raphimc.viabedrock.experimental.inventory;
 
+import com.viaversion.viaversion.api.minecraft.Holder;
 import com.viaversion.viaversion.api.minecraft.data.StructuredData;
 import com.viaversion.viaversion.api.minecraft.data.StructuredDataContainer;
 import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
@@ -25,6 +26,7 @@ import com.viaversion.viaversion.api.minecraft.item.HashedStructuredItem;
 import com.viaversion.viaversion.api.minecraft.item.Item;
 import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
 import com.viaversion.viaversion.api.minecraft.item.data.Enchantments;
+import com.viaversion.viaversion.api.minecraft.item.data.Equippable;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -66,6 +68,24 @@ class ClickSimulatorPredictionTest {
         assertFalse(ClickSimulator.isValidPredictedTargetAmount(new HashedStructuredItem(1, 1), 0));
     }
 
+    @Test
+    void acceptsOnlyTheDeclaredArmorSlot() {
+        for (int armorSlot = 0; armorSlot < 4; armorSlot++) {
+            final Item item = equippableItem(4 - armorSlot, 1);
+            for (int targetSlot = 0; targetSlot < 4; targetSlot++) {
+                if (targetSlot == armorSlot) {
+                    assertTrue(ClickSimulator.isValidArmorTarget(targetSlot, item));
+                } else {
+                    assertFalse(ClickSimulator.isValidArmorTarget(targetSlot, item));
+                }
+            }
+        }
+
+        assertFalse(ClickSimulator.isValidArmorTarget(0, equippableItem(0, 1)));
+        assertFalse(ClickSimulator.isValidArmorTarget(0, equippableItem(5, 1)));
+        assertFalse(ClickSimulator.isValidArmorTarget(0, equippableItem(4, 2)));
+    }
+
     private static Item enchantedItem(final int identifier, final int amount) {
         final Enchantments enchantments = new Enchantments(true);
         enchantments.add(0, 4);
@@ -73,5 +93,14 @@ class ClickSimulatorPredictionTest {
                 StructuredData.of(StructuredDataKey.ENCHANTMENTS1_21_5, enchantments, 37)
         });
         return new StructuredItem(identifier, amount, data);
+    }
+
+    private static Item equippableItem(final int equipmentSlot, final int amount) {
+        final Equippable equippable = new Equippable(
+                equipmentSlot, Holder.of(0), null, null, null, true, true, true);
+        final StructuredDataContainer data = new StructuredDataContainer(new StructuredData<?>[]{
+                StructuredData.of(StructuredDataKey.EQUIPPABLE1_21_6, equippable, 0)
+        });
+        return new StructuredItem(1, amount, data);
     }
 }
