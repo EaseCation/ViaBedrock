@@ -32,6 +32,11 @@ public interface ViaBedrockConfig extends Config {
     boolean shouldEnableExperimentalFeatures();
 
     /**
+     * @return If true, Java swords receive a client-only blocking use animation. Requires experimental features.
+     */
+    boolean shouldEnableSwordBlockingAnimation();
+
+    /**
      * @return The blob cache mode to use.
      */
     BlobCacheMode getBlobCacheMode();

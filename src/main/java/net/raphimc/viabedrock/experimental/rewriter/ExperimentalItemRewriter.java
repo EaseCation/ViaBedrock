@@ -19,9 +19,12 @@ package net.raphimc.viabedrock.experimental.rewriter;
 
 import com.viaversion.nbt.tag.*;
 import com.viaversion.viaversion.api.connection.UserConnection;
+import com.viaversion.viaversion.api.minecraft.Holder;
+import com.viaversion.viaversion.api.minecraft.SoundEvent;
 import com.viaversion.viaversion.api.minecraft.data.StructuredData;
 import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
 import com.viaversion.viaversion.api.minecraft.item.Item;
+import com.viaversion.viaversion.api.minecraft.item.data.Consumable1_21_2;
 import com.viaversion.viaversion.api.minecraft.item.data.Enchantments;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
@@ -37,16 +40,38 @@ import net.raphimc.viabedrock.protocol.model.BedrockItem;
 import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
+import java.util.Set;
 import java.util.logging.Level;
 
 public class ExperimentalItemRewriter {
 
     private static final StructuredDataKey<Item[]> CHARGED_PROJECTILES = new StructuredDataKey<>("charged_projectiles", VersionedTypes.V26_1.itemArray());
 
+    private static final int BLOCK_USE_ANIMATION = 3;
+    private static final float VISUAL_BLOCK_DURATION_SECONDS = 1_000_000F;
+    private static final Set<String> VANILLA_SWORDS = Set.of(
+            "minecraft:wooden_sword",
+            "minecraft:stone_sword",
+            "minecraft:iron_sword",
+            "minecraft:golden_sword",
+            "minecraft:diamond_sword",
+            "minecraft:netherite_sword"
+    );
+    private static final Consumable1_21_2 VISUAL_BLOCK_CONSUMABLE = new Consumable1_21_2(
+            VISUAL_BLOCK_DURATION_SECONDS,
+            BLOCK_USE_ANIMATION,
+            Holder.of(new SoundEvent("minecraft:entity.generic.eat", null)),
+            false,
+            new Consumable1_21_2.ConsumeEffect[0]
+    );
+
     private static final long MAP_INFO_REQUEST_THROTTLE_MS = 1000L;
 
     // BedrockTag can be null
     public static void handleItem(final UserConnection user, final BedrockItem bedrockItem, final CompoundTag bedrockTag, final Item javaItem) {
+        if (isSwordBlockingAnimationItem(user.get(ItemRewriter.class), bedrockItem)) {
+            javaItem.dataContainer().set(StructuredDataKey.CONSUMABLE1_21_2, VISUAL_BLOCK_CONSUMABLE);
+        }
 
         if (bedrockTag != null) {
 
@@ -135,6 +160,11 @@ public class ExperimentalItemRewriter {
             }
 
         }
+    }
+
+    public static boolean isSwordBlockingAnimationItem(final ItemRewriter itemRewriter, final BedrockItem item) {
+        return ViaBedrock.getConfig().shouldEnableSwordBlockingAnimation()
+                && VANILLA_SWORDS.contains(itemRewriter.bedrockIdentifier(item));
     }
 
     private static void requestMapInfo(final UserConnection user, final long bedrockMapId) {

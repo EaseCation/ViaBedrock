@@ -56,6 +56,7 @@ import net.raphimc.viabedrock.experimental.entity.CustomEntityTypeResolver;
 import net.raphimc.viabedrock.experimental.npc.NpcDialogueModule;
 import net.raphimc.viabedrock.experimental.modinterface.ModUIClientModule;
 import net.raphimc.viabedrock.experimental.resourcepack.ResourcePackModule;
+import net.raphimc.viabedrock.experimental.rewriter.ExperimentalItemRewriter;
 import net.raphimc.viabedrock.experimental.rewriter.InventoryTransactionRewriter;
 import net.raphimc.viabedrock.experimental.riding.RidingModule;
 import net.raphimc.viabedrock.experimental.tablist.TabListLatencyModule;
@@ -784,6 +785,11 @@ public class ExperimentalFeatures {
                 }
 
                 if (!clientPlayer.isUsingItem()) {
+                    // The injected Java consumable produces a release packet, but Bedrock swords have no
+                    // corresponding continuous-use state to release.
+                    if (ExperimentalItemRewriter.isSwordBlockingAnimationItem(wrapper.user().get(ItemRewriter.class), inventoryContainer.getSelectedHotbarItem())) {
+                        return;
+                    }
                     PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryContainer);
                     return;
                 }

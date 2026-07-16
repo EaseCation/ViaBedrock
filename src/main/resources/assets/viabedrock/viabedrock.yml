@@ -1,5 +1,11 @@
 # If true, enables experimental features. These features are almost certainly not fully stable/tested and may cause unexpected issues
 enable-experimental-features: false
+# If true, Java Edition swords play the legacy blocking animation while right-click is held.
+# Normal sword right-click interactions are still forwarded to the Bedrock server.
+# ViaBedrock does not grant damage reduction; only the animation-only release packet is suppressed.
+# Java 1.21.8 still applies its normal held-use movement slowdown while the animation is active.
+# Requires enable-experimental-features: true.
+enable-sword-blocking-animation: false
 # Controls blob caching (Reduces network usage and loading time), Valid options: "disabled", "memory", "disk"
 blob-cache: "disk"
 # If enabled, starts the resource pack HTTP server and enables resource pack translation

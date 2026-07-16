@@ -29,6 +29,7 @@ import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TabListConfigTest {
 
@@ -61,6 +62,17 @@ class TabListConfigTest {
         assertFalse(config.shouldSendTabList());
         assertEquals("Custom %level_name%", config.getTabListHeader());
         assertEquals("", config.getTabListFooter());
+    }
+
+    @Test
+    void loadsSwordBlockingAnimationSetting(@TempDir final Path tempDir) throws IOException {
+        final Path configFile = tempDir.resolve("viabedrock.yml");
+        Files.writeString(configFile, "enable-sword-blocking-animation: true\n");
+
+        final ViaBedrockConfig config = new ViaBedrockConfig(configFile.toFile(), Logger.getAnonymousLogger());
+        config.reload();
+
+        assertTrue(config.shouldEnableSwordBlockingAnimation());
     }
 
 }
