@@ -45,6 +45,17 @@ final class CustomItemDataComponents {
         }
     }
 
+    static void applyMaxStackSize(final Item item, final Integer maxStackSize, final boolean fallbackOnly) {
+        if (maxStackSize == null) {
+            return;
+        }
+        final StructuredDataContainer data = item.dataContainer();
+        if (fallbackOnly && (data.get(StructuredDataKey.MAX_STACK_SIZE) != null || data.hasEmpty(StructuredDataKey.MAX_STACK_SIZE))) {
+            return;
+        }
+        data.set(StructuredDataKey.MAX_STACK_SIZE, maxStackSize);
+    }
+
     static CompoundTag createPaperFallbackIdentity(final String bedrockIdentifier) {
         return createPaperFallbackIdentity(null, bedrockIdentifier);
     }

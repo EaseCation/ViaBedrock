@@ -24,6 +24,7 @@ public final class CustomMappingAccess {
     public enum FallbackReason { VANILLA, ALLOWED_CUSTOM, KNOWN_CUSTOM_FALLBACK, UNKNOWN_CUSTOM_FALLBACK, INVALID_FALLBACK, UNKNOWN_RUNTIME_FALLBACK, DISALLOWED_BLOCK_ENTITY }
     public record JavaBlockStateResolution(int javaBlockStateId, FallbackReason reason) {}
     public record BlockEntityTypeResolution(int javaBlockEntityTypeId, FallbackReason reason) {}
+    public record CustomItemMetadata(int javaRawId, int maxStackSize) {}
 
     private static final CustomMappingAccess SAFE = new Builder().build();
 
@@ -38,7 +39,7 @@ public final class CustomMappingAccess {
     private final IntSet allowedJavaBlockStates;
     private final IntSet allowedBlockEntityTypes;
     private final Map<String, Integer> blockEntityTypeIds;
-    private final Map<String, Integer> itemIds;
+    private final Map<String, CustomItemMetadata> items;
     private final Map<String, BlockEntityRule> identifierRules;
     private final int maxJavaBlockStateId;
     private final long lightProfileKey;
@@ -58,7 +59,7 @@ public final class CustomMappingAccess {
         this.allowedJavaBlockStates = builder.allowedJavaBlockStates;
         this.allowedBlockEntityTypes = builder.allowedBlockEntityTypes;
         this.blockEntityTypeIds = Map.copyOf(builder.blockEntityTypeIds);
-        this.itemIds = Map.copyOf(builder.itemIds);
+        this.items = Map.copyOf(builder.items);
         this.identifierRules = Map.copyOf(builder.identifierRules);
         this.maxJavaBlockStateId = builder.maxJavaBlockStateId;
         this.lightProfileKey = builder.lightProfileKey;
@@ -182,7 +183,12 @@ public final class CustomMappingAccess {
     }
 
     public int customItemSourceId(final String bedrockIdentifier) {
-        return this.itemIds.getOrDefault(bedrockIdentifier, -1);
+        final CustomItemMetadata item = this.items.get(bedrockIdentifier);
+        return item != null ? item.javaRawId() : -1;
+    }
+
+    public CustomItemMetadata customItem(final String bedrockIdentifier) {
+        return this.items.get(bedrockIdentifier);
     }
 
     public int emitLight(final int javaBlockStateId) {
@@ -262,7 +268,7 @@ public final class CustomMappingAccess {
         private final IntOpenHashSet allowedJavaBlockStates = new IntOpenHashSet();
         private final IntOpenHashSet allowedBlockEntityTypes = new IntOpenHashSet();
         private final Map<String, Integer> blockEntityTypeIds = new HashMap<>();
-        private final Map<String, Integer> itemIds = new HashMap<>();
+        private final Map<String, CustomItemMetadata> items = new HashMap<>();
         private final Map<String, BlockEntityRule> identifierRules = new HashMap<>();
         private int maxJavaBlockStateId = BedrockProtocol.MAPPINGS.getVanillaBlockStateCount() - 1;
         private long lightProfileKey = 0xcbf29ce484222325L;
@@ -296,8 +302,8 @@ public final class CustomMappingAccess {
             this.identifierRules.put(bedrockIdentifier, rule);
         }
 
-        public void addItem(final String bedrockIdentifier, final int rawId) {
-            this.itemIds.put(bedrockIdentifier, rawId);
+        public void addItem(final String bedrockIdentifier, final int rawId, final int maxStackSize) {
+            this.items.put(bedrockIdentifier, new CustomItemMetadata(rawId, maxStackSize));
         }
 
         public CustomMappingAccess build() {

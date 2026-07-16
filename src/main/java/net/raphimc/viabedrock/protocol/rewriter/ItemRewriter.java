@@ -42,6 +42,7 @@ import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.model.BlockState;
 import net.raphimc.viabedrock.api.resourcepack.definition.ItemDefinitions;
 import net.raphimc.viabedrock.api.util.TextUtil;
+import net.raphimc.viabedrock.experimental.custommapping.CustomMappingAccess;
 import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
 import net.raphimc.viabedrock.experimental.rewriter.ExperimentalItemRewriter;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
@@ -190,9 +191,10 @@ public class ItemRewriter extends StoredObject {
             javaItem = new StructuredItem(javaItemMapping.id(), bedrockItem.amount(), data);
         } else {
             final CustomMappingSyncStorage customMappingSync = this.user().get(CustomMappingSyncStorage.class);
-            final int syncedCustomItemId = customMappingSync != null ? customMappingSync.access().customItemSourceId(identifier) : -1;
-            if (syncedCustomItemId != -1) {
-                javaItem = new StructuredItem(syncedCustomItemId, bedrockItem.amount(), ProtocolConstants.createStructuredDataContainer());
+            final CustomMappingAccess.CustomItemMetadata syncedCustomItem = customMappingSync != null ? customMappingSync.access().customItem(identifier) : null;
+            if (syncedCustomItem != null) {
+                javaItem = new StructuredItem(syncedCustomItem.javaRawId(), bedrockItem.amount(), ProtocolConstants.createStructuredDataContainer());
+                CustomItemDataComponents.applyMaxStackSize(javaItem, syncedCustomItem.maxStackSize() > 0 ? syncedCustomItem.maxStackSize() : null, false);
             } else {
                 final ResourcePackStorage resourcePackStorage = this.user().get(ResourcePackStorage.class);
                 final ItemDefinitions.ItemDefinition itemDefinition = resourcePackStorage.getItems().get(identifier);
@@ -226,6 +228,9 @@ public class ItemRewriter extends StoredObject {
         }
 
         final ItemDefinitions.ItemDefinition itemDefinition = this.user().get(ResourcePackStorage.class).getItems().get(identifier);
+        if (itemDefinition != null) {
+            CustomItemDataComponents.applyMaxStackSize(javaItem, itemDefinition.maxStackSize(), true);
+        }
         if (paperFallback) {
             CustomItemDataComponents.applyPaperFallbackIdentity(javaItem, identifier);
         }

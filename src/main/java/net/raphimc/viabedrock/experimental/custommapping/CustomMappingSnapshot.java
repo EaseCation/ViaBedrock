@@ -169,7 +169,8 @@ public record CustomMappingSnapshot(
 
     public record ItemEntry(
             String bedrockIdentifier,
-            int targetJavaRawId) {
+            int targetJavaRawId,
+            int maxStackSize) {
     }
 
     public static CustomMappingSnapshot decode(
@@ -184,8 +185,9 @@ public record CustomMappingSnapshot(
         // Schema 3 adds a per-block-state seconds_to_destroy float after the block entity rule (for instant-break
         // detection). Schema 2 is still accepted for forward/backward compatibility during rollout; its block states
         // are read without that field and default to NaN (treated as "unknown", i.e. not instant).
-        // Schema 4 appends Java custom item raw id entries after the block entity type table.
-        if (schemaVersion != 2 && schemaVersion != 3 && schemaVersion != 4) throw new IllegalArgumentException("Unsupported BedrockLoader custom mapping schema " + schemaVersion + " (expected 2, 3 or 4)");
+        // Schema 4 appends Java custom item raw id entries after the block entity type table. Schema 5 appends the
+        // effective Java max stack size to each custom item entry.
+        if (schemaVersion < 2 || schemaVersion > 5) throw new IllegalArgumentException("Unsupported BedrockLoader custom mapping schema " + schemaVersion + " (expected 2, 3, 4 or 5)");
         final int javaProtocolVersion = r.readNonNegativeVarInt("java protocol");
         final int flags = r.readNonNegativeVarInt("flags");
 
@@ -204,9 +206,9 @@ public record CustomMappingSnapshot(
             previousString = strings[i];
         }
 
-        final Set<String> vanillaIdentifiers = vanillaBedrockIdentifiers();
         final int blockStateCount = r.readNonNegativeVarInt("custom block state count");
         if (blockStateCount > maxCustomBlockStates) throw new IllegalArgumentException("Invalid custom block state count");
+        final Set<String> vanillaIdentifiers = blockStateCount == 0 ? Set.of() : vanillaBedrockIdentifiers();
         final List<BlockStateEntry> blockStates = new ArrayList<>(blockStateCount);
         final HashSet<TypedBedrockState> seenStates = new HashSet<>();
         final HashSet<Integer> seenTargetJavaRawIds = new HashSet<>();
@@ -314,13 +316,15 @@ public record CustomMappingSnapshot(
                 if (isPlaceholder(bedrockIdentifier)) throw new IllegalArgumentException("Placeholder item in custom mapping snapshot");
                 if (bedrockIdentifier.startsWith("minecraft:")) throw new IllegalArgumentException("Custom item overrides vanilla identifier: " + bedrockIdentifier);
                 final int targetJavaRawId = r.readNonNegativeVarInt("target item raw id");
+                final int maxStackSize = schemaVersion >= 5 ? r.readNonNegativeVarInt("custom item max stack size") : 0;
                 if ((long) targetJavaRawId >= (long) Integer.MAX_VALUE) throw new IllegalArgumentException("Custom item id exceeds configured maximum");
+                if (schemaVersion >= 5 && (maxStackSize < 1 || maxStackSize > 99)) throw new IllegalArgumentException("Invalid custom item max stack size: " + maxStackSize);
                 if (!itemRawIds.add(targetJavaRawId)) throw new IllegalArgumentException("Duplicate custom item raw id");
                 if (!itemIdentifiers.add(bedrockIdentifier)) throw new IllegalArgumentException("Duplicate custom item identifier");
-                final WireItemOrder order = new WireItemOrder(bedrockIdentifierId, targetJavaRawId);
+                final WireItemOrder order = new WireItemOrder(bedrockIdentifierId, targetJavaRawId, maxStackSize);
                 if (previousItemOrder != null && previousItemOrder.compareTo(order) >= 0) throw new IllegalArgumentException("Items are not sorted");
                 previousItemOrder = order;
-                items.add(new ItemEntry(bedrockIdentifier, targetJavaRawId));
+                items.add(new ItemEntry(bedrockIdentifier, targetJavaRawId, maxStackSize));
             }
         } else {
             items = List.of();
@@ -411,12 +415,14 @@ public record CustomMappingSnapshot(
         }
     }
 
-    private record WireItemOrder(int bedrockIdentifierId, int javaRawId) implements Comparable<WireItemOrder> {
+    private record WireItemOrder(int bedrockIdentifierId, int javaRawId, int maxStackSize) implements Comparable<WireItemOrder> {
         @Override
         public int compareTo(final WireItemOrder other) {
             int cmp = Integer.compare(this.bedrockIdentifierId, other.bedrockIdentifierId);
             if (cmp != 0) return cmp;
-            return Integer.compare(this.javaRawId, other.javaRawId);
+            cmp = Integer.compare(this.javaRawId, other.javaRawId);
+            if (cmp != 0) return cmp;
+            return Integer.compare(this.maxStackSize, other.maxStackSize);
         }
     }
 
