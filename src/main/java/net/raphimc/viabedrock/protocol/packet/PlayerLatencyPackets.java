@@ -25,6 +25,7 @@ import com.viaversion.viaversion.libs.gson.JsonPrimitive;
 import com.viaversion.viaversion.util.GsonUtil;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.util.PacketFactory;
+import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
@@ -72,6 +73,7 @@ public final class PlayerLatencyPackets {
             final PacketWrapper playerInfoUpdate = PacketFactory.createJavaPlayerLatencyUpdate(wrapper.user(), updates);
             playerInfoUpdate.send(BedrockProtocol.class);
             playerList.markLatenciesPublished(updates);
+            ExperimentalFeatures.dispatchPlayerLatenciesUpdated(wrapper.user(), updates);
         });
     }
 

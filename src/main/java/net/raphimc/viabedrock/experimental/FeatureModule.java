@@ -17,6 +17,7 @@
  */
 package net.raphimc.viabedrock.experimental;
 
+import com.viaversion.nbt.tag.Tag;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
@@ -29,7 +30,9 @@ import net.raphimc.viabedrock.protocol.data.enums.Dimension;
 import net.raphimc.viabedrock.protocol.model.EntityLink;
 import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
 
+import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * Interface for modular experimental feature implementations.
@@ -98,6 +101,26 @@ public interface FeatureModule {
      * Called when the Java client registers custom payload channels.
      */
     default void onChannelRegistered(UserConnection user, Set<String> channels) {
+    }
+
+    /**
+     * Resolves whether a player list entry is visible in the Java tab list.
+     */
+    default boolean isPlayerListEntryListed(UserConnection user, UUID uuid, long entityUniqueId, String name) {
+        return true;
+    }
+
+    /**
+     * Allows modules to decorate the Java player list display name.
+     */
+    default Tag decoratePlayerListDisplayName(UserConnection user, UUID uuid, long entityUniqueId, String name, int latency, Tag displayName) {
+        return displayName;
+    }
+
+    /**
+     * Called after latency values for existing Java player list entries are published.
+     */
+    default void onPlayerLatenciesUpdated(UserConnection user, Map<UUID, Integer> latencies) {
     }
 
     /**

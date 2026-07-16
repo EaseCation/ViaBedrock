@@ -17,6 +17,7 @@
  */
 package net.raphimc.viabedrock.experimental;
 
+import com.viaversion.nbt.tag.Tag;
 import com.viaversion.viaversion.api.Via;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.minecraft.BlockFace;
@@ -56,6 +57,7 @@ import net.raphimc.viabedrock.experimental.modinterface.ModUIClientModule;
 import net.raphimc.viabedrock.experimental.resourcepack.ResourcePackModule;
 import net.raphimc.viabedrock.experimental.rewriter.InventoryTransactionRewriter;
 import net.raphimc.viabedrock.experimental.riding.RidingModule;
+import net.raphimc.viabedrock.experimental.tablist.TabListLatencyModule;
 import net.raphimc.viabedrock.experimental.storage.BlockPlacementAckTracker;
 import net.raphimc.viabedrock.experimental.storage.MapTracker;
 import net.raphimc.viabedrock.experimental.storage.MultilineNametagTracker;
@@ -89,7 +91,9 @@ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 
@@ -222,6 +226,41 @@ public class ExperimentalFeatures {
         }
     }
 
+    public static boolean isPlayerListEntryListed(final UserConnection user, final UUID uuid, final long entityUniqueId, final String name) {
+        for (final FeatureModule module : MODULES) {
+            try {
+                if (!module.isPlayerListEntryListed(user, uuid, entityUniqueId, name)) {
+                    return false;
+                }
+            } catch (final Throwable e) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error in module isPlayerListEntryListed", e);
+            }
+        }
+        return true;
+    }
+
+    public static Tag decoratePlayerListDisplayName(final UserConnection user, final UUID uuid, final long entityUniqueId, final String name, final int latency, final Tag displayName) {
+        Tag result = displayName;
+        for (final FeatureModule module : MODULES) {
+            try {
+                result = module.decoratePlayerListDisplayName(user, uuid, entityUniqueId, name, latency, result);
+            } catch (final Throwable e) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error in module decoratePlayerListDisplayName", e);
+            }
+        }
+        return result;
+    }
+
+    public static void dispatchPlayerLatenciesUpdated(final UserConnection user, final Map<UUID, Integer> latencies) {
+        for (final FeatureModule module : MODULES) {
+            try {
+                module.onPlayerLatenciesUpdated(user, latencies);
+            } catch (final Throwable e) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error in module onPlayerLatenciesUpdated", e);
+            }
+        }
+    }
+
     public static String dispatchResolveDimensionKey(final Dimension dimension, final ChunkTracker oldChunkTracker) {
         for (final FeatureModule module : MODULES) {
             try {
@@ -286,6 +325,7 @@ public class ExperimentalFeatures {
         registerModule(new CustomBlockMappingModule());
         registerModule(new ResourcePackModule());
         registerModule(new NpcDialogueModule());
+        registerModule(new TabListLatencyModule());
         registerModule(new CraftingDataModule());
         registerModule(new ClientAuthInventoryModule());
         registerModule(new RidingModule());

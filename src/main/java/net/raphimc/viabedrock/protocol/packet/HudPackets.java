@@ -34,6 +34,7 @@ import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.api.model.scoreboard.ScoreboardEntry;
 import net.raphimc.viabedrock.api.model.scoreboard.ScoreboardObjective;
 import net.raphimc.viabedrock.api.util.*;
+import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
@@ -108,10 +109,10 @@ public class HudPackets {
                                 new GameProfile.Property("is_host", String.valueOf(isHost)),
                                 new GameProfile.Property("is_subclient", String.valueOf(isSubClient))
                         }); // properties
-                        wrapper.write(Types.BOOLEAN, true); // listed
+                        wrapper.write(Types.BOOLEAN, ExperimentalFeatures.isPlayerListEntryListed(wrapper.user(), uuids[i], entityUniqueIds[i], names[i])); // listed
                         final int latency = localPlayer ? packetSyncStorage.latencyMillis() : playerListStorage.serverLatency(uuids[i]);
                         wrapper.write(Types.VAR_INT, latency); // latency
-                        wrapper.write(Types.OPTIONAL_TAG, TextUtil.stringToNbt(names[i])); // display name
+                        wrapper.write(Types.OPTIONAL_TAG, ExperimentalFeatures.decoratePlayerListDisplayName(wrapper.user(), uuids[i], entityUniqueIds[i], names[i], latency, TextUtil.stringToNbt(names[i]))); // display name
 
                         if (localPlayer) {
                             packetSyncStorage.markLatencyPublished(System.nanoTime());

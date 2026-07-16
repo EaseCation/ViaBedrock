@@ -138,6 +138,7 @@ public class MultiStatePackets {
         final PacketWrapper playerInfoUpdate = PacketFactory.createJavaPlayerLatencyUpdate(user, javaUuid, packetSyncStorage.latencyMillis());
         playerInfoUpdate.send(BedrockProtocol.class);
         packetSyncStorage.markLatencyPublished(nowNanos);
+        ExperimentalFeatures.dispatchPlayerLatenciesUpdated(user, Map.of(javaUuid, packetSyncStorage.latencyMillis()));
     }
 
     public static final PacketHandler CLIENT_SETTINGS_HANDLER = wrapper -> {
