@@ -1275,7 +1275,7 @@ public class ChunkTracker extends StoredObject {
                     if (bedrockBiomeName != null) {
                         return BedrockProtocol.MAPPINGS.getJavaBiomes().get(bedrockBiomeName);
                     } else {
-                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing biome: " + bedrockBiome);
+                        ViaBedrock.getPlatform().getLogger().log(Level.FINE, "Missing biome: " + bedrockBiome);
                         return BedrockProtocol.MAPPINGS.getJavaBiomes().get("the_void");
                     }
                 });
