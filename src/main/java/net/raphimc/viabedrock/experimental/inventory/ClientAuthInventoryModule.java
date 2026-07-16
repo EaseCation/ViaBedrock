@@ -152,7 +152,9 @@ public class ClientAuthInventoryModule implements FeatureModule {
 
             final DragState dragState = wrapper.user().get(DragState.class);
             final List<InventoryActionData> actions = validPrediction ? runOrRollback(
-                    () -> ClickSimulator.simulate(containerId, slot, button, action, inventoryTracker, dragState, changedSlots, carriedItem),
+                    () -> ClickSimulator.validateArmorActions(
+                            ClickSimulator.simulate(containerId, slot, button, action, inventoryTracker, dragState, changedSlots, carriedItem),
+                            inventoryTracker),
                     error -> ViaBedrock.getPlatform().getLogger().log(Level.WARNING,
                             "Failed to simulate Java container click; rolling back to the authoritative inventory", error)) : null;
 
