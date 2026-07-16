@@ -37,6 +37,7 @@ import net.raphimc.viabedrock.protocol.data.enums.Direction;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
 import net.raphimc.viabedrock.protocol.data.enums.java.*;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode;
+import net.raphimc.viabedrock.protocol.model.BedrockItem;
 import net.raphimc.viabedrock.protocol.model.EntityAttribute;
 import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
 import net.raphimc.viabedrock.protocol.model.Position3f;
@@ -96,6 +97,7 @@ public class ClientPlayerEntity extends PlayerEntity {
     private BlockBreakingInfo blockBreakingInfo;
     private boolean usingItem;
     private int usingItemStartAge = -1;
+    private ItemUseSnapshot itemUseSnapshot;
     private boolean crossbowChargeFinishSent;
 
     // The UUID the Bedrock server assigned to the local player in the player list. It differs from
@@ -514,7 +516,19 @@ public class ClientPlayerEntity extends PlayerEntity {
     public void setUsingItem(final boolean usingItem) {
         this.usingItem = usingItem;
         this.usingItemStartAge = usingItem ? this.age : -1;
+        if (!usingItem) {
+            this.itemUseSnapshot = null;
+        }
         this.crossbowChargeFinishSent = false;
+    }
+
+    public void startUsingItem(final byte hotbarSlot, final BedrockItem item) {
+        this.setUsingItem(true);
+        this.itemUseSnapshot = new ItemUseSnapshot(hotbarSlot, item);
+    }
+
+    public ItemUseSnapshot itemUseSnapshot() {
+        return this.itemUseSnapshot;
     }
 
     public int usingItemTicks() {
@@ -728,6 +742,18 @@ public class ClientPlayerEntity extends PlayerEntity {
     }
 
     public record BlockBreakingInfo(BlockPosition position, Direction direction) {
+    }
+
+    public record ItemUseSnapshot(byte hotbarSlot, BedrockItem item) {
+
+        public ItemUseSnapshot {
+            item = Objects.requireNonNull(item, "item").copy();
+        }
+
+        public boolean matches(final byte hotbarSlot, final BedrockItem item) {
+            return this.hotbarSlot == hotbarSlot && !this.item.isDifferent(item);
+        }
+
     }
 
     public record AuthInputBlockAction(PlayerActionType action, BlockPosition position, int direction) {

@@ -34,23 +34,32 @@ final class CustomItemDataComponents {
     static void applyPaperFallbackIdentity(final Item item, final String bedrockIdentifier) {
         final StructuredDataContainer data = item.dataContainer();
         final CompoundTag existingCustomData = data.get(StructuredDataKey.CUSTOM_DATA);
-        final CompoundTag customData = existingCustomData != null ? existingCustomData.copy() : new CompoundTag();
-        customData.putString(BEDROCK_IDENTIFIER_KEY, bedrockIdentifier);
-        data.set(StructuredDataKey.CUSTOM_DATA, customData);
+        data.set(StructuredDataKey.CUSTOM_DATA, createPaperFallbackIdentity(existingCustomData, bedrockIdentifier));
     }
 
-    static void applyConsumable(final Item item, final ItemUseDefinition itemUse) {
-        final Consumable1_21_2 consumable = createConsumable(itemUse);
-        if (consumable != null) {
-            item.dataContainer().set(StructuredDataKey.CONSUMABLE1_21_2, consumable);
-            item.dataContainer().set(StructuredDataKey.FOOD1_21_2, createFoodProperties());
+    static void applyConsumable(final Item item, final ItemUseDefinition itemUse, final boolean experimentalFeaturesEnabled) {
+        final ConsumableComponents components = createConsumableComponents(itemUse, experimentalFeaturesEnabled);
+        if (components != null) {
+            item.dataContainer().set(StructuredDataKey.CONSUMABLE1_21_2, components.consumable());
+            item.dataContainer().set(StructuredDataKey.FOOD1_21_2, components.food());
         }
     }
 
     static CompoundTag createPaperFallbackIdentity(final String bedrockIdentifier) {
-        final CompoundTag customData = new CompoundTag();
+        return createPaperFallbackIdentity(null, bedrockIdentifier);
+    }
+
+    static CompoundTag createPaperFallbackIdentity(final CompoundTag existingCustomData, final String bedrockIdentifier) {
+        final CompoundTag customData = existingCustomData != null ? existingCustomData.copy() : new CompoundTag();
         customData.putString(BEDROCK_IDENTIFIER_KEY, bedrockIdentifier);
         return customData;
+    }
+
+    static ConsumableComponents createConsumableComponents(final ItemUseDefinition itemUse, final boolean experimentalFeaturesEnabled) {
+        if (!experimentalFeaturesEnabled || itemUse == null) {
+            return null;
+        }
+        return new ConsumableComponents(createConsumable(itemUse), createFoodProperties());
     }
 
     static Consumable1_21_2 createConsumable(final ItemUseDefinition itemUse) {
@@ -68,6 +77,9 @@ final class CustomItemDataComponents {
 
     static FoodProperties1_21_2 createFoodProperties() {
         return new FoodProperties1_21_2(0, 0F, true);
+    }
+
+    record ConsumableComponents(Consumable1_21_2 consumable, FoodProperties1_21_2 food) {
     }
 
     private CustomItemDataComponents() {

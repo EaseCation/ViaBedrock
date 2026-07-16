@@ -1,7 +1,7 @@
 # ViaBedrock 自定义可消耗物品翻译设计
 
 - 日期：2026-07-15
-- 状态：主体实现完成，审查修订已确认、待实现
+- 状态：已实现并完成本地自动化测试与全工作区构建验证，待运行环境手动验收
 - worktree：`/home/ec/workspace/worktrees/viabedrock-custom-consumables/ViaProxyWorkspace`
 - 分支：ViaProxyWorkspace 与 ViaBedrock 均使用 `fix/custom-consumable-items`
 - 范围：ViaBedrock 源码、测试与本地构建；不修改 CodeFunCore/Nukkit/BedrockLoader，不推送、不部署、不重启服务
@@ -260,6 +260,8 @@ cd /home/ec/workspace/worktrees/viabedrock-custom-consumables/ViaProxyWorkspace
 ./gradlew build --no-daemon
 git -C ViaBedrock diff --check
 ```
+
+2026-07-16 本地验证结果：Java 21.0.10；ViaBedrock 定向测试与强制编译通过（47 个任务）；全工作区构建通过（104 个任务）。
 
 如完整 workspace build 因主分支既有问题失败，需用未修改的基线执行同一命令对比后再归因。本任务不把既有失败算作修复回归。
 

@@ -27,6 +27,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -43,6 +44,18 @@ class CustomItemDataComponentsTest {
     }
 
     @Test
+    void paperFallbackIdentityPreservesExistingCustomData() {
+        final CompoundTag existing = new CompoundTag();
+        existing.putString("test:owner", "inventory");
+
+        final CompoundTag merged = CustomItemDataComponents.createPaperFallbackIdentity(existing, "easecation:stackable_potion_heal");
+
+        assertEquals("inventory", merged.getString("test:owner"));
+        assertEquals("easecation:stackable_potion_heal", merged.getString(CustomItemDataComponents.BEDROCK_IDENTIFIER_KEY));
+        assertNull(existing.getString(CustomItemDataComponents.BEDROCK_IDENTIFIER_KEY));
+    }
+
+    @Test
     void drinkConsumableUsesBedrockDurationWithoutLocalEffects() {
         final Consumable1_21_2 consumable = CustomItemDataComponents.createConsumable(new ItemUseDefinition(32, UseAnimation.DRINK));
         assertEquals(1.6F, consumable.consumeSeconds());
@@ -55,6 +68,20 @@ class CustomItemDataComponentsTest {
     @Test
     void missingItemUseDefinitionDoesNotAddConsumable() {
         assertNull(CustomItemDataComponents.createConsumable(null));
+    }
+
+    @Test
+    void consumableComponentsRequireExperimentalFeatures() {
+        final ItemUseDefinition itemUse = new ItemUseDefinition(32, UseAnimation.DRINK);
+
+        assertNull(CustomItemDataComponents.createConsumableComponents(itemUse, false));
+        assertNull(CustomItemDataComponents.createConsumableComponents(null, true));
+
+        final CustomItemDataComponents.ConsumableComponents components = CustomItemDataComponents.createConsumableComponents(itemUse, true);
+        assertNotNull(components);
+        assertEquals(1.6F, components.consumable().consumeSeconds());
+        assertEquals(0, components.food().nutrition());
+        assertTrue(components.food().canAlwaysEat());
     }
 
     @Test

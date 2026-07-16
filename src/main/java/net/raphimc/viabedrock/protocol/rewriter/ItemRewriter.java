@@ -230,7 +230,7 @@ public class ItemRewriter extends StoredObject {
             CustomItemDataComponents.applyPaperFallbackIdentity(javaItem, identifier);
         }
         if (itemDefinition != null) {
-            CustomItemDataComponents.applyConsumable(javaItem, itemDefinition.itemUseDefinition());
+            CustomItemDataComponents.applyConsumable(javaItem, itemDefinition.itemUseDefinition(), ViaBedrock.getConfig().shouldEnableExperimentalFeatures());
         }
 
         final CompoundTag bedrockTag = bedrockItem.tag();
