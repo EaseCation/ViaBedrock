@@ -40,6 +40,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class BedrockArmorDataTest {
 
     private static final String DATA_ROOT = "/assets/viabedrock/data/bedrock/";
+    private static final String JAVA_DATA_ROOT = "/assets/viabedrock/data/java/";
 
     @Test
     void vanillaArmorProtectionMatchesCurrentBedrockArmorTag() {
@@ -70,6 +71,22 @@ class BedrockArmorDataTest {
         assertEquals(2, protection.get("minecraft:turtle_helmet"));
     }
 
+    @Test
+    void everyBedrockArmorItemUsesJavaStackLimitOne() {
+        final JsonObject stackLimits = loadJson(JAVA_DATA_ROOT, "item_max_stack_sizes.json");
+        final JsonArray armorTag = loadJson(DATA_ROOT, "item_tags.json").getAsJsonArray("minecraft:is_armor");
+
+        for (JsonElement item : armorTag) {
+            final String identifier = item.getAsString();
+            final String javaIdentifier = identifier.startsWith("minecraft:") ? identifier.substring("minecraft:".length()) : identifier;
+            assertNotNull(stackLimits.get(javaIdentifier), "Missing Java stack limit for " + identifier);
+            assertEquals(1, stackLimits.get(javaIdentifier).getAsInt(), "Armor must not stack: " + identifier);
+        }
+        assertEquals(1, stackLimits.get("netherite_boots").getAsInt());
+        assertEquals(16, stackLimits.get("ender_pearl").getAsInt());
+        assertEquals(64, stackLimits.get("stone").getAsInt());
+    }
+
     private static int setTotal(final Map<String, Integer> protection, final String material) {
         return protection.get("minecraft:" + material + "_helmet")
                 + protection.get("minecraft:" + material + "_chestplate")
@@ -90,7 +107,11 @@ class BedrockArmorDataTest {
     }
 
     private static JsonObject loadJson(final String name) {
-        final InputStream stream = BedrockArmorDataTest.class.getResourceAsStream(DATA_ROOT + name);
+        return loadJson(DATA_ROOT, name);
+    }
+
+    private static JsonObject loadJson(final String root, final String name) {
+        final InputStream stream = BedrockArmorDataTest.class.getResourceAsStream(root + name);
         assertNotNull(stream, "Missing test resource " + name);
         return GsonUtil.getGson().fromJson(new InputStreamReader(stream, StandardCharsets.UTF_8), JsonObject.class);
     }
