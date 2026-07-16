@@ -33,7 +33,7 @@ public record RuntimeProjection(
             builder.addBlockState(state.runtimeId(), state.bedrockIdentifier(), blockStatesAreFinalOutput ? state.targetJavaRawId() : state.sourceJavaRawId(), state.fallbackSourceJavaRawId(), state.emit(), state.filter(), state.secondsToDestroy(), state.rule());
         }
         for (SnapshotProfile.ItemMapping item : this.items) {
-            builder.addItem(item.bedrockIdentifier(), itemsAreFinalOutput ? item.targetJavaRawId() : item.sourceJavaRawId());
+            builder.addItem(item.bedrockIdentifier(), itemsAreFinalOutput ? item.targetJavaRawId() : item.sourceJavaRawId(), item.maxStackSize());
         }
         return builder.build();
     }

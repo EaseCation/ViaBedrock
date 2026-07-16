@@ -43,6 +43,13 @@ public final class SnapshotProfile {
     }
 
     public static SnapshotProfile fromSnapshot(final CustomMappingSnapshot snapshot, final long cacheKey) {
+        return fromSnapshot(snapshot, cacheKey, BedrockProtocol.MAPPINGS.getJavaItems().size());
+    }
+
+    static SnapshotProfile fromSnapshot(final CustomMappingSnapshot snapshot, final long cacheKey, final int itemSourceBase) {
+        if (itemSourceBase < 0) {
+            throw new IllegalArgumentException("Item source base must be non-negative");
+        }
         final List<String> diagnostics = new ArrayList<>();
         final List<BlockEntityTypeMapping> entityTypes = new ArrayList<>();
         final Map<String, BlockEntityTypeMapping> entityTypesByBedrockIdentifier = new HashMap<>();
@@ -57,9 +64,9 @@ public final class SnapshotProfile {
 
         final List<ItemMapping> items = new ArrayList<>();
         final Map<String, ItemMapping> itemsByBedrockIdentifier = new HashMap<>();
-        int nextItemSourceId = BedrockProtocol.MAPPINGS.getJavaItems().size();
+        int nextItemSourceId = itemSourceBase;
         for (CustomMappingSnapshot.ItemEntry item : snapshot.items()) {
-            final ItemMapping mapping = new ItemMapping(item.bedrockIdentifier(), nextItemSourceId++, item.targetJavaRawId());
+            final ItemMapping mapping = new ItemMapping(item.bedrockIdentifier(), nextItemSourceId++, item.targetJavaRawId(), item.maxStackSize());
             items.add(mapping);
             itemsByBedrockIdentifier.put(item.bedrockIdentifier(), mapping);
         }
@@ -164,7 +171,7 @@ public final class SnapshotProfile {
     public record BlockEntityTypeMapping(String bedrockIdentifier, String javaIdentifier, int sourceJavaRawId, int targetJavaRawId, CustomMappingAccess.BlockEntityRule rule) {
     }
 
-    public record ItemMapping(String bedrockIdentifier, int sourceJavaRawId, int targetJavaRawId) {
+    public record ItemMapping(String bedrockIdentifier, int sourceJavaRawId, int targetJavaRawId, int maxStackSize) {
     }
 
     private static int rawIdFor(final String blockStateString) {
