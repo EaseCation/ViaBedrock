@@ -17,11 +17,15 @@
  */
 package net.raphimc.viabedrock.protocol.rewriter;
 
+import com.viaversion.viaversion.api.data.FullMappings;
 import com.viaversion.viaversion.api.minecraft.data.StructuredData;
 import com.viaversion.viaversion.api.minecraft.data.StructuredDataContainer;
 import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
 import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
 import org.junit.jupiter.api.Test;
+
+import java.lang.reflect.Field;
+import java.lang.reflect.Proxy;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -29,8 +33,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 class CustomItemDataComponentsTest {
 
     @Test
-    void synchronizedStackSizeIsApplied() {
-        final StructuredItem item = itemWith();
+    void synchronizedStackSizeIsApplied() throws ReflectiveOperationException {
+        final StructuredItem item = emptyItemWithLookup();
 
         CustomItemDataComponents.applyMaxStackSize(item, 16, false);
 
@@ -57,6 +61,26 @@ class CustomItemDataComponentsTest {
 
     private static StructuredItem itemWith(final StructuredData<?>... data) {
         return new StructuredItem(10_000, 1, new StructuredDataContainer(data));
+    }
+
+    private static StructuredItem emptyItemWithLookup() throws ReflectiveOperationException {
+        final StructuredDataContainer container = new StructuredDataContainer();
+        final FullMappings lookup = (FullMappings) Proxy.newProxyInstance(
+                FullMappings.class.getClassLoader(),
+                new Class<?>[]{FullMappings.class},
+                (proxy, method, args) -> {
+                    if (method.getName().equals("id") || method.getName().equals("mappedId")) {
+                        return 1;
+                    }
+                    throw new UnsupportedOperationException(method.toString());
+                }
+        );
+
+        // Production receives this serializer lookup from the initialized ViaVersion protocol.
+        final Field lookupField = StructuredDataContainer.class.getDeclaredField("lookup");
+        lookupField.setAccessible(true);
+        lookupField.set(container, lookup);
+        return new StructuredItem(10_000, 1, container);
     }
 
 }
