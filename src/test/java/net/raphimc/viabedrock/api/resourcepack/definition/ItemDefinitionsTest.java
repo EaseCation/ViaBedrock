@@ -23,6 +23,7 @@ import com.viaversion.nbt.tag.IntTag;
 import com.viaversion.nbt.tag.LongTag;
 import com.viaversion.nbt.tag.StringTag;
 import com.viaversion.nbt.tag.Tag;
+import com.viaversion.viaversion.libs.gson.JsonObject;
 import net.raphimc.viabedrock.protocol.rewriter.BedrockArmorProtectionRegistry;
 import org.junit.jupiter.api.Test;
 
@@ -36,6 +37,61 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ItemDefinitionsTest {
+
+    @Test
+    void parsesResourceAndNetworkMaxStackSizes() {
+        final ItemDefinitions definitions = new ItemDefinitions(message -> {});
+        final JsonObject resourceComponents = new JsonObject();
+        resourceComponents.addProperty("minecraft:max_stack_size", 16);
+        definitions.addFromResourceComponents("test:stacked", resourceComponents);
+        assertEquals(16, definitions.get("test:stacked").maxStackSize());
+
+        final CompoundTag components = new CompoundTag();
+        final CompoundTag itemProperties = new CompoundTag();
+        itemProperties.putInt("max_stack_size", 64);
+        components.put("item_properties", itemProperties);
+        definitions.addFromNetworkTag("test:stacked", componentsTag(components));
+        assertEquals(64, definitions.get("test:stacked").maxStackSize());
+
+        final CompoundTag maxStackSize = new CompoundTag();
+        maxStackSize.putInt("value", 1);
+        components.put("minecraft:max_stack_size", maxStackSize);
+        definitions.addFromNetworkTag("test:stacked", componentsTag(components));
+        assertEquals(1, definitions.get("test:stacked").maxStackSize());
+    }
+
+    @Test
+    void preservesResourceMaxStackSizeWhenNetworkDefinitionOmitsIt() {
+        final ItemDefinitions definitions = new ItemDefinitions(message -> {});
+        final JsonObject resourceComponents = new JsonObject();
+        final JsonObject maxStackSize = new JsonObject();
+        maxStackSize.addProperty("value", 16);
+        resourceComponents.add("minecraft:max_stack_size", maxStackSize);
+        definitions.addFromResourceComponents("test:stacked", resourceComponents);
+
+        definitions.addFromNetworkTag("test:stacked", componentsTag(new CompoundTag()));
+
+        assertEquals(16, definitions.get("test:stacked").maxStackSize());
+    }
+
+    @Test
+    void invalidMaxStackSizesDegradeAndWarnOnce() {
+        final List<String> warnings = new ArrayList<>();
+        final ItemDefinitions definitions = new ItemDefinitions(warnings::add);
+        final CompoundTag invalid = new CompoundTag();
+        final CompoundTag itemProperties = new CompoundTag();
+        itemProperties.putInt("max_stack_size", 100);
+        invalid.put("item_properties", itemProperties);
+
+        definitions.addFromNetworkTag("test:broken_stack", componentsTag(invalid));
+        definitions.addFromNetworkTag("test:broken_stack", componentsTag(invalid));
+
+        assertNull(definitions.get("test:broken_stack").maxStackSize());
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.getFirst().contains("test:broken_stack"));
+        assertThrows(IllegalArgumentException.class, () -> ItemDefinitions.parseMaxStackSize(new IntTag(0)));
+        assertThrows(IllegalArgumentException.class, () -> ItemDefinitions.parseMaxStackSize(new IntTag(100)));
+    }
 
     @Test
     void parsesAndReplacesNetworkArmorProtection() {
@@ -100,6 +156,12 @@ class ItemDefinitionsTest {
         componentsOnly.put("components", new CompoundTag());
         definitions.addFromNetworkTag("minecraft:iron_helmet", componentsOnly);
         assertEquals(0, registry.protection("minecraft:iron_helmet"));
+    }
+
+    private static CompoundTag componentsTag(final CompoundTag components) {
+        final CompoundTag itemTag = new CompoundTag();
+        itemTag.put("components", components);
+        return itemTag;
     }
 
     private static CompoundTag itemTag(final Tag protection) {
