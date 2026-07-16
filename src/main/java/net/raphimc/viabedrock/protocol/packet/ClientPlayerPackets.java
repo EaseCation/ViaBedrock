@@ -39,6 +39,7 @@ import net.raphimc.viabedrock.api.util.MathUtil;
 import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
+import net.raphimc.viabedrock.experimental.inventory.ItemUseHandContext;
 import net.raphimc.viabedrock.experimental.model.PlayerAuthInputContext;
 import net.raphimc.viabedrock.experimental.model.inventory.BedrockInventoryTransaction;
 import net.raphimc.viabedrock.experimental.rewriter.InventoryTransactionRewriter;
@@ -451,21 +452,21 @@ public class ClientPlayerPackets {
         });
         protocol.registerServerbound(ServerboundPackets26_1.INTERACT, ServerboundBedrockPackets.INVENTORY_TRANSACTION, wrapper -> {
             final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
-            final InventoryContainer inventoryContainer = wrapper.user().get(InventoryTracker.class).getInventoryContainer();
             final int entityId = wrapper.read(Types.VAR_INT); // entity id
+            final InteractionHand hand = InteractionHand.values()[wrapper.read(Types.VAR_INT)]; // hand
             final Entity entity = entityTracker.getEntityByJid(entityId);
             if (entity == null) {
                 // Item frames are blocks on Bedrock exposed to the Java client as fake entities; translate the
                 // right-click into the block interaction the server expects (place / rotate the held item).
-                ExperimentalFeatures.tryHandleItemFrameInteract(wrapper.user(), entityId);
+                ExperimentalFeatures.tryHandleItemFrameInteract(wrapper.user(), entityId, hand);
                 wrapper.cancel();
                 return;
             }
-            final InteractionHand hand = InteractionHand.values()[wrapper.read(Types.VAR_INT)]; // hand
-            if (hand != InteractionHand.MAIN_HAND) {
+            if (hand != InteractionHand.MAIN_HAND && !ViaBedrock.getConfig().shouldEnableExperimentalFeatures()) {
                 wrapper.cancel();
                 return;
             }
+            final ItemUseHandContext handContext = ItemUseHandContext.resolve(wrapper.user().get(InventoryTracker.class), hand);
 
             // TODO: Bedrock client sends INTERACT packet when hovered entity changes. Might be used by anticheats
 
@@ -474,8 +475,8 @@ public class ClientPlayerPackets {
             wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, 0); // actions count
             wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG, entity.runtimeId()); // entity runtime id
             wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, ItemUseOnActorInventoryTransaction_ActionType.Interact.getValue()); // action type
-            wrapper.write(BedrockTypes.VAR_INT, (int) inventoryContainer.getSelectedHotbarSlot()); // hotbar slot
-            wrapper.write(wrapper.user().get(ItemRewriter.class).itemType(), inventoryContainer.getSelectedHotbarItem()); // held item
+            wrapper.write(BedrockTypes.VAR_INT, handContext.transactionHotbarSlot()); // hotbar slot
+            wrapper.write(wrapper.user().get(ItemRewriter.class).itemType(), handContext.item()); // held item
             wrapper.write(BedrockTypes.POSITION_3F, entityTracker.getClientPlayer().position()); // player position
             final Vector3d location = wrapper.read(Types.LOW_PRECISION_VECTOR); // location
             wrapper.write(BedrockTypes.POSITION_3F, entity.position().add((float) location.x(), (float) location.y(), (float) location.z())); // click position

@@ -19,6 +19,7 @@ package net.raphimc.viabedrock.api.model.entity;
 
 import com.viaversion.nbt.tag.CompoundTag;
 import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity.ItemUseSnapshot;
+import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
 import org.junit.jupiter.api.Test;
 
@@ -30,24 +31,41 @@ class ItemUseSnapshotTest {
     @Test
     void matchesSameSlotAndIdentityDespiteAmountChanges() {
         final BedrockItem original = item(100, (short) 2, (byte) 8, 200, "heal");
-        final ItemUseSnapshot snapshot = new ItemUseSnapshot((byte) 3, original);
+        final ItemUseSnapshot snapshot = new ItemUseSnapshot(InteractionHand.MAIN_HAND, (byte) 0, 3, 3, original);
 
         original.setIdentifier(101);
         final BedrockItem current = item(100, (short) 2, (byte) 7, 200, "heal");
 
-        assertTrue(snapshot.matches((byte) 3, current));
+        assertTrue(snapshot.matches(InteractionHand.MAIN_HAND, (byte) 0, 3, 3, current));
     }
 
     @Test
-    void rejectsSlotOrItemIdentityChanges() {
-        final ItemUseSnapshot snapshot = new ItemUseSnapshot((byte) 3, item(100, (short) 2, (byte) 8, 200, "heal"));
+    void matchesOffhandContainerContext() {
+        final BedrockItem item = item(100, (short) 2, (byte) 8, 200, "heal");
+        final ItemUseSnapshot snapshot = new ItemUseSnapshot(InteractionHand.OFF_HAND, (byte) 119, 0, -1, item);
 
-        assertFalse(snapshot.matches((byte) 4, item(100, (short) 2, (byte) 8, 200, "heal")));
-        assertFalse(snapshot.matches((byte) 3, item(101, (short) 2, (byte) 8, 200, "heal")));
-        assertFalse(snapshot.matches((byte) 3, item(100, (short) 3, (byte) 8, 200, "heal")));
-        assertFalse(snapshot.matches((byte) 3, item(100, (short) 2, (byte) 8, 201, "heal")));
-        assertFalse(snapshot.matches((byte) 3, item(100, (short) 2, (byte) 8, 200, "speed")));
-        assertFalse(snapshot.matches((byte) 3, null));
+        assertTrue(snapshot.matches(InteractionHand.OFF_HAND, (byte) 119, 0, -1, item));
+    }
+
+    @Test
+    void rejectsHandSlotOrItemIdentityChanges() {
+        final ItemUseSnapshot snapshot = new ItemUseSnapshot(
+                InteractionHand.MAIN_HAND,
+                (byte) 0,
+                3,
+                3,
+                item(100, (short) 2, (byte) 8, 200, "heal")
+        );
+
+        assertFalse(snapshot.matches(InteractionHand.OFF_HAND, (byte) 0, 3, 3, item(100, (short) 2, (byte) 8, 200, "heal")));
+        assertFalse(snapshot.matches(InteractionHand.MAIN_HAND, (byte) 119, 3, 3, item(100, (short) 2, (byte) 8, 200, "heal")));
+        assertFalse(snapshot.matches(InteractionHand.MAIN_HAND, (byte) 0, 4, 3, item(100, (short) 2, (byte) 8, 200, "heal")));
+        assertFalse(snapshot.matches(InteractionHand.MAIN_HAND, (byte) 0, 3, 4, item(100, (short) 2, (byte) 8, 200, "heal")));
+        assertFalse(snapshot.matches(InteractionHand.MAIN_HAND, (byte) 0, 3, 3, item(101, (short) 2, (byte) 8, 200, "heal")));
+        assertFalse(snapshot.matches(InteractionHand.MAIN_HAND, (byte) 0, 3, 3, item(100, (short) 3, (byte) 8, 200, "heal")));
+        assertFalse(snapshot.matches(InteractionHand.MAIN_HAND, (byte) 0, 3, 3, item(100, (short) 2, (byte) 8, 201, "heal")));
+        assertFalse(snapshot.matches(InteractionHand.MAIN_HAND, (byte) 0, 3, 3, item(100, (short) 2, (byte) 8, 200, "speed")));
+        assertFalse(snapshot.matches(InteractionHand.MAIN_HAND, (byte) 0, 3, 3, null));
     }
 
     private static BedrockItem item(final int id, final short data, final byte amount, final int blockRuntimeId, final String effect) {

@@ -37,6 +37,7 @@ import net.raphimc.viabedrock.protocol.data.enums.Direction;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
 import net.raphimc.viabedrock.protocol.data.enums.java.*;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode;
+import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
 import net.raphimc.viabedrock.protocol.model.EntityAttribute;
 import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
@@ -514,17 +515,24 @@ public class ClientPlayerEntity extends PlayerEntity {
     }
 
     public void setUsingItem(final boolean usingItem) {
-        this.usingItem = usingItem;
-        this.usingItemStartAge = usingItem ? this.age : -1;
-        if (!usingItem) {
-            this.itemUseSnapshot = null;
+        if (usingItem) {
+            throw new IllegalArgumentException("Starting item use requires a hand and item snapshot");
         }
+        this.usingItem = usingItem;
+        this.usingItemStartAge = -1;
+        this.itemUseSnapshot = null;
         this.crossbowChargeFinishSent = false;
     }
 
-    public void startUsingItem(final byte hotbarSlot, final BedrockItem item) {
-        this.setUsingItem(true);
-        this.itemUseSnapshot = new ItemUseSnapshot(hotbarSlot, item);
+    public void startUsingItem(final InteractionHand hand, final byte containerId, final int containerSlot, final int transactionHotbarSlot, final BedrockItem item) {
+        this.usingItem = true;
+        this.usingItemStartAge = this.age;
+        this.itemUseSnapshot = new ItemUseSnapshot(hand, containerId, containerSlot, transactionHotbarSlot, item);
+        this.crossbowChargeFinishSent = false;
+    }
+
+    public InteractionHand usingItemHand() {
+        return this.itemUseSnapshot != null ? this.itemUseSnapshot.hand() : null;
     }
 
     public ItemUseSnapshot itemUseSnapshot() {
@@ -744,14 +752,19 @@ public class ClientPlayerEntity extends PlayerEntity {
     public record BlockBreakingInfo(BlockPosition position, Direction direction) {
     }
 
-    public record ItemUseSnapshot(byte hotbarSlot, BedrockItem item) {
+    public record ItemUseSnapshot(InteractionHand hand, byte containerId, int containerSlot, int transactionHotbarSlot, BedrockItem item) {
 
         public ItemUseSnapshot {
+            Objects.requireNonNull(hand, "hand");
             item = Objects.requireNonNull(item, "item").copy();
         }
 
-        public boolean matches(final byte hotbarSlot, final BedrockItem item) {
-            return this.hotbarSlot == hotbarSlot && !this.item.isDifferent(item);
+        public boolean matches(final InteractionHand hand, final byte containerId, final int containerSlot, final int transactionHotbarSlot, final BedrockItem item) {
+            return this.hand == hand
+                    && this.containerId == containerId
+                    && this.containerSlot == containerSlot
+                    && this.transactionHotbarSlot == transactionHotbarSlot
+                    && !this.item.isDifferent(item);
         }
 
     }
