@@ -57,6 +57,15 @@ class ClickSimulatorPredictionTest {
         assertFalse(ClickSimulator.samePredictedStack(authoritativeItem, new HashedStructuredItem(2, 1)));
     }
 
+    @Test
+    void rejectsGhostArmorPredictionAboveJavaStackLimit() {
+        assertTrue(ClickSimulator.isValidPredictedTargetAmount(new HashedStructuredItem(1, 1), 1));
+        assertFalse(ClickSimulator.isValidPredictedTargetAmount(new HashedStructuredItem(1, 2), 1));
+        assertFalse(ClickSimulator.isValidPredictedTargetAmount(new HashedStructuredItem(1, 100), 99));
+        assertFalse(ClickSimulator.isValidPredictedTargetAmount(HashedStructuredItem.empty(), 1));
+        assertFalse(ClickSimulator.isValidPredictedTargetAmount(new HashedStructuredItem(1, 1), 0));
+    }
+
     private static Item enchantedItem(final int identifier, final int amount) {
         final Enchantments enchantments = new Enchantments(true);
         enchantments.add(0, 4);

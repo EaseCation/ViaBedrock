@@ -47,4 +47,12 @@ class ClientAuthInventoryModuleTest {
         assertEquals("actions", ClientAuthInventoryModule.runOrRollback(() -> "actions", handled::set));
         assertNull(handled.get());
     }
+
+    @Test
+    void unsupportedSimulationPreservesAuthoritativeRollbackSignal() {
+        final AtomicReference<RuntimeException> handled = new AtomicReference<>();
+
+        assertNull(ClientAuthInventoryModule.runOrRollback(() -> null, handled::set));
+        assertNull(handled.get());
+    }
 }
