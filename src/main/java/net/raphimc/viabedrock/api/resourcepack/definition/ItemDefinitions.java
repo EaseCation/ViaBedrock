@@ -37,9 +37,13 @@ import java.util.logging.Level;
 // https://wiki.bedrock.dev/items/item-components.html
 public class ItemDefinitions {
 
+    static final int DEFAULT_USE_DURATION_TICKS = 32;
+    static final int MAX_USE_DURATION_TICKS = 72_000;
+
     private final Map<String, ItemDefinition> items = new HashMap<>();
     private final Set<String> malformedArmorWarnings = new HashSet<>();
-    private final Consumer<String> malformedArmorLogger;
+    private final Set<String> malformedItemUseWarnings = new HashSet<>();
+    private final Consumer<String> warningLogger;
 
     public ItemDefinitions(final ResourcePackStorage resourcePackStorage) {
         this(message -> ViaBedrock.getPlatform().getLogger().log(Level.WARNING, message));
@@ -48,17 +52,7 @@ public class ItemDefinitions {
                 try {
                     final JsonObject item = pack.content().getJson(itemPath).getAsJsonObject("minecraft:item");
                     final String identifier = Key.namespaced(item.getAsJsonObject("description").get("identifier").getAsString());
-                    final ItemDefinition itemDefinition = new ItemDefinition(identifier, false);
-                    if (item.has("components")) {
-                        final JsonObject components = item.getAsJsonObject("components");
-                        if (components.has("minecraft:icon")) {
-                            itemDefinition.iconComponent = components.get("minecraft:icon").getAsString();
-                        }
-                        if (components.has("minecraft:display_name")) {
-                            itemDefinition.displayNameComponent = components.get("minecraft:display_name").getAsString();
-                        }
-                    }
-                    this.items.put(identifier, itemDefinition);
+                    this.addFromResourceComponents(identifier, item.has("components") ? item.getAsJsonObject("components") : new JsonObject());
                 } catch (Throwable e) {
                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to parse item definition " + itemPath + " in pack " + pack.key(), e);
                 }
@@ -66,12 +60,30 @@ public class ItemDefinitions {
         }
     }
 
-    ItemDefinitions(final Consumer<String> malformedArmorLogger) {
-        this.malformedArmorLogger = malformedArmorLogger;
+    ItemDefinitions(final Consumer<String> warningLogger) {
+        this.warningLogger = warningLogger;
+    }
+
+    void addFromResourceComponents(final String identifier, final JsonObject components) {
+        final ItemDefinition itemDefinition = new ItemDefinition(identifier, false);
+        if (components.has("minecraft:icon")) {
+            itemDefinition.iconComponent = components.get("minecraft:icon").getAsString();
+        }
+        if (components.has("minecraft:display_name")) {
+            itemDefinition.displayNameComponent = components.get("minecraft:display_name").getAsString();
+        }
+        if (components.has("minecraft:use_animation") && components.get("minecraft:use_animation").isJsonPrimitive()) {
+            itemDefinition.useAnimation = UseAnimation.byName(components.get("minecraft:use_animation").getAsString());
+        }
+        this.items.put(identifier, itemDefinition);
     }
 
     public void addFromNetworkTag(final String identifier, final CompoundTag tag) {
         final ItemDefinition itemDefinition = new ItemDefinition(identifier, true);
+        final ItemDefinition existingDefinition = this.items.get(identifier);
+        if (existingDefinition != null) {
+            itemDefinition.copyPresentationFrom(existingDefinition);
+        }
         if (tag.get("components") instanceof CompoundTag components) {
             if (components.get("item_properties") instanceof CompoundTag itemProperties) {
                 if (itemProperties.get("minecraft:icon") instanceof CompoundTag icon) {
@@ -79,6 +91,12 @@ public class ItemDefinitions {
                         if (texture.get("default") instanceof StringTag defaultTexture) {
                             itemDefinition.iconComponent = defaultTexture.getValue();
                         }
+                    }
+                }
+                if (itemProperties.get("use_animation") instanceof NumberTag animationTag) {
+                    final UseAnimation animation = UseAnimation.byBedrockId(animationTag.asInt());
+                    if (animation != null) {
+                        itemDefinition.useAnimation = animation;
                     }
                 }
             }
@@ -94,12 +112,35 @@ public class ItemDefinitions {
                 } catch (IllegalArgumentException e) {
                     itemDefinition.armorProtection = 0;
                     if (this.malformedArmorWarnings.add(identifier)) {
-                        this.malformedArmorLogger.accept("Invalid minecraft:armor component for item " + identifier + ": " + e.getMessage());
+                        this.warningLogger.accept("Invalid minecraft:armor component for item " + identifier + ": " + e.getMessage());
                     }
                 }
             }
+
+            final Tag foodComponent = components.get("minecraft:food");
+            if (foodComponent instanceof CompoundTag) {
+                itemDefinition.consumable = true;
+                final Tag durationTag = components.get("minecraft:use_duration") != null
+                        ? components.get("minecraft:use_duration")
+                        : components.get("item_properties") instanceof CompoundTag itemProperties ? itemProperties.get("use_duration") : null;
+                if (durationTag != null) {
+                    try {
+                        itemDefinition.useDurationTicks = parseUseDurationTicks(durationTag);
+                    } catch (IllegalArgumentException e) {
+                        this.warnInvalidItemUse(identifier, e.getMessage());
+                    }
+                }
+            } else if (foodComponent != null) {
+                this.warnInvalidItemUse(identifier, "minecraft:food component is not a compound tag");
+            }
         }
         this.items.put(identifier, itemDefinition);
+    }
+
+    private void warnInvalidItemUse(final String identifier, final String reason) {
+        if (this.malformedItemUseWarnings.add(identifier)) {
+            this.warningLogger.accept("Invalid consumable components for item " + identifier + ": " + reason);
+        }
     }
 
     static int parseArmorProtection(final Tag armorComponent) {
@@ -117,6 +158,18 @@ public class ItemDefinitions {
         return (int) protection;
     }
 
+    static int parseUseDurationTicks(final Tag useDurationTag) {
+        if (!(useDurationTag instanceof NumberTag numberTag)) {
+            throw new IllegalArgumentException("use duration is not numeric");
+        }
+
+        final double useDuration = numberTag.asDouble();
+        if (!Double.isFinite(useDuration) || useDuration <= 0D || useDuration > MAX_USE_DURATION_TICKS || useDuration != Math.rint(useDuration)) {
+            throw new IllegalArgumentException("use duration is not an integer between 1 and " + MAX_USE_DURATION_TICKS + " ticks");
+        }
+        return (int) useDuration;
+    }
+
     public ItemDefinition get(final String identifier) {
         return this.items.get(identifier);
     }
@@ -132,6 +185,9 @@ public class ItemDefinitions {
         private String iconComponent;
         private String displayNameComponent;
         private Integer armorProtection;
+        private boolean consumable;
+        private int useDurationTicks = DEFAULT_USE_DURATION_TICKS;
+        private UseAnimation useAnimation;
 
         public ItemDefinition(final String identifier) {
             this(identifier, false);
@@ -162,6 +218,67 @@ public class ItemDefinitions {
             return this.armorProtection;
         }
 
+        public ItemUseDefinition itemUseDefinition() {
+            if (!this.consumable) {
+                return null;
+            }
+            return new ItemUseDefinition(this.useDurationTicks, this.useAnimation != null ? this.useAnimation : UseAnimation.EAT);
+        }
+
+        private void copyPresentationFrom(final ItemDefinition definition) {
+            this.iconComponent = definition.iconComponent;
+            this.displayNameComponent = definition.displayNameComponent;
+            this.useAnimation = definition.useAnimation;
+        }
+
+    }
+
+    public record ItemUseDefinition(int useDurationTicks, UseAnimation animation) {
+    }
+
+    public enum UseAnimation {
+        EAT(1, "minecraft:entity.generic.eat", true),
+        DRINK(2, "minecraft:entity.generic.drink", false);
+
+        private final int javaId;
+        private final String soundIdentifier;
+        private final boolean consumeParticles;
+
+        UseAnimation(final int javaId, final String soundIdentifier, final boolean consumeParticles) {
+            this.javaId = javaId;
+            this.soundIdentifier = soundIdentifier;
+            this.consumeParticles = consumeParticles;
+        }
+
+        public int javaId() {
+            return this.javaId;
+        }
+
+        public String soundIdentifier() {
+            return this.soundIdentifier;
+        }
+
+        public boolean consumeParticles() {
+            return this.consumeParticles;
+        }
+
+        static UseAnimation byName(final String name) {
+            for (UseAnimation animation : values()) {
+                if (animation.name().equalsIgnoreCase(name)) {
+                    return animation;
+                }
+            }
+            return null;
+        }
+
+        static UseAnimation byBedrockId(final int id) {
+            for (UseAnimation animation : values()) {
+                if (animation.javaId == id) {
+                    return animation;
+                }
+            }
+            return null;
+        }
     }
 
 }

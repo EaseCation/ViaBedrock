@@ -175,6 +175,7 @@ public class ItemRewriter extends StoredObject {
         }
 
         final Item javaItem;
+        boolean paperFallback = false;
         if (javaItemMapping != null) {
             final StructuredDataContainer data = ProtocolConstants.createStructuredDataContainer();
             if (javaItemMapping.overrideTag() != null) {
@@ -220,7 +221,16 @@ public class ItemRewriter extends StoredObject {
                     data.set(StructuredDataKey.ITEM_NAME, TextUtil.stringToNbt("§cMissing item: " + identifier));
                 }
                 javaItem = new StructuredItem(BedrockProtocol.MAPPINGS.getJavaItems().get("minecraft:paper"), bedrockItem.amount(), data);
+                paperFallback = true;
             }
+        }
+
+        final ItemDefinitions.ItemDefinition itemDefinition = this.user().get(ResourcePackStorage.class).getItems().get(identifier);
+        if (paperFallback) {
+            CustomItemDataComponents.applyPaperFallbackIdentity(javaItem, identifier);
+        }
+        if (itemDefinition != null) {
+            CustomItemDataComponents.applyConsumable(javaItem, itemDefinition.itemUseDefinition(), ViaBedrock.getConfig().shouldEnableExperimentalFeatures());
         }
 
         final CompoundTag bedrockTag = bedrockItem.tag();
@@ -344,6 +354,15 @@ public class ItemRewriter extends StoredObject {
             return null;
         }
         return this.items.inverse().get(item.identifier());
+    }
+
+    public ItemDefinitions.ItemUseDefinition itemUseDefinition(final BedrockItem item) {
+        final String identifier = this.bedrockIdentifier(item);
+        if (identifier == null) {
+            return null;
+        }
+        final ItemDefinitions.ItemDefinition itemDefinition = this.user().get(ResourcePackStorage.class).getItems().get(identifier);
+        return itemDefinition != null ? itemDefinition.itemUseDefinition() : null;
     }
 
     public Set<String> getComponentItems() {

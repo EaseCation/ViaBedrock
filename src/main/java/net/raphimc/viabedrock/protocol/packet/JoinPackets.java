@@ -445,12 +445,12 @@ public class JoinPackets {
             wrapper.user().put(itemRewriter);
             final ItemDefinitions itemDefinitions = wrapper.user().get(ResourcePackStorage.class).getItems();
 
-            // Component items are loaded from the item registry entries
-            for (String identifier : itemRewriter.getComponentItems()) {
-                itemDefinitions.remove(identifier);
-            }
             for (ItemEntry itemEntry : itemEntries) {
-                if (itemEntry.componentData() != null && itemEntry.version() == ItemVersion.DataDriven && itemRewriter.getComponentItems().contains(itemEntry.identifier())) {
+                final boolean dataDrivenComponent = itemEntry.version() == ItemVersion.DataDriven && itemRewriter.getComponentItems().contains(itemEntry.identifier());
+                final boolean legacyCustomComponent = !itemEntry.identifier().startsWith("minecraft:")
+                        && itemEntry.componentData() != null
+                        && itemEntry.componentData().get("components") instanceof CompoundTag;
+                if (itemEntry.componentData() != null && (dataDrivenComponent || legacyCustomComponent)) {
                     itemDefinitions.addFromNetworkTag(itemEntry.identifier(), itemEntry.componentData());
                 }
             }

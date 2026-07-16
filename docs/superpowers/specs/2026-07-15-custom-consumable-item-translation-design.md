@@ -1,0 +1,297 @@
+# ViaBedrock 自定义可消耗物品翻译设计
+
+- 日期：2026-07-15
+- 状态：已实现并完成本地自动化测试与全工作区构建验证，待运行环境手动验收
+- worktree：`/home/ec/workspace/worktrees/viabedrock-custom-consumables/ViaProxyWorkspace`
+- 分支：ViaProxyWorkspace 与 ViaBedrock 均使用 `fix/custom-consumable-items`
+- 范围：ViaBedrock 源码、测试与本地构建；不修改 CodeFunCore/Nukkit/BedrockLoader，不推送、不部署、不重启服务
+
+## 1. 问题与结论
+
+CodeFunCore 的 `ECStackablePotion` 是 Bedrock 自定义物品。Nukkit 通过 Item Registry 组件声明 `minecraft:food` 与 32 tick 使用时长，资源包通过 `minecraft:use_animation: drink` 声明饮用动画，服务端在消费完成后负责扣除数量、生成空瓶并施加药水效果。
+
+ViaBedrock 当前只从自定义物品定义中保留图标、显示名和护甲值。没有 BedrockLoader custom item 映射时，它使用 Java `minecraft:paper` 承载自定义模型，却没有添加 Java `CONSUMABLE` 数据组件；持续使用判断也只认识少数原版物品和静态 `minecraft:is_food` 标签。因此 Java 客户端看到正确贴图，却没有完整的饮用状态和消费完成时序。
+
+修复应以 Bedrock 物品组件为权威来源，合并资源包与 Item Registry 中的使用语义，给 Java 载体添加客户端可理解的 `CONSUMABLE`，并让 ViaBedrock 的持续使用状态机读取同一份语义。
+
+## 2. 目标
+
+- 修复全部 16 种 `easecation:stackable_potion_*` 在 Java/ViaBedrock 下无法正常饮用的问题。
+- 通用支持通过 Bedrock 组件声明的自定义食物和饮料，包括现有 `stackable_milk_bucket` 与 `spinach`。
+- 保持自定义物品现有名称、lore、模型和最大堆叠数量。
+- 为每个 paper fallback 保存隐藏的 Bedrock identifier，保证不同自定义物品不会因为使用同一 Java 载体而互相合并。
+- Java 客户端显示正确的 eat/drink 动画，并在配置的使用时长后完成消费协议时序。
+- Java consumable 数据与完成事务统一受 `enable-experimental-features` 控制；开关关闭时不能只显示动画却无法完成消费。
+- 使用过程绑定开始时的 hotbar 槽位和物品身份，切槽或换物时不能消费新物品。
+- Nukkit 继续作为 gameplay 权威端，负责效果、营养、扣除数量和容器残留物。
+- 缺失或损坏的组件安全降级，不中断登录或游戏连接。
+
+## 3. 非目标
+
+- 不在 ViaBedrock 中解释或复制 `custom_effects` NBT，也不在 Java 客户端本地施加药水效果。
+- 不在本次改动中实现完整 Java-to-Bedrock item 反向序列化；隐藏 identifier 只负责客户端身份隔离。
+- 不修改 CodeFunCore 的 `ECStackablePotion`、Nukkit `ItemEdible`、Food 注册或资源包文件。
+- 不修改 BedrockLoader custom mapping snapshot schema。
+- 不把所有带 `use_animation` 的物品都视为可消耗物；弓、弩、盾牌等继续走现有路径。
+- 不重新设计原版 potion、milk bucket、food tag、bow/crossbow/trident 的翻译行为。
+- 不修改 `enable-experimental-features` 的默认值，不把自定义 consumable 完成事务移出实验功能，也不顺带启用其他实验功能。
+- 不在本次任务中发布分支、触发远端 CI、部署 bbdev/生产环境或操作服务。
+
+## 4. 方案选择
+
+### 4.1 采用：组件驱动翻译
+
+解析并合并 Bedrock 自定义物品的 food、use duration 和 use animation，为 Java 载体生成 consumable 数据，并复用于 ViaBedrock 使用状态机。
+
+优点：覆盖现有药水和未来自定义食物，不依赖 EaseCation identifier 前缀，数据来源与 Bedrock 服务端一致。
+
+### 4.2 不采用：标识符特判
+
+仅识别 `easecation:stackable_potion_*` 或维护自定义 allowlist。改动小，但新物品会重复出现相同缺口，也无法正确表达不同使用时长和动画。
+
+### 4.3 不采用：映射为原版 Java 药水
+
+原版 potion 自带饮用组件，但默认最大堆叠数、物品组件、客户端预测和模型语义与自定义堆叠药水冲突。继续使用当前 `paper + item_model` 载体并补充必要组件更安全。
+
+### 4.4 采用：consumable 能力与实验功能保持同一开关
+
+只有 `enable-experimental-features=true` 时才向 Java 客户端注入 `CONSUMABLE` 和兼容 `FOOD`，并由 `ExperimentalFeatures` 完成 Bedrock 使用事务。开关关闭时仍解析组件并保留 paper fallback 身份，但不宣告客户端可食用。
+
+不采用“默认开启全部实验功能”：它会把与本修复无关的不稳定能力一起打开。不采用“在核心协议层新增第二套 custom consumable handler”：它会与现有 experimental 使用状态机形成重复注册和分叉生命周期。
+
+## 5. 权威数据与合并规则
+
+### 5.1 资源包定义
+
+`items/*.item.json` 提供客户端表现信息。本修复读取：
+
+- `minecraft:use_animation`：当前目标值为 `eat` 或 `drink`。
+
+资源包中的 animation 只描述表现，不能单独证明物品可消耗。带 `bow`、`block` 或未知动画但没有 food 组件的物品不能进入消费路径。
+
+### 5.2 Item Registry 网络定义
+
+Bedrock `ITEM_REGISTRY` 中的组件是 gameplay 使用语义的权威来源。本修复读取：
+
+- `components -> minecraft:food`：存在即表示该自定义物品可消耗。
+- `components -> minecraft:use_duration`：使用时长，单位为 Bedrock tick。
+- `components -> item_properties -> use_animation`：若协议/服务端提供，则作为网络侧 animation。
+- `components -> item_properties -> use_duration`：若协议/服务端提供，则作为网络侧时长。
+
+当前 CodeFunCore 的 stackable potion 以 legacy custom item 形式发送组件，因此即使 item entry 不是 DataDriven，只要它是非 `minecraft` 自定义物品且 component data 中存在 `components` compound，ViaBedrock 也必须读取。
+
+### 5.3 合并优先级
+
+同一 identifier 的定义按以下规则合并：
+
+1. 网络定义提供的字段覆盖资源包同字段。
+2. 网络定义缺少的字段保留资源包值，不能因为 Item Registry 到达而丢失 `drink` 动画。
+3. `minecraft:food` 只由网络定义决定 consumable 身份。
+4. food 存在但 animation 缺失或未知时降级为 `eat`。
+5. food 存在但时长缺失或非法时使用 32 tick。
+
+## 6. 组件设计
+
+### 6.1 `ItemDefinitions.ItemUseDefinition`
+
+为每个物品保存窄化后的使用语义：
+
+- 是否可消耗。
+- 使用时长 tick。
+- Java 使用动画类型。
+- 对应的通用使用音效。
+- 是否显示消费粒子。
+
+该对象不保存药水效果、营养、残留物或 cooldown。它提供 Java consumable 构建和协议状态机需要的只读信息。
+
+### 6.2 `ItemDefinitions`
+
+职责扩展为：
+
+- 从资源包 JSON 解析 use animation。
+- 从网络 NBT 解析 food、use duration 与可选 item properties。
+- 将网络字段合并进已有资源包定义，而不是整条替换。
+- 对损坏时长和未知 animation 做安全降级与按 identifier 去重警告。
+
+现有 icon、display name 和 armor protection 行为必须保持。DataDriven 与 legacy custom item 都改为字段级合并：网络 gameplay 字段优先，资源包独有的表现字段保留；`networkDefinition` 在成功读取网络组件后保持为 true。Join 阶段不再预先删除同 identifier 的资源包定义。
+
+### 6.3 `JoinPackets`
+
+保留现有 DataDriven component item 解析，并额外允许以下 entry 进入 `ItemDefinitions.addFromNetworkTag()`：
+
+- identifier 不是 `minecraft:*`。
+- component data 非空且包含 `components` compound。
+
+所有进入解析的 entry 都与已加载的资源包定义做字段级合并。该限制避免把所有原版 legacy registry entry 的行为一起放宽。
+
+### 6.4 `ItemRewriter`
+
+自定义物品仍按现有顺序选择 Java 载体：
+
+1. 明确 Bedrock-to-Java mapping。
+2. BedrockLoader 同步 custom item ID。
+3. `minecraft:paper` fallback 加自定义模型。
+
+当 `ItemUseDefinition` 表示 consumable 且 `enable-experimental-features=true` 时，在最终 Java item 上附加 `StructuredDataKey.CONSUMABLE1_21_2`：
+
+- `consumeSeconds = useDurationTicks / 20F`。
+- animation：`eat=1`、`drink=2`。
+- sound：`minecraft:entity.generic.eat` 或 `minecraft:entity.generic.drink`。
+- eat 显示粒子，drink 不显示粒子。
+- consume effects 为空数组，由 Bedrock 服务端执行效果。
+
+同时附加数值为零的 `StructuredDataKey.FOOD1_21_2` 兼容组件：
+
+- `nutrition = 0`。
+- `saturationModifier = 0`。
+- `canAlwaysEat = true`。
+
+这是 ViaVersion 向 1.21 及更旧 Java 协议降级所需的触发组件：降级器只有看到 `FOOD1_21_2` 时，才会把 `CONSUMABLE1_21_2` 的使用时长转换为旧版 `FOOD1_21`。零营养、零饱和度且无本地效果不会接管 gameplay；Nukkit 仍负责效果、扣除和残留物。现有最大堆叠数量由载体和服务端库存同步保持。
+
+所有使用 `minecraft:paper` fallback 的自定义物品还必须附加 `StructuredDataKey.CUSTOM_DATA`，写入私有键 `viabedrock:bedrock_identifier`。该值使用 Item Registry 中的完整 namespaced identifier，例如 `easecation:stackable_potion_heal`。身份标记不受 experimental 开关影响。
+
+这个隐藏字段参与 Java 物品组件相等性判断，因此两个表现组件完全相同但 Bedrock identifier 不同的物品也不能互相堆叠。相同 identifier 的相同物品仍可正常堆叠。明确 Bedrock-to-Java mapping 和 BedrockLoader 同步 custom item ID 已有独立 Java item 身份，不添加此 paper fallback 标记。
+
+### 6.5 `ExperimentalFeatures`
+
+现有原版集合和静态 food tag 判断保留。对其他物品，增加查询 `ItemUseDefinition`：
+
+- consumable 自定义物品属于 continuous use item。
+- 完成阈值读取该物品的 use duration tick，不再对自定义物品固定写死 32。
+- 达到阈值后使用现有 consumable completion transaction。
+- 提前松开时仍发送 Release，不完成消费。
+
+开始连续使用时还必须保存一份使用快照：起始 hotbar 槽位与 `BedrockItem` 副本。快照身份比较包含槽位、runtime item id、data、block runtime id 与 NBT；单纯堆叠数量变化不算换物品。
+
+每个 client tick 和 `RELEASE_USE_ITEM` 都先比较当前选中物品与快照：
+
+- 身份一致时，才允许按原时长完成 Use。
+- 槽位或身份变化时，使用起始快照发送 Release 并清理状态，不能对当前新槽位发送 Use。
+- 正常完成事务同样使用起始快照，避免完成瞬间的库存变化改写目标物品。
+
+Item Rewriter 和状态机必须读取同一个定义，避免客户端动画时长与代理完成时长漂移。
+
+## 7. 数据流
+
+```text
+Bedrock resource pack items/*.json
+  -> use_animation
+                         \
+                          -> ItemDefinitions merge -> ItemUseDefinition
+                         /
+Bedrock ITEM_REGISTRY
+  -> food + use_duration
+
+ItemUseDefinition
+  -> paper fallback also stores hidden Bedrock identifier in CUSTOM_DATA
+  -> if experimental features are enabled:
+       ItemRewriter adds Java CONSUMABLE to paper/custom carrier
+       Java client starts eat/drink animation and sends use/release packets
+       ExperimentalFeatures captures the starting slot/item snapshot
+       ExperimentalFeatures tracks Bedrock use state for configured ticks
+       snapshot mismatch sends Release only
+       matching snapshot reaches the Bedrock consume completion transaction
+       Nukkit applies effects, decrements stack and returns residue
+       inventory update reconciles Java client
+  -> if experimental features are disabled:
+       item remains non-consumable on the Java client
+```
+
+## 8. 校验与降级
+
+- 有效 use duration 必须是有限、正数且不超过 72000 tick（1 小时）的数值。
+- 缺失、零、负数、非数值或超过 72000 tick 时使用 32 tick。
+- animation 字符串忽略大小写；只映射 `eat` 和 `drink`。
+- food 存在但 animation 未识别时使用 eat 动画和音效。
+- animation 存在但 food 不存在时不生成 consumable。
+- experimental 开关关闭时不生成 `CONSUMABLE` 或 `FOOD`，但仍生成 paper fallback identifier `CUSTOM_DATA`。
+- 连续使用期间槽位或物品身份变化时安全取消；不得把当前新物品用于完成事务。
+- paper fallback 缺少 Bedrock identifier 时视为翻译错误并使用现有 missing-item 降级；不能生成无身份标记的普通 paper。
+- 损坏组件最多按 identifier 每连接警告一次，不逐 tick、逐 slot 或逐包刷日志。
+- 解析异常不离开 Item Registry 协议线程；该物品退化为现有非 consumable 翻译。
+
+## 9. 自动化测试
+
+### 9.1 `ItemDefinitionsTest`
+
+- 从资源组件解析 eat/drink animation。
+- 从 legacy custom item 网络 NBT 解析 food 与 use duration。
+- 网络定义合并时保留资源包独有 animation。
+- 网络 animation/duration 覆盖资源包同字段。
+- 缺少 food 时不判定 consumable。
+- food 存在但 animation 缺失时降级为 eat。
+- duration 缺失、零、负数、错误类型和过大值降级为 32 tick。
+- 损坏定义只警告一次。
+- 现有 display name、icon 和 armor protection 测试继续通过。
+
+### 9.2 Java item 数据测试
+
+- paper fallback 保留原 identifier 对应名称、模型与 lore。
+- 每个 paper fallback 的 `CUSTOM_DATA` 包含准确的 Bedrock identifier。
+- 两个显示组件相同但 identifier 不同的 fallback item 具有不同 `CUSTOM_DATA`，不能被 Java 判为同一物品。
+- 相同 identifier 的相同物品仍具有相同身份标记并可正常堆叠。
+- 合并 identifier 时保留已有 `CUSTOM_DATA` 的其他私有字段。
+- 明确 Java mapping 或 BedrockLoader custom item ID 路径不添加 paper fallback 身份标记。
+- drink 生成 animation type 2、1.6 秒、drink sound、无粒子、无本地效果。
+- eat 生成 animation type 1、eat sound和消费粒子。
+- consumable 同时生成零营养、零饱和度、`canAlwaysEat=true` 的兼容 FOOD 组件。
+- experimental 开关开启时生成 `CONSUMABLE/FOOD`；关闭时只保留身份组件。
+- 非 consumable 自定义物品不附加 `CONSUMABLE`。
+- 自定义堆叠数量不因 consumable 注入变成 1。
+
+### 9.3 使用状态测试
+
+- 自定义 consumable 被识别为 continuous use item。
+- 31 tick 不完成、32 tick 完成。
+- 自定义非 32 tick 时长按定义完成。
+- 提前 release 不消费。
+- 原槽位与同一物品身份允许正常完成；仅数量变化不取消。
+- 切换槽位、runtime item id/data/block runtime id 或 NBT 时只 Release，不消费新物品。
+- 原版 potion、milk、food、bow/crossbow/trident 行为不回归。
+
+## 10. 本地验证
+
+所有 Gradle 命令从隔离的 ViaProxyWorkspace 根目录执行。首次运行前确认 Java 21：
+
+```bash
+cd /home/ec/workspace/worktrees/viabedrock-custom-consumables/ViaProxyWorkspace
+./gradlew --version
+./gradlew :ViaBedrock:test :ViaBedrock:compileJava --rerun-tasks --no-daemon
+./gradlew build --no-daemon
+git -C ViaBedrock diff --check
+```
+
+2026-07-16 本地验证结果：Java 21.0.10；ViaBedrock 定向测试与强制编译通过（47 个任务）；全工作区构建通过（104 个任务）。
+
+如完整 workspace build 因主分支既有问题失败，需用未修改的基线执行同一命令对比后再归因。本任务不把既有失败算作修复回归。
+
+## 11. 手动验收
+
+除“experimental 开关关闭”场景外，可消耗行为验收均在 `enable-experimental-features=true` 下执行。
+
+| 场景 | 预期 |
+| --- | --- |
+| 单个堆叠治疗药水 | 右键显示 drink 动画，1.6 秒后扣除 1 个并获得效果 |
+| 多个同类堆叠药水 | 每次只扣除 1 个，剩余堆叠仍可继续饮用 |
+| 空腹/满饥饿值 | `can_always_eat` 语义下均可饮用 |
+| 中途松开右键 | 不扣除、不施加效果 |
+| 快速切换槽位 | 不消费错误槽位物品，库存由服务端校正 |
+| experimental 开关关闭 | 保留名称、模型和堆叠身份，但物品不显示为可食用，也不开始消费动画 |
+| stackable milk bucket | drink 动画与服务端效果正常 |
+| spinach | eat 动画与服务端效果正常 |
+| 普通自定义纸张/图标 | 仍不可食用 |
+| 两个同模型同名但 identifier 不同的自定义物品 | Java 不能将它们合并为同一堆 |
+| 原版药水与食物 | 行为与修复前一致 |
+| 旧版 Java 客户端 | 经 ViaVersion 降级后不崩溃、不导致断线 |
+
+## 12. 完成条件
+
+- `ECStackablePotion` 代表样例在自动化测试中具有 drink/32 tick consumable 语义。
+- 资源包与网络定义合并不会丢失任一来源的有效字段。
+- Java item 与 ViaBedrock 状态机读取同一份使用定义。
+- experimental 开关关闭时不宣告 consumable；开启时客户端组件和完成事务同时生效。
+- 使用完成绑定起始槽位与物品身份，切槽或换物只取消、不消费新物品。
+- 所有 paper fallback 都携带隐藏 identifier，不再只依赖模型、名称和 lore 区分身份。
+- 定向测试、编译、diff check 和可执行的 workspace 验证通过。
+- 主工作区与其他 worktree 未被修改。
+- 未推送、未部署、未重启任何服务。
