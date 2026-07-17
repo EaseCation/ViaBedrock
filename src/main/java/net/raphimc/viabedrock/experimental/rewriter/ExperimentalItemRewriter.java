@@ -109,6 +109,11 @@ public class ExperimentalItemRewriter {
 
             if (bedrockTag.get("ench") instanceof ListTag<?> enchantments) {
 
+                // Bedrock uses an empty enchantment list to request glint without tooltip entries.
+                if (enchantments.isEmpty()) {
+                    javaItem.dataContainer().set(StructuredDataKey.ENCHANTMENT_GLINT_OVERRIDE, true);
+                }
+
                 StructuredData<Enchantments> enchantmentsData = javaItem.dataContainer().getData(StructuredDataKey.ENCHANTMENTS1_21_5);
                 Enchantments javaEnchantments;
                 if (enchantmentsData == null || enchantmentsData.isEmpty()) {
@@ -117,7 +122,6 @@ public class ExperimentalItemRewriter {
                     javaEnchantments = enchantmentsData.value();
                 }
 
-                //TODO: Empty list gives an enchantment glint, but no entries in lore
                 for (Tag enchantment : enchantments) {
                     if (enchantment instanceof CompoundTag compoundTag) {
                         //id and lvl must be a short. Else bedrock defaults to protection (id 0) and lvl 0 (TODO: implement the fallback)
