@@ -115,6 +115,7 @@ public class InventoryPackets {
             // "container.<tag>", but several differ; an unmatched key shows as raw "container.crafting_table"
             // text on the Java client instead of a localized title.
             final String javaTitleKey = switch (bedrockBlockTag) {
+                case null -> "container." + type.name().toLowerCase(java.util.Locale.ROOT);
                 case "crafting_table" -> "container.crafting";
                 case "anvil" -> "container.repair";
                 case "brewing_stand" -> "container.brewing";
