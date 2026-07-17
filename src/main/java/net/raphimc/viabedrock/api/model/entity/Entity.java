@@ -208,14 +208,24 @@ public class Entity {
     }
 
     public Set<ActorFlags> entityFlags() {
-        BigInteger combinedFlags = BigInteger.ZERO;
-        if (this.entityData.containsKey(ActorDataIDs.RESERVED_0)) {
-            combinedFlags = combinedFlags.add(BigInteger.valueOf(this.entityData.get(ActorDataIDs.RESERVED_0).<Long>value().longValue()));
-        }
-        if (this.entityData.containsKey(ActorDataIDs.RESERVED_092)) {
-            combinedFlags = combinedFlags.add(BigInteger.valueOf(this.entityData.get(ActorDataIDs.RESERVED_092).<Long>value().longValue()).shiftLeft(64));
-        }
+        final long flags = this.entityData.containsKey(ActorDataIDs.RESERVED_0)
+                ? this.entityData.get(ActorDataIDs.RESERVED_0).<Long>value() : 0L;
+        final long flags2 = this.entityData.containsKey(ActorDataIDs.RESERVED_092)
+                ? this.entityData.get(ActorDataIDs.RESERVED_092).<Long>value() : 0L;
+        final BigInteger combinedFlags = combineEntityFlags(flags, flags2);
         return EnumUtil.getEnumSetFromBitmask(ActorFlags.class, combinedFlags, ActorFlags::getValue);
+    }
+
+    static BigInteger combineEntityFlags(final long flags, final long flags2) {
+        return unsignedLong(flags).or(unsignedLong(flags2).shiftLeft(Long.SIZE));
+    }
+
+    private static BigInteger unsignedLong(final long value) {
+        BigInteger result = BigInteger.valueOf(value & Long.MAX_VALUE);
+        if (value < 0) {
+            result = result.setBit(Long.SIZE - 1);
+        }
+        return result;
     }
 
     public String name() {

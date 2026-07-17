@@ -17,8 +17,11 @@
  */
 package net.raphimc.viabedrock.protocol.packet;
 
+import com.viaversion.viaversion.api.minecraft.entities.EntityTypes1_21_11;
 import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorDataIDs;
+import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorEvent;
+import net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent;
 import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
 import org.junit.jupiter.api.Test;
 
@@ -113,6 +116,31 @@ class EntityPacketsTest {
                 () -> assertNull(EntityPackets.getFallingBlockJavaBlockStateId(new EntityData[0], bedrockRuntimeId -> fail("Block state lookup should not run without variant metadata"))),
                 () -> assertNull(EntityPackets.getFallingBlockJavaBlockStateId(new EntityData[]{wrongType}, bedrockRuntimeId -> fail("Block state lookup should not run for invalid metadata"))),
                 () -> assertNull(EntityPackets.getFallingBlockJavaBlockStateId(new EntityData[]{variantData(7)}, bedrockRuntimeId -> -1))
+        );
+    }
+
+    @Test
+    void mapsContextSensitiveActorEvents() {
+        assertAll(
+                () -> assertEquals(EntityEvent.START_ATTACKING, EntityPackets.javaEntityEvent(ActorEvent.START_ATTACKING, EntityTypes1_21_11.EVOKER_FANGS)),
+                () -> assertEquals(EntityEvent.START_ATTACKING, EntityPackets.javaEntityEvent(ActorEvent.START_ATTACKING, EntityTypes1_21_11.IRON_GOLEM)),
+                () -> assertEquals(EntityEvent.START_RAM, EntityPackets.javaEntityEvent(ActorEvent.START_ATTACKING, EntityTypes1_21_11.GOAT)),
+                () -> assertEquals(EntityEvent.END_RAM, EntityPackets.javaEntityEvent(ActorEvent.STOP_ATTACKING, EntityTypes1_21_11.GOAT)),
+                () -> assertNull(EntityPackets.javaEntityEvent(ActorEvent.START_ATTACKING, EntityTypes1_21_11.VINDICATOR)),
+                () -> assertNull(EntityPackets.javaEntityEvent(ActorEvent.STOP_ATTACKING, EntityTypes1_21_11.VINDICATOR))
+        );
+    }
+
+    @Test
+    void mapsStableVanillaActorEvents() {
+        assertAll(
+                () -> assertEquals(EntityEvent.TAMING_SUCCEEDED, EntityPackets.javaEntityEvent(ActorEvent.TAMING_SUCCEEDED, EntityTypes1_21_11.WOLF)),
+                () -> assertEquals(EntityEvent.JUMP, EntityPackets.javaEntityEvent(ActorEvent.JUMP, EntityTypes1_21_11.RABBIT)),
+                () -> assertNull(EntityPackets.javaEntityEvent(ActorEvent.JUMP, EntityTypes1_21_11.ZOMBIE)),
+                () -> assertEquals(EntityEvent.EAT_GRASS, EntityPackets.javaEntityEvent(ActorEvent.EAT_GRASS, EntityTypes1_21_11.SHEEP)),
+                () -> assertEquals(EntityEvent.VILLAGER_ANGRY, EntityPackets.javaEntityEvent(ActorEvent.VILLAGER_ANGRY, EntityTypes1_21_11.VILLAGER)),
+                () -> assertEquals(EntityEvent.CANCEL_SHAKE_WETNESS, EntityPackets.javaEntityEvent(ActorEvent.SHAKE_WETNESS_STOP, EntityTypes1_21_11.WOLF)),
+                () -> assertNull(EntityPackets.javaEntityEvent(ActorEvent.FINISHED_CHARGING_ITEM, EntityTypes1_21_11.PILLAGER))
         );
     }
 

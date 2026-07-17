@@ -47,6 +47,10 @@ import java.util.logging.Level;
 
 public class EntityMetadataRewriter {
 
+    private static final int SUMMON_VEX_SPELL_COLOR = 0xB3B3CC;
+    private static final int FANGS_SPELL_COLOR = 0x664D59;
+    private static final int WOLOLO_SPELL_COLOR = 0xB38033;
+
     // Called in Entity#translateEntityData if experimental features are enabled
     public static boolean rewrite(final UserConnection user, final Entity entity, final ActorDataIDs id, final EntityData entityData, final List<EntityData> javaEntityData) {
         EntityTracker entityTracker = user.get(EntityTracker.class);
@@ -54,14 +58,13 @@ public class EntityMetadataRewriter {
         switch (id) {
             case RESERVED_0, RESERVED_092 -> { // Entity flags mask
                 Set<ActorFlags> bedrockFlags = entity.entityFlags();
-                byte javaBitMask = 0; // https://minecraft.wiki/w/Java_Edition_protocol/Entity_metadata#Entity
-                javaBitMask = sharedFlags(entity, false);
+                byte javaBitMask = sharedFlags(entity, false);
                 final EntityData scaleData = entity.entityData().get(ActorDataIDs.RESERVED_038);
                 if (entity instanceof LivingEntity && scaleData != null && readNumber(scaleData).floatValue() == 0F) {
                     javaBitMask |= (1 << 5);
                 }
 
-                javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SHARED_FLAGS), VersionedTypes.V26_1.entityDataTypes().byteType, javaBitMask));
+                upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SHARED_FLAGS), VersionedTypes.V26_1.entityDataTypes().byteType, javaBitMask));
 
                 // Bedrock only exposes sneaking as an actor flag, but the Java client derives a player's
                 // *visual* crouch from the POSE entity data (Pose.CROUCHING), not the sharedflags sneaking
@@ -69,34 +72,33 @@ public class EntityMetadataRewriter {
                 // players never visually crouch on the Java side. Toggle the pose for players accordingly.
                 if (entity.javaType().is(EntityTypes1_21_11.PLAYER)) {
                     final int javaPose = bedrockFlags.contains(ActorFlags.SNEAKING) ? 5 : 0; // Pose.CROUCHING : Pose.STANDING
-                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.POSE), VersionedTypes.V26_1.entityDataTypes().poseType, javaPose));
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.POSE), VersionedTypes.V26_1.entityDataTypes().poseType, javaPose));
                 }
 
-                javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SILENT), VersionedTypes.V26_1.entityDataTypes().booleanType, bedrockFlags.contains(ActorFlags.SILENT)));
-                javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.NO_GRAVITY), VersionedTypes.V26_1.entityDataTypes().booleanType, !bedrockFlags.contains(ActorFlags.HAS_GRAVITY)));
+                upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SILENT), VersionedTypes.V26_1.entityDataTypes().booleanType, bedrockFlags.contains(ActorFlags.SILENT)));
+                upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.NO_GRAVITY), VersionedTypes.V26_1.entityDataTypes().booleanType, !bedrockFlags.contains(ActorFlags.HAS_GRAVITY)));
+
+                if (entity instanceof LivingEntity) {
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.LIVING_ENTITY_FLAGS), VersionedTypes.V26_1.entityDataTypes().byteType, livingFlags(bedrockFlags)));
+                }
 
                 if (entity.javaType().isOrHasParent(EntityTypes1_21_11.MOB)) {
-                    byte mobBitMask = 0;
-                    if (bedrockFlags.contains(ActorFlags.NOAI)) {
-                        mobBitMask |= 0x01;
-                    }
-
-                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.MOB_FLAGS), VersionedTypes.V26_1.entityDataTypes().byteType, mobBitMask));
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.MOB_FLAGS), VersionedTypes.V26_1.entityDataTypes().byteType, mobFlags(entity.javaType(), bedrockFlags)));
                 }
 
                 if (entity.javaType().is(EntityTypes1_21_11.ALLAY)) {
                     boolean dancing = bedrockFlags.contains(ActorFlags.DANCING);
-                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.DANCING), VersionedTypes.V26_1.entityDataTypes().booleanType, dancing));
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.DANCING), VersionedTypes.V26_1.entityDataTypes().booleanType, dancing));
                 }
 
                 if (entity.javaType().isOrHasParent(EntityTypes1_21_11.ABSTRACT_AGEABLE)) {
                     boolean isBaby = bedrockFlags.contains(ActorFlags.BABY);
-                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.BABY), VersionedTypes.V26_1.entityDataTypes().booleanType, isBaby));
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.BABY), VersionedTypes.V26_1.entityDataTypes().booleanType, isBaby));
                 }
 
                 if (entity.javaType().is(EntityTypes1_21_11.AXOLOTL)) {
                     boolean playingDead = bedrockFlags.contains(ActorFlags.PLAYING_DEAD);
-                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.PLAYING_DEAD), VersionedTypes.V26_1.entityDataTypes().booleanType, playingDead));
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.PLAYING_DEAD), VersionedTypes.V26_1.entityDataTypes().booleanType, playingDead));
                 }
 
                 if (entity.javaType().is(EntityTypes1_21_11.BEE)) {
@@ -105,20 +107,16 @@ public class EntityMetadataRewriter {
                         beeBitMask |= 0x02;
                     }
 
-                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.FLAGS), VersionedTypes.V26_1.entityDataTypes().byteType, beeBitMask));
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.FLAGS), VersionedTypes.V26_1.entityDataTypes().byteType, beeBitMask));
                 }
 
                 if (entity.javaType().is(EntityTypes1_21_11.OCELOT)) {
                     boolean isTrusting = bedrockFlags.contains(ActorFlags.TRUSTING);
-                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.TRUSTING), VersionedTypes.V26_1.entityDataTypes().booleanType, isTrusting));
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.TRUSTING), VersionedTypes.V26_1.entityDataTypes().booleanType, isTrusting));
                 }
 
                 if (entity.javaType().is(EntityTypes1_21_11.SHEEP)) {
-                    byte sheepBitMask = 0;
-                    if (bedrockFlags.contains(ActorFlags.SHEARED)) {
-                        sheepBitMask |= 0x10;
-                    }
-                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.WOOL), VersionedTypes.V26_1.entityDataTypes().byteType, sheepBitMask));
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.WOOL), VersionedTypes.V26_1.entityDataTypes().byteType, sheepFlags(entity)));
                 }
 
                 if (entity.javaType().is(EntityTypes1_21_11.SNIFFER)) {
@@ -146,68 +144,118 @@ public class EntityMetadataRewriter {
                         //ViaBedrock.getPlatform().getLogger().warning("Unknown sniffer state, defaulting to IDLING.");
                     }
 
-                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.STATE), VersionedTypes.V26_1.entityDataTypes().snifferState, sniffingState));
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.STATE), VersionedTypes.V26_1.entityDataTypes().snifferState, sniffingState));
                 }
 
                 if (entity.javaType().is(EntityTypes1_21_11.TURTLE)) { //TODO: Test
-                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.HAS_EGG), VersionedTypes.V26_1.entityDataTypes().booleanType, bedrockFlags.contains(ActorFlags.IS_PREGNANT)));
-                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.LAYING_EGG), VersionedTypes.V26_1.entityDataTypes().booleanType, bedrockFlags.contains(ActorFlags.LAYING_EGG)));
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.HAS_EGG), VersionedTypes.V26_1.entityDataTypes().booleanType, bedrockFlags.contains(ActorFlags.IS_PREGNANT)));
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.LAYING_EGG), VersionedTypes.V26_1.entityDataTypes().booleanType, bedrockFlags.contains(ActorFlags.LAYING_EGG)));
                 }
 
                 if (entity.javaType().isOrHasParent(EntityTypes1_21_11.ABSTRACT_CHESTED_HORSE)) {
-                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.CHEST), VersionedTypes.V26_1.entityDataTypes().booleanType, bedrockFlags.contains(ActorFlags.CHESTED)));
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.CHEST), VersionedTypes.V26_1.entityDataTypes().booleanType, bedrockFlags.contains(ActorFlags.CHESTED)));
                 }
 
                 if (entity.javaType().isOrHasParent(EntityTypes1_21_11.TAMABLE_ANIMAL)) {
-                    byte tamableBitMask = 0;
-                    if (bedrockFlags.contains(ActorFlags.SITTING)) {
-                        tamableBitMask |= 0x01;
-                    }
-                    if (bedrockFlags.contains(ActorFlags.TAMED)) {
-                        tamableBitMask |= 0x04;
-                    }
-
-                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.FLAGS), VersionedTypes.V26_1.entityDataTypes().byteType, tamableBitMask));
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.FLAGS), VersionedTypes.V26_1.entityDataTypes().byteType, tamableFlags(bedrockFlags)));
                 }
 
-                if (entity.javaType().is(EntityTypes1_21_11.CAT)) { //TODO: Test
-                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.IS_LYING), VersionedTypes.V26_1.entityDataTypes().booleanType, bedrockFlags.contains(ActorFlags.LAYING_DOWN)));
+                if (entity.javaType().is(EntityTypes1_21_11.CAT)) {
+                    final boolean isLying = bedrockFlags.contains(ActorFlags.RESTING) || bedrockFlags.contains(ActorFlags.LAYING_DOWN);
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.IS_LYING), VersionedTypes.V26_1.entityDataTypes().booleanType, isLying));
                 }
 
                 if (entity.javaType().is(EntityTypes1_21_11.BOGGED)) {
                     boolean isSheared = bedrockFlags.contains(ActorFlags.SHEARED);
-                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SHEARED), VersionedTypes.V26_1.entityDataTypes().booleanType, isSheared));
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SHEARED), VersionedTypes.V26_1.entityDataTypes().booleanType, isSheared));
                 }
 
                 if (entity.javaType().is(EntityTypes1_21_11.CREEPER)) {
                     boolean charged = bedrockFlags.contains(ActorFlags.CHARGED);
-                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.IS_POWERED), VersionedTypes.V26_1.entityDataTypes().booleanType, charged));
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.IS_POWERED), VersionedTypes.V26_1.entityDataTypes().booleanType, charged));
 
                     boolean ignited = bedrockFlags.contains(ActorFlags.IGNITED);
-                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.IS_IGNITED), VersionedTypes.V26_1.entityDataTypes().booleanType, ignited));
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.IS_IGNITED), VersionedTypes.V26_1.entityDataTypes().booleanType, ignited));
                 }
 
                 if (entity.javaType().is(EntityTypes1_21_11.ZOGLIN)) {
                     boolean isBaby = bedrockFlags.contains(ActorFlags.BABY);
-                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.BABY), VersionedTypes.V26_1.entityDataTypes().booleanType, isBaby));
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.BABY), VersionedTypes.V26_1.entityDataTypes().booleanType, isBaby));
                 }
 
-                if (entity.javaType().is(EntityTypes1_21_11.ZOMBIE)) {
+                if (entity.javaType().isOrHasParent(EntityTypes1_21_11.ZOMBIE)) {
                     boolean isBaby = bedrockFlags.contains(ActorFlags.BABY);
-                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.BABY), VersionedTypes.V26_1.entityDataTypes().booleanType, isBaby));
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.BABY), VersionedTypes.V26_1.entityDataTypes().booleanType, isBaby));
                 }
 
                 if (entity.javaType().is(EntityTypes1_21_11.PIGLIN)) {
                     boolean isBaby = bedrockFlags.contains(ActorFlags.BABY);
-                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.BABY), VersionedTypes.V26_1.entityDataTypes().booleanType, isBaby));
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.BABY), VersionedTypes.V26_1.entityDataTypes().booleanType, isBaby));
 
                     boolean isDancing = bedrockFlags.contains(ActorFlags.DANCING);
-                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.IS_DANCING), VersionedTypes.V26_1.entityDataTypes().booleanType, isDancing));
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.IS_DANCING), VersionedTypes.V26_1.entityDataTypes().booleanType, isDancing));
                 }
 
                 if (entity.javaType().isOrHasParent(EntityTypes1_21_11.ABSTRACT_RAIDER)) { //TODO: Test
                     boolean isCelebrating = bedrockFlags.contains(ActorFlags.CELEBRATING);
-                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.IS_CELEBRATING), VersionedTypes.V26_1.entityDataTypes().booleanType, isCelebrating));
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.IS_CELEBRATING), VersionedTypes.V26_1.entityDataTypes().booleanType, isCelebrating));
+                }
+
+                if (entity.javaType().isOrHasParent(EntityTypes1_21_11.SPELLCASTER_ILLAGER)) {
+                    applySpellCasting(entity, javaEntityData);
+                }
+
+                if (entity.javaType().is(EntityTypes1_21_11.BAT)) {
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.FLAGS), VersionedTypes.V26_1.entityDataTypes().byteType,
+                            (byte) (bedrockFlags.contains(ActorFlags.RESTING) ? 0x01 : 0)));
+                }
+
+                if (entity.javaType().is(EntityTypes1_21_11.BLAZE)) {
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.FLAGS), VersionedTypes.V26_1.entityDataTypes().byteType,
+                            (byte) (bedrockFlags.contains(ActorFlags.ONFIRE) ? 0x01 : 0)));
+                }
+
+                if (entity.javaType().is(EntityTypes1_21_11.FOX)) {
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.FLAGS), VersionedTypes.V26_1.entityDataTypes().byteType, foxFlags(bedrockFlags)));
+                }
+
+                if (entity.javaType().is(EntityTypes1_21_11.PANDA)) {
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.FLAGS), VersionedTypes.V26_1.entityDataTypes().byteType, pandaFlags(bedrockFlags)));
+                }
+
+                if (entity.javaType().is(EntityTypes1_21_11.POLAR_BEAR)) {
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.STANDING), VersionedTypes.V26_1.entityDataTypes().booleanType,
+                            bedrockFlags.contains(ActorFlags.STANDING)));
+                }
+
+                if (entity.javaType().is(EntityTypes1_21_11.SNOW_GOLEM)) {
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.PUMPKIN), VersionedTypes.V26_1.entityDataTypes().byteType,
+                            (byte) (bedrockFlags.contains(ActorFlags.SHEARED) ? 0 : 0x10)));
+                }
+
+                if (entity.javaType().isOrHasParent(EntityTypes1_21_11.SPIDER)) {
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.FLAGS), VersionedTypes.V26_1.entityDataTypes().byteType,
+                            (byte) (bedrockFlags.contains(ActorFlags.WALLCLIMBING) ? 0x01 : 0)));
+                }
+
+                if (entity.javaType().is(EntityTypes1_21_11.WOLF)) {
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.INTERESTED), VersionedTypes.V26_1.entityDataTypes().booleanType,
+                            bedrockFlags.contains(ActorFlags.INTERESTED)));
+                }
+
+                if (entity.javaType().is(EntityTypes1_21_11.ENDERMAN)) {
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.STARED_AT), VersionedTypes.V26_1.entityDataTypes().booleanType,
+                            bedrockFlags.contains(ActorFlags.ANGRY)));
+                }
+
+                if (entity.javaType().is(EntityTypes1_21_11.PIGLIN) || entity.javaType().is(EntityTypes1_21_11.PILLAGER)) {
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.IS_CHARGING_CROSSBOW), VersionedTypes.V26_1.entityDataTypes().booleanType,
+                            bedrockFlags.contains(ActorFlags.CHARGING)));
+                }
+
+                if (entity.javaType().is(EntityTypes1_21_11.ZOMBIE_VILLAGER)) {
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.CONVERTING), VersionedTypes.V26_1.entityDataTypes().booleanType,
+                            bedrockFlags.contains(ActorFlags.IS_TRANSFORMING)));
                 }
 
             }
@@ -247,6 +295,10 @@ public class EntityMetadataRewriter {
                             }
                         };
                         javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.VARIANT), VersionedTypes.V26_1.entityDataTypes().frogVariantType, javaVariant));
+                    }
+                    case FOX -> {
+                        final int javaVariant = variant == 1 ? 1 : 0; // SNOW : RED
+                        javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.TYPE), VersionedTypes.V26_1.entityDataTypes().varIntType, javaVariant));
                     }
                     case TROPICAL_FISH -> {
                         //TODO: Remap tropical fish variants properly
@@ -293,7 +345,7 @@ public class EntityMetadataRewriter {
                         int javaVariant = variant;
                         javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.VARIANT), VersionedTypes.V26_1.entityDataTypes().varIntType, javaVariant));
                     }
-                    case VILLAGER -> {
+                    case VILLAGER, ZOMBIE_VILLAGER -> {
                         // Bedrock encodes the villager profession in VARIANT (region/biome in MARK_VARIANT,
                         // trade level in TRADE_TIER). All three combine into one Java VILLAGER_DATA field.
                         applyVillagerData(entity, javaEntityData);
@@ -309,7 +361,7 @@ public class EntityMetadataRewriter {
             case MARK_VARIANT, TRADE_TIER -> {
                 // Villager region/biome (MARK_VARIANT) and trade level (TRADE_TIER) also feed the combined
                 // Java VILLAGER_DATA field. Other entities using these IDs are not translated yet.
-                if (entity.javaType().is(EntityTypes1_21_11.VILLAGER)) {
+                if (entity.javaType().is(EntityTypes1_21_11.VILLAGER) || entity.javaType().is(EntityTypes1_21_11.ZOMBIE_VILLAGER)) {
                     applyVillagerData(entity, javaEntityData);
                 } else {
                     return false;
@@ -322,10 +374,8 @@ public class EntityMetadataRewriter {
                     case WOLF, CAT -> {
                         javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.COLLAR_COLOR), VersionedTypes.V26_1.entityDataTypes().varIntType, javaColorIndex));
                     }
-                    case SHEEP -> { // TODO: This seems to get overwritten by the entity flags sheared value, need to combine both
-                        byte sheepBitMask = 0;
-                        sheepBitMask |= (byte) (javaColorIndex & 0x0F); // Lower 4 bits for color
-                        javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.WOOL), VersionedTypes.V26_1.entityDataTypes().byteType, sheepBitMask));
+                    case SHEEP -> {
+                        upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.WOOL), VersionedTypes.V26_1.entityDataTypes().byteType, sheepFlags(entity)));
                     }
                     default -> {
                         if (javaColorIndex != 0 && !(entity instanceof CustomEntity)) { // Custom entity colors are consumed by the custom renderer.
@@ -339,8 +389,11 @@ public class EntityMetadataRewriter {
                     break; // Fishing hook owners are carried by the Java ADD_ENTITY data field.
                 }
                 long ownerId = readNumber(entityData).longValue();
-                if (ownerId == -1) {
-                    break; // No owner
+                if (ownerId == -1 || ownerId == 0) {
+                    if (entity.javaType().isOrHasParent(EntityTypes1_21_11.TAMABLE_ANIMAL)) {
+                        upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.OWNERUUID), VersionedTypes.V26_1.entityDataTypes().optionalUUIDType, null));
+                    }
+                    break;
                 }
                 Entity ownerEntity = entityTracker.getEntityByUid(ownerId);
                 if (ownerEntity == null) {
@@ -351,6 +404,21 @@ public class EntityMetadataRewriter {
                     javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.OWNERUUID), VersionedTypes.V26_1.entityDataTypes().optionalUUIDType, ownerEntity.javaUuid()));
                 } else {
                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received OWNER for non-TAMEABLE_ANIMAL entity " + entity.type());
+                }
+            }
+            case CHARGE_AMOUNT -> {
+                if (entity.javaType().is(EntityTypes1_21_11.GHAST)) {
+                    final boolean charging = readNumber(entityData).intValue() > 0;
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.IS_CHARGING), VersionedTypes.V26_1.entityDataTypes().booleanType, charging));
+                } else {
+                    return false;
+                }
+            }
+            case DATA_SPELL_CASTING_COLOR -> {
+                if (entity.javaType().isOrHasParent(EntityTypes1_21_11.SPELLCASTER_ILLAGER)) {
+                    applySpellCasting(entity, javaEntityData);
+                } else {
+                    return false;
                 }
             }
             case FUSE_TIME -> {
@@ -615,8 +683,9 @@ public class EntityMetadataRewriter {
             case TARGET_A -> {
                 if (entity.javaType().is(EntityTypes1_21_11.WITHER)) {
                     long targetAId = readNumber(entityData).longValue();
-                    if (targetAId == -1) {
-                        break; // No target
+                    if (targetAId == -1 || targetAId == 0) {
+                        upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.TARGET_A), VersionedTypes.V26_1.entityDataTypes().varIntType, 0));
+                        break;
                     }
                     Entity targetAEntity = entityTracker.getEntityByUid(targetAId);
                     if (targetAEntity == null) {
@@ -631,8 +700,9 @@ public class EntityMetadataRewriter {
             case TARGET_B -> {
                 if (entity.javaType().is(EntityTypes1_21_11.WITHER)) {
                     long targetBId = readNumber(entityData).longValue();
-                    if (targetBId == -1) {
-                        break; // No target
+                    if (targetBId == -1 || targetBId == 0) {
+                        upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.TARGET_B), VersionedTypes.V26_1.entityDataTypes().varIntType, 0));
+                        break;
                     }
                     Entity targetBEntity = entityTracker.getEntityByUid(targetBId);
                     if (targetBEntity == null) {
@@ -647,8 +717,9 @@ public class EntityMetadataRewriter {
             case TARGET_C -> {
                 if (entity.javaType().is(EntityTypes1_21_11.WITHER)) {
                     long targetCId = readNumber(entityData).longValue();
-                    if (targetCId == -1) {
-                        break; // No target
+                    if (targetCId == -1 || targetCId == 0) {
+                        upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.TARGET_C), VersionedTypes.V26_1.entityDataTypes().varIntType, 0));
+                        break;
                     }
                     Entity targetCEntity = entityTracker.getEntityByUid(targetCId);
                     if (targetCEntity == null) {
@@ -663,16 +734,20 @@ public class EntityMetadataRewriter {
             case TARGET -> {
                 long targetId = readNumber(entityData).longValue();
                 if (entity.javaType().is(EntityTypes1_21_11.GUARDIAN)) {
-                    if (targetId == 0) {
-                        break; // No target
+                    if (targetId == -1 || targetId == 0) {
+                        upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.ATTACK_TARGET), VersionedTypes.V26_1.entityDataTypes().varIntType, 0));
+                        break;
                     }
                     Entity targetEntity = entityTracker.getEntityByUid(targetId);
                     if (targetEntity == null) {
                         ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to find TARGET entity with id " + targetId + " for entity " + entity.type());
                         break;
                     }
-                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.ATTACK_TARGET), VersionedTypes.V26_1.entityDataTypes().varIntType, targetEntity.javaId()));
-                } else if (targetId != 0)  {
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.ATTACK_TARGET), VersionedTypes.V26_1.entityDataTypes().varIntType, targetEntity.javaId()));
+                } else if (entity.javaType().is(EntityTypes1_21_11.VEX)) {
+                    final byte flags = (byte) (targetId != -1 && targetId != 0 ? 0x01 : 0);
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.FLAGS), VersionedTypes.V26_1.entityDataTypes().byteType, flags));
+                } else if (targetId != 0 && targetId != -1)  {
                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received TARGET for non-GUARDIAN entity " + entity.type() + " with non-zero value " + targetId);
                 }
             }
@@ -757,6 +832,116 @@ public class EntityMetadataRewriter {
         return true;
     }
 
+    static byte livingFlags(final Set<ActorFlags> bedrockFlags) {
+        byte flags = 0;
+        if (bedrockFlags.contains(ActorFlags.USINGITEM) || bedrockFlags.contains(ActorFlags.BLOCKING)) {
+            flags |= 0x01;
+        }
+        if (bedrockFlags.contains(ActorFlags.DAMAGENEARBYMOBS)) {
+            flags |= 0x04;
+        }
+        return flags;
+    }
+
+    static byte mobFlags(final EntityTypes1_21_11 type, final Set<ActorFlags> bedrockFlags) {
+        byte flags = 0;
+        if (bedrockFlags.contains(ActorFlags.NOAI)) {
+            flags |= 0x01;
+        }
+        final boolean aggressive = type.isOrHasParent(EntityTypes1_21_11.ABSTRACT_SKELETON)
+                ? bedrockFlags.contains(ActorFlags.FACING_TARGET_TO_RANGE_ATTACK)
+                : type.is(EntityTypes1_21_11.VINDICATOR) && bedrockFlags.contains(ActorFlags.ANGRY);
+        if (aggressive) {
+            flags |= 0x04;
+        }
+        return flags;
+    }
+
+    static byte tamableFlags(final Set<ActorFlags> bedrockFlags) {
+        byte flags = 0;
+        if (bedrockFlags.contains(ActorFlags.SITTING)) {
+            flags |= 0x01;
+        }
+        if (bedrockFlags.contains(ActorFlags.ANGRY)) {
+            flags |= 0x02;
+        }
+        if (bedrockFlags.contains(ActorFlags.TAMED)) {
+            flags |= 0x04;
+        }
+        return flags;
+    }
+
+    static byte foxFlags(final Set<ActorFlags> bedrockFlags) {
+        byte flags = 0;
+        if (bedrockFlags.contains(ActorFlags.SITTING)) {
+            flags |= 0x01;
+        }
+        if (bedrockFlags.contains(ActorFlags.SNEAKING)) {
+            flags |= 0x04;
+        }
+        if (bedrockFlags.contains(ActorFlags.INTERESTED)) {
+            flags |= 0x08;
+        }
+        if (bedrockFlags.contains(ActorFlags.SLEEPING)) {
+            flags |= 0x20;
+        }
+        return flags;
+    }
+
+    static byte pandaFlags(final Set<ActorFlags> bedrockFlags) {
+        byte flags = 0;
+        if (bedrockFlags.contains(ActorFlags.SNEEZING)) {
+            flags |= 0x02;
+        }
+        if (bedrockFlags.contains(ActorFlags.ROLLING)) {
+            flags |= 0x04;
+        }
+        if (bedrockFlags.contains(ActorFlags.SITTING)) {
+            flags |= 0x08;
+        }
+        if (bedrockFlags.contains(ActorFlags.LAYING_DOWN)) {
+            flags |= 0x10;
+        }
+        return flags;
+    }
+
+    static byte sheepFlags(final int color, final boolean sheared) {
+        return (byte) ((color & 0x0F) | (sheared ? 0x10 : 0));
+    }
+
+    static byte spellType(final boolean casting, final Integer color) {
+        if (!casting) {
+            return 0;
+        }
+        if (color == null) {
+            return 2; // Bedrock can omit the color; fangs is the safest visible fallback for an evoker.
+        }
+        return switch (color & 0xFFFFFF) {
+            case SUMMON_VEX_SPELL_COLOR -> 1;
+            case FANGS_SPELL_COLOR -> 2;
+            case WOLOLO_SPELL_COLOR -> 3;
+            default -> 2;
+        };
+    }
+
+    private static byte sheepFlags(final Entity entity) {
+        final EntityData colorData = entity.entityData().get(ActorDataIDs.COLOR_INDEX);
+        final int color = colorData != null ? readNumber(colorData).intValue() : 0;
+        return sheepFlags(color, entity.entityFlags().contains(ActorFlags.SHEARED));
+    }
+
+    private static void applySpellCasting(final Entity entity, final List<EntityData> javaEntityData) {
+        final EntityData colorData = entity.entityData().get(ActorDataIDs.DATA_SPELL_CASTING_COLOR);
+        final Integer color = colorData != null ? readNumber(colorData).intValue() : null;
+        final byte spell = spellType(entity.entityFlags().contains(ActorFlags.CASTING), color);
+        upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SPELL_CASTING), VersionedTypes.V26_1.entityDataTypes().byteType, spell));
+    }
+
+    private static void upsert(final List<EntityData> javaEntityData, final EntityData data) {
+        javaEntityData.removeIf(existing -> existing.id() == data.id());
+        javaEntityData.add(data);
+    }
+
     // Bedrock villager VARIANT (profession) -> Java profession registry id. Inverse of Geyser's
     // VillagerEntity#VILLAGER_PROFESSIONS (Java->Bedrock). Index = Bedrock value, value = Java id.
     private static final int[] BEDROCK_TO_JAVA_PROFESSION = {0, 5, 6, 12, 7, 9, 3, 4, 1, 14, 13, 2, 8, 10, 11};
@@ -800,6 +985,7 @@ public class EntityMetadataRewriter {
         if (bedrockFlags.contains(ActorFlags.SPRINTING)) sharedFlags |= (1 << 3);
         if (bedrockFlags.contains(ActorFlags.SWIMMING)) sharedFlags |= (1 << 4);
         if (forceInvisible || bedrockFlags.contains(ActorFlags.INVISIBLE)) sharedFlags |= (1 << 5);
+        if (bedrockFlags.contains(ActorFlags.GLIDING)) sharedFlags |= (byte) (1 << 7);
         return sharedFlags;
     }
 

@@ -525,9 +525,19 @@ public class EntityPackets {
                     setEntityData.send(BedrockProtocol.class);
                 }
                 default -> {
-                    wrapper.cancel();
-                    // TODO: Handle remaining events
-                    // throw new IllegalStateException("Unhandled ActorEvent: " + event);
+                    final net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent javaEvent = javaEntityEvent(event, entity.javaType());
+                    if (javaEvent != null) {
+                        wrapper.write(Types.INT, entity.javaId()); // entity id
+                        wrapper.write(Types.BYTE, javaEvent.getValue()); // event
+                    } else if (event == ActorEvent.START_ATTACKING && entity instanceof LivingEntity) {
+                        // Nukkit uses ActorEvent 4 as a generic mob arm swing, while Java reserves entity
+                        // status 4 for a few entity types. Other living entities need an Animate packet.
+                        wrapper.setPacketType(ClientboundPackets26_1.ANIMATE);
+                        wrapper.write(Types.VAR_INT, entity.javaId()); // entity id
+                        wrapper.write(Types.UNSIGNED_BYTE, (short) AnimateAction.SWING_MAIN_HAND.ordinal()); // action
+                    } else {
+                        wrapper.cancel();
+                    }
                 }
             }
         });
@@ -777,6 +787,41 @@ public class EntityPackets {
             return javaBlockStateId >= 0 ? javaBlockStateId : null;
         }
         return null;
+    }
+
+    static net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent javaEntityEvent(final ActorEvent event, final EntityTypes1_21_11 type) {
+        return switch (event) {
+            case JUMP -> type.is(EntityTypes1_21_11.RABBIT)
+                    ? net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent.JUMP : null;
+            case START_ATTACKING -> {
+                if (type.is(EntityTypes1_21_11.GOAT)) {
+                    yield net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent.START_RAM;
+                }
+                if (type.is(EntityTypes1_21_11.EVOKER_FANGS)
+                        || type.is(EntityTypes1_21_11.IRON_GOLEM)
+                        || type.is(EntityTypes1_21_11.WARDEN)) {
+                    yield net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent.START_ATTACKING;
+                }
+                yield null;
+            }
+            case STOP_ATTACKING -> type.is(EntityTypes1_21_11.GOAT)
+                    ? net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent.END_RAM : null;
+            case TAMING_FAILED -> net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent.TAMING_FAILED;
+            case TAMING_SUCCEEDED -> net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent.TAMING_SUCCEEDED;
+            case SHAKE_WETNESS -> net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent.SHAKE_WETNESS;
+            case EAT_GRASS -> net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent.EAT_GRASS;
+            case ZOMBIE_CONVERTING -> net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent.ZOMBIE_CONVERTING;
+            case LOVE_HEARTS -> net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent.LOVE_HEARTS;
+            case VILLAGER_ANGRY -> net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent.VILLAGER_ANGRY;
+            case VILLAGER_HAPPY -> net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent.VILLAGER_HAPPY;
+            case WITCH_HAT_MAGIC -> net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent.WITCH_HAT_MAGIC;
+            case FIREWORKS_EXPLODE -> net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent.FIREWORKS_EXPLODE;
+            case IN_LOVE_HEARTS -> net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent.IN_LOVE_HEARTS;
+            case SILVERFISH_MERGE_ANIM -> net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent.SILVERFISH_MERGE_ANIM;
+            case GUARDIAN_ATTACK_SOUND -> net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent.GUARDIAN_ATTACK_SOUND;
+            case SHAKE_WETNESS_STOP -> net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent.CANCEL_SHAKE_WETNESS;
+            default -> null;
+        };
     }
 
 }
