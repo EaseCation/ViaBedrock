@@ -622,7 +622,8 @@ public class EntityPackets {
             wrapper.read(BedrockTypes.OPTIONAL_STRING); // swing source
 
             final Entity entity = wrapper.user().get(EntityTracker.class).getEntityByRid(entityRuntimeId);
-            if (entity == null) {
+            // Java handles arm animations as LivingEntity actions, while custom entities use Interaction carriers.
+            if (!(entity instanceof LivingEntity)) {
                 wrapper.cancel();
                 return;
             }
