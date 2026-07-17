@@ -628,6 +628,11 @@ public class ClickSimulator {
 
     // --- SWAP (mode=2) ---
 
+    static List<InventoryActionData> simulateSwapHands(final InventoryTracker tracker) {
+        final int selectedJavaSlot = 36 + tracker.getInventoryContainer().getSelectedHotbarSlot();
+        return simulateSwap(ContainerID.CONTAINER_ID_INVENTORY.getValue(), (short) selectedJavaSlot, (byte) 40, tracker);
+    }
+
     private static List<InventoryActionData> simulateSwap(int javaContainerId, short javaSlot, byte button, InventoryTracker tracker) {
         final BedrockSlotRef clickedRef = SlotMapper.resolve(javaContainerId, javaSlot, tracker);
         if (clickedRef == null) return null;

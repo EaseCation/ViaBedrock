@@ -550,6 +550,11 @@ public class ExperimentalFeatures {
         return true;
     }
 
+    public static boolean tryHandleSwapHands(final UserConnection user) {
+        return ViaBedrock.getConfig().shouldEnableExperimentalFeatures()
+                && ClientAuthInventoryModule.tryHandleSwapHands(user);
+    }
+
     /**
      * Builds and sends the CLICK_BLOCK ItemUseTransaction (preceded/followed by Start/StopItemUseOn) that a
      * Bedrock client emits when interacting with a block. Shared by the USE_ITEM_ON handler and the empty

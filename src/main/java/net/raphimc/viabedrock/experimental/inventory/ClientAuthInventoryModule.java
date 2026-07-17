@@ -170,20 +170,7 @@ public class ClientAuthInventoryModule implements FeatureModule {
                 return; // No-op, no packet needed
             }
 
-            // Send NormalTransaction to Bedrock server
-            final InventoryTransactionRewriter txRewriter = wrapper.user().get(InventoryTransactionRewriter.class);
-            final PacketWrapper txPacket = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, wrapper.user());
-
-            txPacket.write(txRewriter.getInventoryTransactionType(),
-                    new BedrockInventoryTransaction(
-                            0,
-                            null,
-                            actions,
-                            ComplexInventoryTransaction_Type.NormalTransaction,
-                            new InventoryTransactionData.NormalTransactionData()
-                    ));
-
-            txPacket.sendToServer(BedrockProtocol.class);
+            sendNormalTransaction(wrapper.user(), actions);
 
             // Optimistically commit the predicted result to our mirror, then push it to Java. Previously we
             // reset Java to the pre-click state without committing the prediction, which made every action
@@ -199,6 +186,49 @@ public class ClientAuthInventoryModule implements FeatureModule {
             updateCraftingOutputPreview(wrapper.user());
             // NOTE: real Bedrock clients never send an InventoryMismatch after a normal transaction.
         });
+    }
+
+    public static boolean tryHandleSwapHands(final UserConnection user) {
+        if (user.get(GameSessionStorage.class).isInventoryServerAuthoritative()) {
+            return false;
+        }
+
+        final InventoryTracker tracker = user.get(InventoryTracker.class);
+        if (tracker.getPendingCloseContainer() != null) {
+            PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
+            return true;
+        }
+
+        final List<InventoryActionData> actions = runOrRollback(
+                () -> ClickSimulator.simulateSwapHands(tracker),
+                error -> ViaBedrock.getPlatform().getLogger().log(Level.WARNING,
+                        "Failed to simulate Java hand swap; rolling back to the authoritative inventory", error));
+        if (actions == null) {
+            PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
+            return true;
+        }
+        if (actions.isEmpty()) {
+            return true;
+        }
+
+        sendNormalTransaction(user, actions);
+        applyMirrorUpdates(actions, tracker);
+        PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
+        return true;
+    }
+
+    private static void sendNormalTransaction(final UserConnection user, final List<InventoryActionData> actions) {
+        final InventoryTransactionRewriter txRewriter = user.get(InventoryTransactionRewriter.class);
+        final PacketWrapper txPacket = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, user);
+        txPacket.write(txRewriter.getInventoryTransactionType(),
+                new BedrockInventoryTransaction(
+                        0,
+                        null,
+                        actions,
+                        ComplexInventoryTransaction_Type.NormalTransaction,
+                        new InventoryTransactionData.NormalTransactionData()
+                ));
+        txPacket.sendToServer(BedrockProtocol.class);
     }
 
     static <T> T runOrRollback(final Supplier<T> simulation, final Consumer<RuntimeException> failureHandler) {
