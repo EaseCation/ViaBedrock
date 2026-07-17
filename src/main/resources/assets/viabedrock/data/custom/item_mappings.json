@@ -489,6 +489,22 @@
       "43": {
         "java_id": "minecraft:tipped_arrow",
         "java_tag": "{Potion:\"minecraft:strong_slowness\"}"
+      },
+      "44": {
+        "java_id": "minecraft:tipped_arrow",
+        "java_tag": "{Potion:\"minecraft:wind_charged\"}"
+      },
+      "45": {
+        "java_id": "minecraft:tipped_arrow",
+        "java_tag": "{Potion:\"minecraft:weaving\"}"
+      },
+      "46": {
+        "java_id": "minecraft:tipped_arrow",
+        "java_tag": "{Potion:\"minecraft:oozing\"}"
+      },
+      "47": {
+        "java_id": "minecraft:tipped_arrow",
+        "java_tag": "{Potion:\"minecraft:infested\"}"
       }
     }
   },
@@ -8496,6 +8512,22 @@
       "42": {
         "java_id": "minecraft:lingering_potion",
         "java_tag": "{Potion:\"minecraft:strong_slowness\"}"
+      },
+      "43": {
+        "java_id": "minecraft:lingering_potion",
+        "java_tag": "{Potion:\"minecraft:wind_charged\"}"
+      },
+      "44": {
+        "java_id": "minecraft:lingering_potion",
+        "java_tag": "{Potion:\"minecraft:weaving\"}"
+      },
+      "45": {
+        "java_id": "minecraft:lingering_potion",
+        "java_tag": "{Potion:\"minecraft:oozing\"}"
+      },
+      "46": {
+        "java_id": "minecraft:lingering_potion",
+        "java_tag": "{Potion:\"minecraft:infested\"}"
       }
     }
   },
@@ -10953,6 +10985,22 @@
       "42": {
         "java_id": "minecraft:potion",
         "java_tag": "{Potion:\"minecraft:strong_slowness\"}"
+      },
+      "43": {
+        "java_id": "minecraft:potion",
+        "java_tag": "{Potion:\"minecraft:wind_charged\"}"
+      },
+      "44": {
+        "java_id": "minecraft:potion",
+        "java_tag": "{Potion:\"minecraft:weaving\"}"
+      },
+      "45": {
+        "java_id": "minecraft:potion",
+        "java_tag": "{Potion:\"minecraft:oozing\"}"
+      },
+      "46": {
+        "java_id": "minecraft:potion",
+        "java_tag": "{Potion:\"minecraft:infested\"}"
       }
     }
   },
@@ -12699,6 +12747,22 @@
       "42": {
         "java_id": "minecraft:splash_potion",
         "java_tag": "{Potion:\"minecraft:strong_slowness\"}"
+      },
+      "43": {
+        "java_id": "minecraft:splash_potion",
+        "java_tag": "{Potion:\"minecraft:wind_charged\"}"
+      },
+      "44": {
+        "java_id": "minecraft:splash_potion",
+        "java_tag": "{Potion:\"minecraft:weaving\"}"
+      },
+      "45": {
+        "java_id": "minecraft:splash_potion",
+        "java_tag": "{Potion:\"minecraft:oozing\"}"
+      },
+      "46": {
+        "java_id": "minecraft:splash_potion",
+        "java_tag": "{Potion:\"minecraft:infested\"}"
       }
     }
   },

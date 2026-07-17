@@ -180,8 +180,7 @@ public class ItemRewriter extends StoredObject {
         if (javaItemMapping != null) {
             final StructuredDataContainer data = ProtocolConstants.createStructuredDataContainer();
             if (javaItemMapping.overrideTag() != null) {
-                // javaTag.setValue(this.overrideTag.copy().getValue());
-                // TODO: Update: Fix this
+                LegacyItemTagRewriter.apply(data, javaItemMapping.overrideTag());
             }
             if (javaItemMapping.name() != null) {
                 final ResourcePackStorage resourcePackStorage = this.user().get(ResourcePackStorage.class);
