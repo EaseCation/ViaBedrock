@@ -44,6 +44,8 @@ import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.api.util.RegistryUtil;
 import net.raphimc.viabedrock.api.util.TextUtil;
+import net.raphimc.viabedrock.experimental.custommapping.CustomMappingAccess;
+import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.enums.Direction;
@@ -54,6 +56,7 @@ import net.raphimc.viabedrock.protocol.data.enums.java.generated.EquipmentSlot;
 import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
 import net.raphimc.viabedrock.protocol.data.generated.java.RegistryKeys;
 import net.raphimc.viabedrock.protocol.model.*;
+import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
@@ -64,12 +67,14 @@ import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.IntUnaryOperator;
 import java.util.function.LongFunction;
 import java.util.logging.Level;
 
 public class EntityPackets {
 
     private static final float PAINTING_POS_OFFSET = -0.46875F;
+    private static final String FALLING_BLOCK_IDENTIFIER = "minecraft:falling_block";
     private static final String FISHING_HOOK_IDENTIFIER = "minecraft:fishing_hook";
 
     public static void register(final BedrockProtocol protocol) {
@@ -108,6 +113,17 @@ public class EntityPackets {
                     return;
                 }
                 javaSpawnData = ownerJavaId;
+            } else if (type.equals(FALLING_BLOCK_IDENTIFIER)) {
+                final BlockStateRewriter blockStateRewriter = wrapper.user().get(BlockStateRewriter.class);
+                final CustomMappingAccess customMappingAccess = wrapper.user().get(CustomMappingSyncStorage.class).access();
+                final Integer javaBlockStateId = getFallingBlockJavaBlockStateId(entityData, bedrockRuntimeId ->
+                        customMappingAccess.resolveBedrockRuntimeId(bedrockRuntimeId, blockStateRewriter.javaId(bedrockRuntimeId), "falling block spawn data").javaBlockStateId());
+                if (javaBlockStateId == null) {
+                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Not spawning falling block with unique ID " + entityUniqueId + " and runtime ID " + entityRuntimeId + " because its block state metadata is missing or invalid");
+                    wrapper.cancel();
+                    return;
+                }
+                javaSpawnData = javaBlockStateId;
             } else {
                 javaSpawnData = 0;
             }
@@ -743,6 +759,21 @@ public class EntityPackets {
             }
 
             return ownerJavaIdLookup.apply(ownerUniqueId);
+        }
+        return null;
+    }
+
+    static Integer getFallingBlockJavaBlockStateId(final EntityData[] entityData, final IntUnaryOperator javaBlockStateLookup) {
+        for (EntityData data : entityData) {
+            if (data.id() != ActorDataIDs.VARIANT.getValue()) {
+                continue;
+            }
+            if (data.dataType() != EntityDataTypesBedrock.INT || !(data.getValue() instanceof Integer bedrockRuntimeId)) {
+                return null;
+            }
+
+            final int javaBlockStateId = javaBlockStateLookup.applyAsInt(bedrockRuntimeId);
+            return javaBlockStateId >= 0 ? javaBlockStateId : null;
         }
         return null;
     }

@@ -71,8 +71,57 @@ class EntityPacketsTest {
         );
     }
 
+    @Test
+    void mapsFallingBlockRuntimeIdToJavaBlockState() {
+        final Integer javaBlockStateId = EntityPackets.getFallingBlockJavaBlockStateId(new EntityData[]{variantData(7)}, bedrockRuntimeId -> {
+            assertEquals(7, bedrockRuntimeId);
+            return 42;
+        });
+
+        assertEquals(Integer.valueOf(42), javaBlockStateId);
+    }
+
+    @Test
+    void mapsNegativeHashedFallingBlockRuntimeId() {
+        final Integer javaBlockStateId = EntityPackets.getFallingBlockJavaBlockStateId(new EntityData[]{variantData(-7)}, bedrockRuntimeId -> {
+            assertEquals(-7, bedrockRuntimeId);
+            return 42;
+        });
+
+        assertEquals(Integer.valueOf(42), javaBlockStateId);
+    }
+
+    @Test
+    void findsFallingBlockStateRegardlessOfMetadataOrder() {
+        final Integer javaBlockStateId = EntityPackets.getFallingBlockJavaBlockStateId(new EntityData[]{ownerData(OWNER_UNIQUE_ID), variantData(7)}, bedrockRuntimeId -> 8);
+
+        assertEquals(Integer.valueOf(8), javaBlockStateId);
+    }
+
+    @Test
+    void preservesMappedJavaBlockStateZero() {
+        final Integer javaBlockStateId = EntityPackets.getFallingBlockJavaBlockStateId(new EntityData[]{variantData(7)}, bedrockRuntimeId -> 0);
+
+        assertEquals(Integer.valueOf(0), javaBlockStateId);
+    }
+
+    @Test
+    void rejectsMissingInvalidOrUnmappedFallingBlockState() {
+        final EntityData wrongType = new EntityData(ActorDataIDs.VARIANT.getValue(), EntityDataTypesBedrock.LONG, 7L);
+
+        assertAll(
+                () -> assertNull(EntityPackets.getFallingBlockJavaBlockStateId(new EntityData[0], bedrockRuntimeId -> fail("Block state lookup should not run without variant metadata"))),
+                () -> assertNull(EntityPackets.getFallingBlockJavaBlockStateId(new EntityData[]{wrongType}, bedrockRuntimeId -> fail("Block state lookup should not run for invalid metadata"))),
+                () -> assertNull(EntityPackets.getFallingBlockJavaBlockStateId(new EntityData[]{variantData(7)}, bedrockRuntimeId -> -1))
+        );
+    }
+
     private static EntityData ownerData(final long ownerUniqueId) {
         return new EntityData(ActorDataIDs.OWNER.getValue(), EntityDataTypesBedrock.LONG, ownerUniqueId);
+    }
+
+    private static EntityData variantData(final int bedrockRuntimeId) {
+        return new EntityData(ActorDataIDs.VARIANT.getValue(), EntityDataTypesBedrock.INT, bedrockRuntimeId);
     }
 
 }
