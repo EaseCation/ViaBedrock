@@ -23,10 +23,14 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class ContentStreamingTest {
@@ -111,6 +115,25 @@ class ContentStreamingTest {
                         "contents.json", decrypt, 0L, 4L));
 
         assertArrayEquals(encrypted, Files.readAllBytes(file));
+    }
+
+    @Test
+    void diskBackedMissingImagesPreserveContentContract(@TempDir final Path tempDir) throws Exception {
+        final Path archive = tempDir.resolve("content.zip");
+        try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(archive))) {
+            output.putNextEntry(new ZipEntry("textures/not-an-image.png"));
+            output.write("not an image".getBytes(StandardCharsets.UTF_8));
+            output.closeEntry();
+        }
+
+        final ZipFileContent content = new ZipFileContent(archive);
+        assertNull(content.getShortnameImage("textures/missing"));
+        assertNull(content.getShortnameImage(null));
+        assertNull(content.getImage("textures/not-an-image.png"));
+        assertNull(content.get(null));
+        assertNull(content.open(null));
+        assertEquals(-1L, content.size(null));
+        assertFalse(content.contains(null));
     }
 
     private static final class StreamingContent extends Content {

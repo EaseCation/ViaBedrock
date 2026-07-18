@@ -45,6 +45,9 @@ public abstract class Content implements PackContentView {
     public abstract List<String> getFilesDeep(final String path, final String extension);
 
     public String getFullPath(final String shortNamePath, final String... extensions) {
+        if (shortNamePath == null) {
+            return null;
+        }
         if (this.contains(shortNamePath)) {
             return shortNamePath;
         }
@@ -156,6 +159,9 @@ public abstract class Content implements PackContentView {
     }
 
     public LazyImage getImage(final String path) {
+        if (path == null) {
+            return null;
+        }
         final byte[] bytes = this.get(path);
         if (bytes == null) {
             return null;

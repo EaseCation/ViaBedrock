@@ -101,7 +101,7 @@ public final class ZipFileContent extends Content {
 
     @Override
     public boolean contains(final String path) {
-        return this.pathSet.contains(path);
+        return path != null && this.pathSet.contains(path);
     }
 
     @Override
@@ -115,7 +115,7 @@ public final class ZipFileContent extends Content {
 
     @Override
     public InputStream open(final String path) throws IOException {
-        if (!this.pathSet.contains(path)) return null;
+        if (path == null || !this.pathSet.contains(path)) return null;
         final ZipFile activeSession = this.readSession.get();
         if (activeSession != null) {
             final ZipEntry entry = activeSession.getEntry(path);
@@ -149,7 +149,7 @@ public final class ZipFileContent extends Content {
 
     @Override
     public long size(final String path) throws IOException {
-        return this.entrySizes.getOrDefault(path, -1L);
+        return path == null ? -1L : this.entrySizes.getOrDefault(path, -1L);
     }
 
     @Override
