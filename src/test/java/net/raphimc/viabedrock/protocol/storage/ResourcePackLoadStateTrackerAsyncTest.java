@@ -29,10 +29,80 @@ import java.io.IOException;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ResourcePackLoadStateTrackerAsyncTest {
+
+    @Test
+    void resolvesVersionedAndVersionlessTransferNamesToTheAnnouncedIdentity() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final ResourcePack.Key key = new ResourcePack.Key(UUID.randomUUID(), "1.0.0");
+            final ResourcePackLoadStateTracker.Info info = new ResourcePackLoadStateTracker.Info(
+                    key, 128L, new byte[0], "content", "", null);
+            final ResourcePackLoadStateTracker tracker = new ResourcePackLoadStateTracker(
+                    new UserConnectionImpl(channel), new ResourcePackLoadStateTracker.Info[]{info});
+
+            final ResourcePackLoadStateTracker.ResolvedRequest versioned =
+                    tracker.resolveTransferRequest(key.toString());
+            final ResourcePackLoadStateTracker.ResolvedRequest versionless =
+                    tracker.resolveTransferRequest(key.id().toString());
+
+            assertEquals(key, versioned.key());
+            assertSame(info, versioned.info());
+            assertEquals(key, versionless.key());
+            assertSame(info, versionless.info());
+            assertThrows(IllegalArgumentException.class,
+                    () -> ResourcePack.Key.fromString(key.id().toString()));
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void rejectsAmbiguousVersionlessTransferNamesWithoutGuessing() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final UUID id = UUID.randomUUID();
+            final ResourcePack.Key firstKey = new ResourcePack.Key(id, "1.0.0");
+            final ResourcePack.Key secondKey = new ResourcePack.Key(id, "2.0.0");
+            final ResourcePackLoadStateTracker tracker = new ResourcePackLoadStateTracker(
+                    new UserConnectionImpl(channel), new ResourcePackLoadStateTracker.Info[]{
+                            new ResourcePackLoadStateTracker.Info(
+                                    firstKey, 128L, new byte[0], "first", "", null),
+                            new ResourcePackLoadStateTracker.Info(
+                                    secondKey, 256L, new byte[0], "second", "", null)
+                    });
+
+            assertEquals(firstKey, tracker.resolveTransferRequest(firstKey.toString()).key());
+            assertEquals(secondKey, tracker.resolveTransferRequest(secondKey.toString()).key());
+            final IllegalArgumentException failure = assertThrows(
+                    IllegalArgumentException.class, () -> tracker.resolveTransferRequest(id.toString()));
+            assertTrue(failure.getMessage().contains("matches 2 announced versions"));
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void rejectsMalformedAndUnannouncedTransferNames() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final ResourcePackLoadStateTracker tracker = new ResourcePackLoadStateTracker(
+                    new UserConnectionImpl(channel), new ResourcePackLoadStateTracker.Info[0]);
+
+            assertThrows(IllegalArgumentException.class,
+                    () -> tracker.resolveTransferRequest("not-a-uuid"));
+            assertThrows(IllegalArgumentException.class,
+                    () -> tracker.resolveTransferRequest(UUID.randomUUID().toString()));
+            assertThrows(IllegalArgumentException.class,
+                    () -> tracker.resolveTransferRequest(UUID.randomUUID() + "_1.0.0"));
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
 
     @Test
     void preparationSnapshotsProtocolArraysAndRunsOnTheSubmittedWorker() throws Exception {

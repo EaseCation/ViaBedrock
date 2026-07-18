@@ -78,6 +78,13 @@ public class ResourcePackDownloadTracker implements StorableObject {
     public Download add(final String key, final long size, final long chunkSize, final byte[] hash,
                         final boolean premium, final PackType type,
                         final ResourcePackArchiveStore.Claim archiveClaim) {
+        return this.add(key, null, size, chunkSize, hash, premium, type, archiveClaim);
+    }
+
+    public Download add(final String key, final ResourcePack.Key declaredKey,
+                        final long size, final long chunkSize, final byte[] hash,
+                        final boolean premium, final PackType type,
+                        final ResourcePackArchiveStore.Claim archiveClaim) {
         if (this.closed.get()) {
             this.abandonClosedClaim(archiveClaim);
             throw new CancellationException("Resource pack download connection is closed");
@@ -95,7 +102,7 @@ public class ResourcePackDownloadTracker implements StorableObject {
 
         final Download download;
         try {
-            download = new Download(hash, premium, type, size, chunkSize,
+            download = new Download(declaredKey, hash, premium, type, size, chunkSize,
                     chunkCount, tempFile, archiveClaim);
         } catch (IOException e) {
             try {
@@ -287,6 +294,7 @@ public class ResourcePackDownloadTracker implements StorableObject {
 
     public static final class Download {
 
+        private final ResourcePack.Key declaredKey;
         private final byte[] hash;
         private final boolean premium;
         private final PackType type;
@@ -305,9 +313,11 @@ public class ResourcePackDownloadTracker implements StorableObject {
         private boolean released;
         private volatile boolean cancelled;
 
-        private Download(final byte[] hash, final boolean premium, final PackType type, final long size,
+        private Download(final ResourcePack.Key declaredKey, final byte[] hash,
+                         final boolean premium, final PackType type, final long size,
                          final long chunkSize, final int chunkCount, final Path tempFile,
                          final ResourcePackArchiveStore.Claim archiveClaim) throws IOException {
+            this.declaredKey = declaredKey;
             this.hash = hash.clone();
             this.premium = premium;
             this.type = type;
@@ -506,6 +516,10 @@ public class ResourcePackDownloadTracker implements StorableObject {
 
         public byte[] hash() {
             return this.hash.clone();
+        }
+
+        public ResourcePack.Key declaredKey() {
+            return this.declaredKey;
         }
 
         public boolean premium() {

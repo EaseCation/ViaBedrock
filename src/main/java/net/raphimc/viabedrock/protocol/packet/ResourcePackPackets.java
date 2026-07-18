@@ -226,11 +226,24 @@ public class ResourcePackPackets {
             final boolean premium = wrapper.read(Types.BOOLEAN); // is premium pack
             final PackType type = PackType.getByValue(wrapper.read(Types.UNSIGNED_BYTE), PackType.Invalid); // pack type
 
-            final ResourcePack.Key packKey = ResourcePack.Key.fromString(key);
             final ResourcePackLoadStateTracker loadStateTracker = wrapper.user().get(ResourcePackLoadStateTracker.class);
-            final ResourcePackLoadStateTracker.Info info = loadStateTracker != null ? loadStateTracker.getRequest(packKey) : null;
+            final boolean sharedCacheEnabled = ViaBedrock.isSharedResourcePackCacheEnabled();
+            final ResourcePack.Key packKey;
+            final ResourcePackLoadStateTracker.Info info;
             try {
                 ResourcePackDownloadTracker.validateMetadata(size, chunkSize, hash);
+                if (sharedCacheEnabled && type == PackType.Resources) {
+                    if (loadStateTracker == null) {
+                        throw new IllegalStateException("Resource pack transfer has no active announcement tracker");
+                    }
+                    final ResourcePackLoadStateTracker.ResolvedRequest resolved =
+                            loadStateTracker.resolveTransferRequest(key);
+                    packKey = resolved.key();
+                    info = resolved.info();
+                } else {
+                    packKey = null;
+                    info = null;
+                }
                 if (info != null && info.announcedSize() >= 0L && info.announcedSize() != size) {
                     throw new IllegalStateException("Resource pack size changed during negotiation: "
                             + size + " != " + info.announcedSize());
@@ -239,7 +252,6 @@ public class ResourcePackPackets {
                 BedrockProtocol.kickForIllegalState(wrapper.user(), "Invalid server resource pack metadata", e);
                 return;
             }
-            final boolean sharedCacheEnabled = ViaBedrock.isSharedResourcePackCacheEnabled();
             final ResourcePackArchiveStore.Claim archiveClaim = shouldClaimRawArchive(
                     sharedCacheEnabled, type, info)
                     ? ViaBedrock.getResourcePackArchiveStore().claim(hash) : null;
@@ -253,7 +265,8 @@ public class ResourcePackPackets {
                 }
                 return;
             }
-            startResourcePackDownload(wrapper.user(), key, size, chunkSize, hash, premium, type, null);
+            startResourcePackDownload(wrapper.user(), key, packKey,
+                    size, chunkSize, hash, premium, type, null);
         });
         protocol.registerClientbound(ClientboundBedrockPackets.RESOURCE_PACK_CHUNK_DATA, null, wrapper -> {
             wrapper.cancel();
@@ -560,7 +573,7 @@ public class ResourcePackPackets {
                             liveUser, "Failed to import a legacy server resource pack", failure);
                 } else {
                     startResourcePackDownload(
-                            liveUser, key, size, chunkSize, hash, premium, type, claim);
+                            liveUser, key, packKey, size, chunkSize, hash, premium, type, claim);
                 }
                 connectionStage.complete(null);
             };
@@ -581,6 +594,7 @@ public class ResourcePackPackets {
     }
 
     private static void startResourcePackDownload(final UserConnection user, final String key,
+                                                  final ResourcePack.Key packKey,
                                                   final long size, final long chunkSize, final byte[] hash,
                                                   final boolean premium, final PackType type,
                                                   final ResourcePackArchiveStore.Claim archiveClaim) {
@@ -594,7 +608,8 @@ public class ResourcePackPackets {
         }
         final ResourcePackDownloadTracker.Download download;
         try {
-            download = downloadTracker.add(key, size, chunkSize, hash, premium, type, archiveClaim);
+            download = downloadTracker.add(
+                    key, packKey, size, chunkSize, hash, premium, type, archiveClaim);
         } catch (Throwable e) {
             if (archiveClaim != null && archiveClaim.leader()) {
                 if (e instanceof CancellationException || !isConnectionActive(user)) {
@@ -812,26 +827,22 @@ public class ResourcePackPackets {
         }
 
         if (download.archiveClaim() != null) {
-            final ResourcePack.Key packKey = ResourcePack.Key.fromString(key);
+            final ResourcePack.Key packKey = download.declaredKey();
             final ResourcePackLoadStateTracker loadStateTracker = user.get(ResourcePackLoadStateTracker.class);
             final ResourcePackLoadStateTracker.Info info =
-                    loadStateTracker != null ? loadStateTracker.getRequest(packKey) : null;
+                    loadStateTracker != null && packKey != null ? loadStateTracker.getRequest(packKey) : null;
+            if (loadStateTracker == null || packKey == null || info == null) {
+                final IllegalStateException failure = new IllegalStateException(
+                        "Shared resource pack download lost its announced identity: " + key);
+                downloadTracker.fail(key, failure);
+                BedrockProtocol.kickForIllegalState(
+                        user, "Failed to resolve a downloaded server resource pack", failure);
+                return;
+            }
             try {
                 final Path archive = downloadTracker.takeCompleted(key);
-                if (loadStateTracker != null && info != null) {
-                    publishClaimedPack(user, loadStateTracker, packKey, info,
-                            download.archiveClaim(), archive);
-                } else {
-                    ViaBedrock.getResourcePackArchiveStore().publishAsync(download.archiveClaim(), archive)
-                            .whenComplete((path, publishFailure) -> download.archiveClaim().close())
-                            .exceptionally(publishError -> {
-                                if (isConnectionActive(user)) {
-                                    BedrockProtocol.kickForIllegalState(
-                                            user, "Failed to store a server resource pack", publishError);
-                                }
-                                return null;
-                            });
-                }
+                publishClaimedPack(user, loadStateTracker, packKey, info,
+                        download.archiveClaim(), archive);
             } catch (Throwable publishError) {
                 BedrockProtocol.kickForIllegalState(user, "Failed to store a server resource pack", publishError);
             }

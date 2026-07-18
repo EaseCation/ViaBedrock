@@ -44,6 +44,22 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ResourcePackDownloadTrackerTest {
 
     @Test
+    void retainsResolvedIdentitySeparatelyFromTheWireTransferName() throws Exception {
+        final byte[] archive = bytes("abcd");
+        final ResourcePack.Key declaredKey = new ResourcePack.Key(UUID.randomUUID(), "1.0.0");
+        final ResourcePackDownloadTracker tracker = new ResourcePackDownloadTracker();
+        final ResourcePackDownloadTracker.Download download = tracker.add(
+                declaredKey.id().toString(), declaredKey, archive.length, archive.length,
+                sha256(archive), false, PackType.Resources, null);
+
+        assertEquals(declaredKey, download.declaredKey());
+        assertEquals(download.tempFile(), download.processDataChunk(0L, 0L, archive));
+        assertSame(download, tracker.get(declaredKey.id().toString()));
+
+        tracker.remove(declaredKey.id().toString());
+    }
+
+    @Test
     void writesOutOfOrderChunksAtProtocolOffsets() throws Exception {
         final byte[] archive = bytes("abcdefghij");
         final ResourcePackDownloadTracker tracker = new ResourcePackDownloadTracker();

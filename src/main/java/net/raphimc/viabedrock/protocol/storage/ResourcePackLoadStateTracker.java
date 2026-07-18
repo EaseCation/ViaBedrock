@@ -55,6 +55,7 @@ import java.util.logging.Level;
 public class ResourcePackLoadStateTracker extends StoredObject {
 
     private final Map<ResourcePack.Key, Info> requests = new HashMap<>();
+    private final Map<UUID, List<Info>> requestsById = new HashMap<>();
     private final Map<ResourcePack.Key, PackAlias> aliases = new HashMap<>();
     private final Map<ResourcePack.Key, ResourcePack> resourcePacks = new ConcurrentHashMap<>();
     private final AtomicInteger remainingResourcePackCount = new AtomicInteger();
@@ -85,6 +86,9 @@ public class ResourcePackLoadStateTracker extends StoredObject {
                 throw new IllegalArgumentException(
                         "Conflicting RESOURCE_PACKS_INFO declarations for resource pack " + info.key());
             }
+            if (previous == null) {
+                this.requestsById.computeIfAbsent(info.key().id(), ignored -> new ArrayList<>()).add(info);
+            }
             this.aliases.put(info.key(), info.alias(backendScope));
         }
         this.remainingResourcePackCount.set(this.requests.size());
@@ -92,6 +96,37 @@ public class ResourcePackLoadStateTracker extends StoredObject {
 
     public Info getRequest(final ResourcePack.Key key) {
         return this.requests.get(key);
+    }
+
+    /** Resolves the protocol's optional-version transfer name to one announced resource pack identity. */
+    public ResolvedRequest resolveTransferRequest(final String transferName) {
+        Objects.requireNonNull(transferName, "transferName");
+        final int versionSeparator = transferName.indexOf('_');
+        if (versionSeparator >= 0) {
+            final ResourcePack.Key key = ResourcePack.Key.fromString(transferName);
+            final Info info = this.requests.get(key);
+            if (info == null) {
+                throw new IllegalArgumentException("Unannounced resource pack transfer: " + transferName);
+            }
+            return new ResolvedRequest(key, info);
+        }
+
+        final UUID id;
+        try {
+            id = UUID.fromString(transferName);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Invalid resource pack transfer name: " + transferName, e);
+        }
+        final List<Info> candidates = this.requestsById.getOrDefault(id, List.of());
+        if (candidates.isEmpty()) {
+            throw new IllegalArgumentException("Unannounced resource pack transfer: " + transferName);
+        }
+        if (candidates.size() != 1) {
+            throw new IllegalArgumentException("Ambiguous versionless resource pack transfer " + transferName
+                    + " matches " + candidates.size() + " announced versions");
+        }
+        final Info info = candidates.getFirst();
+        return new ResolvedRequest(info.key(), info);
     }
 
     public PackAlias getAlias(final ResourcePack.Key key) {
@@ -465,6 +500,17 @@ public class ResourcePackLoadStateTracker extends StoredObject {
                     && this.hasScripts == other.hasScripts
                     && this.addonPack == other.addonPack
                     && this.rayTracingCapable == other.rayTracingCapable;
+        }
+    }
+
+    public record ResolvedRequest(ResourcePack.Key key, Info info) {
+
+        public ResolvedRequest {
+            Objects.requireNonNull(key, "key");
+            Objects.requireNonNull(info, "info");
+            if (!key.equals(info.key())) {
+                throw new IllegalArgumentException("Resolved resource pack key does not match its announcement");
+            }
         }
     }
 
