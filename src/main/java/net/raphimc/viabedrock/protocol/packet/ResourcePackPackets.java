@@ -442,11 +442,16 @@ public class ResourcePackPackets {
                                                     final Consumer<T> lateValueCleanup,
                                                     final ScheduledExecutorService timeoutScheduler) {
         final CompletableFuture<T> bounded = new CompletableFuture<>();
+        final AtomicBoolean decided = new AtomicBoolean();
         final AtomicReference<ScheduledFuture<?>> timeoutTask = new AtomicReference<>();
         source.whenComplete((value, error) -> {
             if (error != null) {
-                bounded.completeExceptionally(error);
-            } else if (!bounded.complete(value)) {
+                if (decided.compareAndSet(false, true)) {
+                    bounded.completeExceptionally(error);
+                }
+            } else if (decided.compareAndSet(false, true)) {
+                bounded.complete(value);
+            } else {
                 lateValueCleanup.accept(value);
             }
             final ScheduledFuture<?> scheduled = timeoutTask.get();
@@ -454,16 +459,27 @@ public class ResourcePackPackets {
         });
         try {
             final ScheduledFuture<?> scheduled = timeoutScheduler.schedule(() -> {
-                if (bounded.completeExceptionally(new TimeoutException(
-                        "Resource pack build exceeded " + timeout + ' ' + unit.name().toLowerCase()))) {
-                    timeoutCleanup.run();
+                if (decided.compareAndSet(false, true)) {
+                    final TimeoutException failure = new TimeoutException(
+                            "Resource pack build exceeded " + timeout + ' ' + unit.name().toLowerCase());
+                    try {
+                        timeoutCleanup.run();
+                    } catch (Throwable cleanupError) {
+                        failure.addSuppressed(cleanupError);
+                    }
+                    bounded.completeExceptionally(failure);
                 }
             }, timeout, unit);
             timeoutTask.set(scheduled);
             if (bounded.isDone()) scheduled.cancel(false);
         } catch (RejectedExecutionException e) {
-            if (bounded.completeExceptionally(e)) {
-                timeoutCleanup.run();
+            if (decided.compareAndSet(false, true)) {
+                try {
+                    timeoutCleanup.run();
+                } catch (Throwable cleanupError) {
+                    e.addSuppressed(cleanupError);
+                }
+                bounded.completeExceptionally(e);
             }
         }
         return bounded;
