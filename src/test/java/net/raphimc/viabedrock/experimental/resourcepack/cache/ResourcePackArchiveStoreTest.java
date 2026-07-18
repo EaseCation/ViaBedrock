@@ -134,7 +134,7 @@ class ResourcePackArchiveStoreTest {
     }
 
     @Test
-    void completedSourceFlightRemainsJoinableDuringCompletionCallbacks(@TempDir final Path tempDir)
+    void completedSourceFlightIsRetiredBeforeCompletionCallbacks(@TempDir final Path tempDir)
             throws Exception {
         final Fixture fixture = this.fixture(tempDir);
         final byte[] archive = plainArchive(PACK_KEY, "completion-boundary");
@@ -164,8 +164,8 @@ class ResourcePackArchiveStoreTest {
         releaseLoader.countDown();
 
         reentrant.get(10L, TimeUnit.SECONDS);
-        assertEquals(1, loaderCalls.get(),
-                "A completion callback must still join the just-completed source flight");
+        assertEquals(2, loaderCalls.get(),
+                "A completion callback must not join a source flight that has already completed");
         assertArchiveInflightEventually(fixture.metrics(), 0L);
     }
 

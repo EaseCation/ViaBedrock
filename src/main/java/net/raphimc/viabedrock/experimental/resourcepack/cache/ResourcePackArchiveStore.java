@@ -1459,9 +1459,9 @@ public final class ResourcePackArchiveStore {
         this.updateArchiveInflightMetric();
         final Throwable racedFailure = this.sourceFailures.getIfActive(sourceKey);
         if (racedFailure != null) {
-            candidate.completeExceptionally(racedFailure);
             this.sourceInflight.remove(sourceKey, candidate);
             this.updateArchiveInflightMetric();
+            candidate.completeExceptionally(racedFailure);
             return candidate.thenApply(pack -> pack);
         }
 
@@ -1470,9 +1470,9 @@ public final class ResourcePackArchiveStore {
         } catch (IOException e) {
             this.sourceFailures.record(sourceKey, e);
             this.metrics.failure(Tier.ARCHIVE);
-            candidate.completeExceptionally(e);
             this.sourceInflight.remove(sourceKey, candidate);
             this.updateArchiveInflightMetric();
+            candidate.completeExceptionally(e);
             return candidate.thenApply(pack -> pack);
         }
 
@@ -1488,16 +1488,12 @@ public final class ResourcePackArchiveStore {
             } else {
                 this.sourceFailures.record(sourceKey, error);
             }
-            try {
-                if (error == null) {
-                    candidate.complete(pack);
-                } else {
-                    candidate.completeExceptionally(error);
-                }
-            } finally {
-                // Keep the completed flight joinable while dependent completion callbacks run.
-                this.sourceInflight.remove(sourceKey, candidate);
-                this.updateArchiveInflightMetric();
+            this.sourceInflight.remove(sourceKey, candidate);
+            this.updateArchiveInflightMetric();
+            if (error == null) {
+                candidate.complete(pack);
+            } else {
+                candidate.completeExceptionally(error);
             }
         });
         return candidate.thenApply(pack -> pack);
