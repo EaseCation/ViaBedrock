@@ -24,6 +24,13 @@ import java.util.function.ToIntFunction;
 
 public class EnumUtil {
 
+    private static final ClassValue<Enum<?>[]> ENUM_UNIVERSES = new ClassValue<>() {
+        @Override
+        protected Enum<?>[] computeValue(final Class<?> type) {
+            return (Enum<?>[]) type.getEnumConstants();
+        }
+    };
+
     public static <T extends Enum<T>> T getEnumConstantOrNull(final Class<T> enumClass, final String name) {
         try {
             return Enum.valueOf(enumClass, name);
@@ -34,7 +41,7 @@ public class EnumUtil {
 
     public static <T extends Enum<T>> Set<T> getEnumSetFromBitmask(final Class<T> enumClass, final long bitmask, final ToIntFunction<T> bitGetter) {
         final EnumSet<T> set = EnumSet.noneOf(enumClass);
-        for (T constant : enumClass.getEnumConstants()) {
+        for (T constant : enumConstants(enumClass)) {
             final int bit = bitGetter.applyAsInt(constant);
             if (bit >= 0 && bit < Long.SIZE && (bitmask & (1L << bit)) != 0) {
                 set.add(constant);
@@ -43,9 +50,22 @@ public class EnumUtil {
         return set;
     }
 
+    public static <T extends Enum<T>> Set<T> getEnumSetFromBitmask(final Class<T> enumClass, final long lowBitmask, final long highBitmask, final ToIntFunction<T> bitGetter) {
+        final EnumSet<T> set = EnumSet.noneOf(enumClass);
+        for (T constant : enumConstants(enumClass)) {
+            final int bit = bitGetter.applyAsInt(constant);
+            if (bit >= 0 && bit < Long.SIZE && (lowBitmask & (1L << bit)) != 0) {
+                set.add(constant);
+            } else if (bit >= Long.SIZE && bit < Long.SIZE * 2 && (highBitmask & (1L << (bit - Long.SIZE))) != 0) {
+                set.add(constant);
+            }
+        }
+        return set;
+    }
+
     public static <T extends Enum<T>> Set<T> getEnumSetFromBitmask(final Class<T> enumClass, final BigInteger bitmask, final ToIntFunction<T> bitGetter) {
         final EnumSet<T> set = EnumSet.noneOf(enumClass);
-        for (T constant : enumClass.getEnumConstants()) {
+        for (T constant : enumConstants(enumClass)) {
             final int bit = bitGetter.applyAsInt(constant);
             if (bit >= 0 && bitmask.testBit(bit)) {
                 set.add(constant);
@@ -85,6 +105,11 @@ public class EnumUtil {
             }
         }
         return bitmask;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T extends Enum<T>> T[] enumConstants(final Class<T> enumClass) {
+        return (T[]) ENUM_UNIVERSES.get(enumClass);
     }
 
 }

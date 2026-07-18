@@ -17,9 +17,16 @@
  */
 package net.raphimc.viabedrock.api.resourcepack.http;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InterruptedIOException;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 
 public class BedrockPackDownloader {
 
@@ -33,21 +40,94 @@ public class BedrockPackDownloader {
 
     public int getContentLength() throws IOException {
         final HttpURLConnection connection = this.createConnection();
-        connection.setRequestMethod("HEAD");
-        connection.connect();
-        this.checkResponseCode(connection);
-        if (connection.getContentLength() < 0) {
-            throw new IOException("Content-Length is not set");
+        try {
+            connection.setRequestMethod("HEAD");
+            connection.connect();
+            this.checkResponseCode(connection);
+            if (connection.getContentLength() < 0) {
+                throw new IOException("Content-Length is not set");
+            }
+            return connection.getContentLength();
+        } finally {
+            connection.disconnect();
         }
-        return connection.getContentLength();
     }
 
     public byte[] download() throws IOException {
+        return this.download(Integer.MAX_VALUE);
+    }
+
+    public byte[] download(final long maxBytes) throws IOException {
+        final ByteArrayOutputStream output = new ByteArrayOutputStream(64 * 1024);
+        this.downloadTo(output, Math.min(maxBytes, Integer.MAX_VALUE));
+        return output.toByteArray();
+    }
+
+    public long downloadTo(final Path target) throws IOException {
+        return this.downloadTo(target, Long.MAX_VALUE);
+    }
+
+    /**
+     * Streams the response into a caller-owned temp file and removes it if the transfer is incomplete.
+     */
+    public long downloadTo(final Path target, final long maxBytes) throws IOException {
+        try (OutputStream output = Files.newOutputStream(target,
+                StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
+            return this.downloadTo(output, maxBytes);
+        } catch (IOException | RuntimeException | Error e) {
+            try {
+                Files.deleteIfExists(target);
+            } catch (IOException cleanupError) {
+                e.addSuppressed(cleanupError);
+            }
+            throw e;
+        }
+    }
+
+    /** Streams into a caller-owned output without closing it. */
+    public long downloadTo(final OutputStream output, final long maxBytes) throws IOException {
+        if (maxBytes < 0L) {
+            throw new IllegalArgumentException("Resource pack size limit must not be negative");
+        }
         final HttpURLConnection connection = this.createConnection();
-        connection.setRequestMethod("GET");
-        connection.connect();
-        this.checkResponseCode(connection);
-        return connection.getInputStream().readAllBytes();
+        try {
+            connection.setRequestMethod("GET");
+            connection.connect();
+            this.checkResponseCode(connection);
+            final long contentLength = connection.getContentLengthLong();
+            if (contentLength > maxBytes) {
+                throw new IOException("Resource pack download exceeds the configured size limit");
+            }
+
+            try (InputStream input = connection.getInputStream()) {
+                final byte[] buffer = new byte[64 * 1024];
+                long total = 0L;
+                int read;
+                while (true) {
+                    if (Thread.currentThread().isInterrupted()) {
+                        final InterruptedIOException interrupted = new InterruptedIOException(
+                                "Resource pack download was interrupted");
+                        interrupted.bytesTransferred = (int) Math.min(total, Integer.MAX_VALUE);
+                        throw interrupted;
+                    }
+                    read = input.read(buffer);
+                    if (read == -1) {
+                        break;
+                    }
+                    if (total > maxBytes - read) {
+                        throw new IOException("Resource pack download exceeds the configured size limit");
+                    }
+                    output.write(buffer, 0, read);
+                    total += read;
+                }
+                if (contentLength >= 0L && total != contentLength) {
+                    throw new IOException("Resource pack response length does not match Content-Length");
+                }
+                return total;
+            }
+        } finally {
+            connection.disconnect();
+        }
     }
 
     private HttpURLConnection createConnection() throws IOException {
@@ -57,7 +137,7 @@ public class BedrockPackDownloader {
         connection.setDoInput(true);
         connection.setDoOutput(false);
         connection.setInstanceFollowRedirects(true);
-        connection.setRequestProperty("Accept-Encoding", "gzip, deflate");
+        connection.setRequestProperty("Accept-Encoding", "identity");
         connection.setRequestProperty("Accept", "*/*");
         connection.setRequestProperty("User-Agent", "libhttpclient/1.0.0.0");
         connection.setRequestProperty("Cache-Control", "no-cache");

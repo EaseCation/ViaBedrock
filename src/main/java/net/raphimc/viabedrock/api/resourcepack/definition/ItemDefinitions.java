@@ -24,16 +24,16 @@ import com.viaversion.nbt.tag.Tag;
 import com.viaversion.viaversion.libs.gson.JsonElement;
 import com.viaversion.viaversion.libs.gson.JsonObject;
 import com.viaversion.viaversion.util.Key;
-import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
-import java.util.logging.Level;
 
 // https://wiki.bedrock.dev/items/item-components.html
 public class ItemDefinitions {
@@ -42,29 +42,66 @@ public class ItemDefinitions {
     static final int MAX_USE_DURATION_TICKS = 72_000;
     static final int MAX_STACK_SIZE = 99;
 
-    private final Map<String, ItemDefinition> items = new HashMap<>();
+    private final Map<String, ItemDefinition> items;
     private final Set<String> malformedArmorWarnings = new HashSet<>();
     private final Set<String> malformedItemUseWarnings = new HashSet<>();
     private final Set<String> malformedStackSizeWarnings = new HashSet<>();
     private final Consumer<String> warningLogger;
+    private final ItemDefinitions base;
 
     public ItemDefinitions(final ResourcePackStorage resourcePackStorage) {
-        this(message -> ViaBedrock.getPlatform().getLogger().log(Level.WARNING, message));
+        this(DefinitionLogger::warning);
         for (ResourcePack pack : resourcePackStorage.getPackStackBottomToTop()) {
-            for (String itemPath : pack.content().getFilesDeep("items/", ".json")) {
-                try {
-                    final JsonObject item = pack.content().getJson(itemPath).getAsJsonObject("minecraft:item");
-                    final String identifier = Key.namespaced(item.getAsJsonObject("description").get("identifier").getAsString());
-                    this.addFromResourceComponents(identifier, item.has("components") ? item.getAsJsonObject("components") : new JsonObject());
-                } catch (Throwable e) {
-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to parse item definition " + itemPath + " in pack " + pack.key(), e);
-                }
-            }
+            this.parsePack(pack);
         }
     }
 
     ItemDefinitions(final Consumer<String> warningLogger) {
+        this.items = new HashMap<>();
         this.warningLogger = warningLogger;
+        this.base = null;
+    }
+
+    private ItemDefinitions(final ItemDefinitions base, final Consumer<String> warningLogger) {
+        this.items = new HashMap<>();
+        this.warningLogger = warningLogger;
+        this.base = base;
+    }
+
+    private ItemDefinitions(final Map<String, ItemDefinition> items) {
+        this.items = DefinitionImmutability.map(items);
+        this.warningLogger = DefinitionLogger::warning;
+        this.base = null;
+    }
+
+    public static ItemDefinitions sessionOverlay(final ItemDefinitions base) {
+        return new ItemDefinitions(base, DefinitionLogger::warning);
+    }
+
+    static ItemDefinitions fromPack(final ResourcePack pack) {
+        final ItemDefinitions layer = new ItemDefinitions(DefinitionLogger::warning);
+        layer.parsePack(pack);
+        return new ItemDefinitions(layer.items);
+    }
+
+    static ItemDefinitions fold(final Collection<ItemDefinitions> layersBottomToTop) {
+        final Map<String, ItemDefinition> items = new LinkedHashMap<>();
+        for (ItemDefinitions layer : layersBottomToTop) {
+            items.putAll(layer.items);
+        }
+        return new ItemDefinitions(items);
+    }
+
+    private void parsePack(final ResourcePack pack) {
+        for (String itemPath : pack.content().getFilesDeep("items/", ".json")) {
+            try {
+                final JsonObject item = pack.content().getJson(itemPath).getAsJsonObject("minecraft:item");
+                final String identifier = Key.namespaced(item.getAsJsonObject("description").get("identifier").getAsString());
+                this.addFromResourceComponents(identifier, item.has("components") ? item.getAsJsonObject("components") : new JsonObject());
+            } catch (Throwable e) {
+                DefinitionLogger.warning("Failed to parse item definition " + itemPath + " in pack " + pack.key(), e);
+            }
+        }
     }
 
     void addFromResourceComponents(final String identifier, final JsonObject components) {
@@ -90,7 +127,7 @@ public class ItemDefinitions {
 
     public void addFromNetworkTag(final String identifier, final CompoundTag tag) {
         final ItemDefinition itemDefinition = new ItemDefinition(identifier, true);
-        final ItemDefinition existingDefinition = this.items.get(identifier);
+        final ItemDefinition existingDefinition = this.get(identifier);
         if (existingDefinition != null) {
             itemDefinition.copyResourceDefinitionFrom(existingDefinition);
         }
@@ -225,7 +262,8 @@ public class ItemDefinitions {
     }
 
     public ItemDefinition get(final String identifier) {
-        return this.items.get(identifier);
+        final ItemDefinition item = this.items.get(identifier);
+        return item != null || this.base == null ? item : this.base.get(identifier);
     }
 
     public void remove(final String identifier) {

@@ -927,13 +927,13 @@ public class EntityMetadataRewriter {
     private static byte sheepFlags(final Entity entity) {
         final EntityData colorData = entity.entityData().get(ActorDataIDs.COLOR_INDEX);
         final int color = colorData != null ? readNumber(colorData).intValue() : 0;
-        return sheepFlags(color, entity.entityFlags().contains(ActorFlags.SHEARED));
+        return sheepFlags(color, entity.hasEntityFlag(ActorFlags.SHEARED));
     }
 
     private static void applySpellCasting(final Entity entity, final List<EntityData> javaEntityData) {
         final EntityData colorData = entity.entityData().get(ActorDataIDs.DATA_SPELL_CASTING_COLOR);
         final Integer color = colorData != null ? readNumber(colorData).intValue() : null;
-        final byte spell = spellType(entity.entityFlags().contains(ActorFlags.CASTING), color);
+        final byte spell = spellType(entity.hasEntityFlag(ActorFlags.CASTING), color);
         upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SPELL_CASTING), VersionedTypes.V26_1.entityDataTypes().byteType, spell));
     }
 
@@ -977,15 +977,14 @@ public class EntityMetadataRewriter {
     }
 
     private static byte sharedFlags(final Entity entity, final boolean forceInvisible) {
-        final Set<ActorFlags> bedrockFlags = entity.entityFlags();
         byte sharedFlags = 0;
-        if (bedrockFlags.contains(ActorFlags.ONFIRE)) sharedFlags |= (1 << 0);
-        if (bedrockFlags.contains(ActorFlags.SNEAKING)) sharedFlags |= (1 << 1);
-        if (bedrockFlags.contains(ActorFlags.RIDING)) sharedFlags |= (1 << 2);
-        if (bedrockFlags.contains(ActorFlags.SPRINTING)) sharedFlags |= (1 << 3);
-        if (bedrockFlags.contains(ActorFlags.SWIMMING)) sharedFlags |= (1 << 4);
-        if (forceInvisible || bedrockFlags.contains(ActorFlags.INVISIBLE)) sharedFlags |= (1 << 5);
-        if (bedrockFlags.contains(ActorFlags.GLIDING)) sharedFlags |= (byte) (1 << 7);
+        if (entity.hasEntityFlag(ActorFlags.ONFIRE)) sharedFlags |= (1 << 0);
+        if (entity.hasEntityFlag(ActorFlags.SNEAKING)) sharedFlags |= (1 << 1);
+        if (entity.hasEntityFlag(ActorFlags.RIDING)) sharedFlags |= (1 << 2);
+        if (entity.hasEntityFlag(ActorFlags.SPRINTING)) sharedFlags |= (1 << 3);
+        if (entity.hasEntityFlag(ActorFlags.SWIMMING)) sharedFlags |= (1 << 4);
+        if (forceInvisible || entity.hasEntityFlag(ActorFlags.INVISIBLE)) sharedFlags |= (1 << 5);
+        if (entity.hasEntityFlag(ActorFlags.GLIDING)) sharedFlags |= (byte) (1 << 7);
         return sharedFlags;
     }
 

@@ -796,8 +796,8 @@ public class MultilineNametagTracker extends StoredObject {
         final boolean viewerSpectator = clientPlayer != null && clientPlayer.javaGameMode() == GameMode.SPECTATOR;
         final double distanceSquared = squaredDistance(clientPlayer, entity);
         return resolvePlayerRenderState(
-                hasPrimaryActorFlag(entity, ActorFlags.SNEAKING),
-                hasPrimaryActorFlag(entity, ActorFlags.INVISIBLE),
+                entity.hasEntityFlag(ActorFlags.SNEAKING),
+                entity.hasEntityFlag(ActorFlags.INVISIBLE),
                 viewerSpectator,
                 distanceSquared);
     }
@@ -812,12 +812,6 @@ public class MultilineNametagTracker extends StoredObject {
             return visible ? PlayerNametagRenderState.VISIBLE_SNEAKING : PlayerNametagRenderState.HIDDEN_SNEAKING;
         }
         return visible ? PlayerNametagRenderState.VISIBLE_NORMAL : PlayerNametagRenderState.HIDDEN_NORMAL;
-    }
-
-    private static boolean hasPrimaryActorFlag(final Entity entity, final ActorFlags flag) {
-        final EntityData flagsData = entity.entityData().get(ActorDataIDs.RESERVED_0);
-        if (flagsData == null || flagsData.getValue() == null || flag.getValue() >= Long.SIZE) return false;
-        return ((((Number) flagsData.getValue()).longValue() >>> flag.getValue()) & 1L) != 0L;
     }
 
     private static double squaredDistance(final Entity first, final Entity second) {

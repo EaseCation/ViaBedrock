@@ -17,7 +17,6 @@
  */
 package net.raphimc.viabedrock.api.resourcepack.definition;
 
-import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.data.DataValues;
@@ -25,54 +24,96 @@ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
 import org.cube.converter.parser.bedrock.geometry.BedrockGeometryParser;
 
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
-import java.util.logging.Level;
 
 public class ModelDefinitions {
 
-    private final Map<String, BedrockGeometryModel> entityModels = new HashMap<>();
+    private final Map<String, BedrockGeometryModel> entityModels;
 
     public ModelDefinitions(final ResourcePackStorage resourcePackStorage) {
+        this(parsePacks(resourcePackStorage));
+    }
+
+    private ModelDefinitions(final Map<String, BedrockGeometryModel> entityModels) {
+        this.entityModels = DefinitionImmutability.map(entityModels);
+    }
+
+    static ModelDefinitions fromPack(final ResourcePack pack) {
+        final Map<String, BedrockGeometryModel> entityModels = new LinkedHashMap<>();
+        loadModels(pack, entityModels);
+        return new ModelDefinitions(entityModels);
+    }
+
+    static ModelDefinitions fold(final Collection<ModelDefinitions> layersBottomToTop) {
+        final Map<String, BedrockGeometryModel> entityModels = new LinkedHashMap<>();
+        for (ModelDefinitions layer : layersBottomToTop) {
+            entityModels.putAll(layer.entityModels);
+        }
+        return new ModelDefinitions(entityModels);
+    }
+
+    private static Map<String, BedrockGeometryModel> parsePacks(final ResourcePackStorage resourcePackStorage) {
+        final List<ResourcePack> packsBottomToTop = new ArrayList<>();
         if (BedrockProtocol.MAPPINGS.getBedrockSkinPacks() != null) {
             final ResourcePack skinPack = BedrockProtocol.MAPPINGS.getBedrockSkinPacks().get(DataValues.VANILLA_SKIN_PACK_KEY);
             if (skinPack != null) {
-                this.loadModels(skinPack);
+                packsBottomToTop.add(skinPack);
             }
         }
-        for (ResourcePack pack : resourcePackStorage.getPackStackBottomToTop()) {
-            this.loadModels(pack);
+        packsBottomToTop.addAll(resourcePackStorage.getPackStackBottomToTop());
+
+        final Map<String, BedrockGeometryModel> entityModels = new LinkedHashMap<>();
+        for (ResourcePack pack : packsBottomToTop) {
+            entityModels.putAll(fromPack(pack).entityModels);
         }
+        return entityModels;
     }
 
-    private void loadModels(final ResourcePack pack) {
+    private static void loadModels(final ResourcePack pack, final Map<String, BedrockGeometryModel> entityModels) {
         for (String modelPath : pack.content().getFilesDeep("models/", ".json")) {
-            this.loadModel(pack, modelPath, modelPath.startsWith("models/entity/"));
+            loadModel(pack, modelPath, modelPath.startsWith("models/entity/"), entityModels);
         }
         if (pack.content().contains("geometry.json")) {
-            this.loadModel(pack, "geometry.json", true);
+            loadModel(pack, "geometry.json", true, entityModels);
         }
     }
 
-    private void loadModel(final ResourcePack pack, final String modelPath, final boolean entityModel) {
+    private static void loadModel(final ResourcePack pack, final String modelPath, final boolean entityModel,
+                                  final Map<String, BedrockGeometryModel> entityModels) {
         try {
             for (BedrockGeometryModel bedrockGeometry : BedrockGeometryParser.parse(pack.content().getString(modelPath))) {
                 if (entityModel) {
-                    this.entityModels.put(bedrockGeometry.getIdentifier(), bedrockGeometry);
+                    final BedrockGeometryModel immutableModel = DefinitionImmutability.model(bedrockGeometry);
+                    entityModels.put(immutableModel.getIdentifier(), immutableModel);
                 }
             }
         } catch (Throwable e) {
-            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to parse model definition " + modelPath + " in pack " + pack.key(), e);
+            DefinitionLogger.warning("Failed to parse model definition " + modelPath + " in pack " + pack.key(), e);
         }
     }
 
     public BedrockGeometryModel getEntityModel(final String name) {
-        return this.entityModels.get(name);
+        final BedrockGeometryModel model = this.entityModels.get(name);
+        return model == null ? null : DefinitionImmutability.model(model);
     }
 
     public Map<String, BedrockGeometryModel> entityModels() {
-        return Collections.unmodifiableMap(this.entityModels);
+        final Map<String, BedrockGeometryModel> detached = new LinkedHashMap<>(this.entityModels.size());
+        this.entityModels.forEach((key, value) -> detached.put(key, DefinitionImmutability.model(value)));
+        return Collections.unmodifiableMap(detached);
+    }
+
+    public boolean containsEntityModel(final String name) {
+        return this.entityModels.containsKey(name);
+    }
+
+    public int entityModelCount() {
+        return this.entityModels.size();
     }
 
 }

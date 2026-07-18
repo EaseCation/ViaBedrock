@@ -31,9 +31,7 @@ import org.cube.converter.model.element.Parent;
 import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
 import org.cube.converter.model.impl.java.JavaItemModel;
 
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.logging.Level;
 
@@ -64,15 +62,14 @@ public class CustomEntityResourceRewriter extends ItemModelResourceRewriter {
                 }
             }
             for (Map.Entry<String, String> modelEntry : entityDefinition.entityData().getGeometries().entrySet()) {
-                final BedrockGeometryModel bedrockGeometry = resourcePackStorage.getModels().entityModels().get(modelEntry.getValue());
+                final BedrockGeometryModel bedrockGeometry = resourcePackStorage.getModels()
+                        .getEntityModel(modelEntry.getValue());
                 if (bedrockGeometry != null) {
                     for (Map.Entry<String, String> textureEntry : entityDefinition.entityData().getTextures().entrySet()) {
                         final String modelKey = modelEntry.getKey() + "_" + textureEntry.getKey();
                         final JavaItemModel itemModelData = bedrockGeometry.toJavaItemModel("viabedrock:" + this.getJavaTexturePath(textureEntry.getValue()), RotationType.POST_1_21_11);
                         javaModelDefinitions.put(modelKey, itemModelData.compile());
-                        resourcePackStorage.getConverterData().put("ce_" + entityEntry.getKey() + '_' + modelKey + "_scale", itemModelData.getScale());
 
-                        final List<String> boneNames = new ArrayList<>();
                         for (Parent bone : bedrockGeometry.getParents()) {
                             if (bone.getCubes().isEmpty()) {
                                 continue;
@@ -92,13 +89,10 @@ public class CustomEntityResourceRewriter extends ItemModelResourceRewriter {
                                         RotationType.HACKY_POST_1_21_6);
                                 final String boneKey = entityEntry.getKey() + '_' + modelKey + '_' + boneName;
                                 javaModelDefinitions.put(boneKey, boneModelData.compile());
-                                resourcePackStorage.getConverterData().put("ce_" + boneKey + "_scale", Float.isFinite(boneModelData.getScale()) ? boneModelData.getScale() : 1.0F);
-                                boneNames.add(boneName);
                             } catch (Throwable e) {
                                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to generate per-bone model for " + boneName + " in " + entityEntry.getKey() + '_' + modelKey, e);
                             }
                         }
-                        resourcePackStorage.getConverterData().put("ce_" + entityEntry.getKey() + '_' + modelKey + "_bones", boneNames);
                     }
                 }
             }

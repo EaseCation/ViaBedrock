@@ -18,34 +18,58 @@
 package net.raphimc.viabedrock.api.resourcepack.definition;
 
 import com.viaversion.viaversion.util.Key;
-import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 import org.cube.converter.data.bedrock.BedrockAttachableData;
 import org.cube.converter.parser.bedrock.data.impl.BedrockAttachableParser;
 
+import java.util.Collection;
 import java.util.Collections;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.logging.Level;
 
 // https://wiki.bedrock.dev/items/attachables.html
 public class AttachableDefinitions {
 
-    private final Map<String, AttachableDefinition> attachables = new HashMap<>();
+    private final Map<String, AttachableDefinition> attachables;
 
     public AttachableDefinitions(final ResourcePackStorage resourcePackStorage) {
-        for (ResourcePack pack : resourcePackStorage.getPackStackBottomToTop()) {
-            for (String attachablePath : pack.content().getFilesDeep("attachables/", ".json")) {
-                try {
-                    final BedrockAttachableData attachableData = BedrockAttachableParser.parse(pack.content().getString(attachablePath));
-                    final String identifier = Key.namespaced(attachableData.getIdentifier());
-                    this.attachables.put(identifier, new AttachableDefinition(identifier, attachableData));
-                } catch (Throwable e) {
-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to parse attachable definition " + attachablePath + " in pack " + pack.key(), e);
-                }
+        this(parsePacks(resourcePackStorage.getPackStackBottomToTop()));
+    }
+
+    private AttachableDefinitions(final Map<String, AttachableDefinition> attachables) {
+        this.attachables = DefinitionImmutability.map(attachables);
+    }
+
+    static AttachableDefinitions fromPack(final ResourcePack pack) {
+        final Map<String, AttachableDefinition> attachables = new LinkedHashMap<>();
+        for (String attachablePath : pack.content().getFilesDeep("attachables/", ".json")) {
+            try {
+                final BedrockAttachableData parsed = BedrockAttachableParser.parse(pack.content().getString(attachablePath));
+                final BedrockAttachableData attachableData = DefinitionImmutability.attachableData(parsed);
+                final String identifier = Key.namespaced(attachableData.getIdentifier());
+                attachables.put(identifier, new AttachableDefinition(identifier, attachableData));
+            } catch (Throwable e) {
+                DefinitionLogger.warning("Failed to parse attachable definition " + attachablePath + " in pack " + pack.key(), e);
             }
         }
+        return new AttachableDefinitions(attachables);
+    }
+
+    static AttachableDefinitions fold(final Collection<AttachableDefinitions> layersBottomToTop) {
+        final Map<String, AttachableDefinition> attachables = new LinkedHashMap<>();
+        for (AttachableDefinitions layer : layersBottomToTop) {
+            attachables.putAll(layer.attachables);
+        }
+        return new AttachableDefinitions(attachables);
+    }
+
+    private static Map<String, AttachableDefinition> parsePacks(final Collection<ResourcePack> packsBottomToTop) {
+        final Map<String, AttachableDefinition> attachables = new LinkedHashMap<>();
+        for (ResourcePack pack : packsBottomToTop) {
+            attachables.putAll(fromPack(pack).attachables);
+        }
+        return attachables;
     }
 
     public Map<String, AttachableDefinition> attachables() {

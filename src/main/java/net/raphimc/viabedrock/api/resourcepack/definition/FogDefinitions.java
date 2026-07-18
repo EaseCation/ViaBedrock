@@ -20,38 +20,61 @@ package net.raphimc.viabedrock.api.resourcepack.definition;
 import com.viaversion.viaversion.libs.gson.JsonElement;
 import com.viaversion.viaversion.libs.gson.JsonObject;
 import com.viaversion.viaversion.util.Key;
-import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 
-import java.util.HashMap;
+import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.logging.Level;
 
 public class FogDefinitions {
 
-    private final Map<String, FogDefinition> fogs = new HashMap<>();
+    private final Map<String, FogDefinition> fogs;
 
     public FogDefinitions(final ResourcePackStorage resourcePackStorage) {
-        for (ResourcePack pack : resourcePackStorage.getPackStackBottomToTop()) {
-            for (String fogPath : pack.content().getFilesDeep("fogs/", ".json")) {
-                try {
-                    final JsonObject fog = pack.content().getJson(fogPath).getAsJsonObject("minecraft:fog_settings");
-                    final String identifier = Key.namespaced(fog.getAsJsonObject("description").get("identifier").getAsString());
-                    final Map<String, Integer> colors = new HashMap<>();
-                    final JsonObject distance = fog.getAsJsonObject("distance");
-                    for (Map.Entry<String, JsonElement> entry : distance.entrySet()) {
-                        final JsonObject value = entry.getValue().getAsJsonObject();
-                        if (value.has("fog_color")) {
-                            colors.put(entry.getKey(), Integer.parseInt(value.get("fog_color").getAsString().substring(1), 16));
-                        }
+        this(parsePacks(resourcePackStorage.getPackStackBottomToTop()));
+    }
+
+    private FogDefinitions(final Map<String, FogDefinition> fogs) {
+        this.fogs = DefinitionImmutability.map(fogs);
+    }
+
+    static FogDefinitions fromPack(final ResourcePack pack) {
+        final Map<String, FogDefinition> fogs = new LinkedHashMap<>();
+        for (String fogPath : pack.content().getFilesDeep("fogs/", ".json")) {
+            try {
+                final JsonObject fog = pack.content().getJson(fogPath).getAsJsonObject("minecraft:fog_settings");
+                final String identifier = Key.namespaced(fog.getAsJsonObject("description").get("identifier").getAsString());
+                final Map<String, Integer> colors = new LinkedHashMap<>();
+                final JsonObject distance = fog.getAsJsonObject("distance");
+                for (Map.Entry<String, JsonElement> entry : distance.entrySet()) {
+                    final JsonObject value = entry.getValue().getAsJsonObject();
+                    if (value.has("fog_color")) {
+                        colors.put(entry.getKey(), Integer.parseInt(value.get("fog_color").getAsString().substring(1), 16));
                     }
-                    this.fogs.put(identifier, new FogDefinition(identifier, colors));
-                } catch (Throwable e) {
-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to parse fog definition " + fogPath + " in pack " + pack.key(), e);
                 }
+                fogs.put(identifier, new FogDefinition(identifier, colors));
+            } catch (Throwable e) {
+                DefinitionLogger.warning("Failed to parse fog definition " + fogPath + " in pack " + pack.key(), e);
             }
         }
+        return new FogDefinitions(fogs);
+    }
+
+    static FogDefinitions fold(final Collection<FogDefinitions> layersBottomToTop) {
+        final Map<String, FogDefinition> fogs = new LinkedHashMap<>();
+        for (FogDefinitions layer : layersBottomToTop) {
+            fogs.putAll(layer.fogs);
+        }
+        return new FogDefinitions(fogs);
+    }
+
+    private static Map<String, FogDefinition> parsePacks(final Collection<ResourcePack> packsBottomToTop) {
+        final Map<String, FogDefinition> fogs = new LinkedHashMap<>();
+        for (ResourcePack pack : packsBottomToTop) {
+            fogs.putAll(fromPack(pack).fogs);
+        }
+        return fogs;
     }
 
     public FogDefinition get(final String identifier) {
@@ -59,6 +82,11 @@ public class FogDefinitions {
     }
 
     public record FogDefinition(String identifier, Map<String, Integer> colors) {
+
+        public FogDefinition {
+            colors = DefinitionImmutability.map(colors);
+        }
+
     }
 
 }

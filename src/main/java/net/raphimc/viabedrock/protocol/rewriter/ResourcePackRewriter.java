@@ -39,14 +39,20 @@ import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
 import org.cube.converter.model.impl.java.JavaItemModel;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.logging.Level;
 
 public class ResourcePackRewriter {
 
-    private static final List<Rewriter> REWRITERS = new ArrayList<>();
+    public static final String BEDROCK_MOTION_PACK_MANAGER_KEY = "bedrockmotion_pack_manager";
+    private static final List<Rewriter> REWRITERS = new CopyOnWriteArrayList<>();
 
     static {
         REWRITERS.add(new GlyphSheetResourceRewriter());
@@ -57,11 +63,15 @@ public class ResourcePackRewriter {
     }
 
     public static void registerRewriter(final Rewriter rewriter) {
-        REWRITERS.add(rewriter);
+        REWRITERS.add(Objects.requireNonNull(rewriter, "rewriter"));
     }
 
     public static Content bedrockToJava(final ResourcePackStorage resourcePackStorage) {
-        final Content javaContent = new InMemoryContent();
+        return bedrockToJava(resourcePackStorage, new InMemoryContent());
+    }
+
+    public static Content bedrockToJava(final ResourcePackStorage resourcePackStorage, final Content javaContent) {
+        requireMatchingRegistry(resourcePackStorage);
         for (Rewriter rewriter : REWRITERS) {
             rewriter.apply(resourcePackStorage, javaContent);
         }
@@ -87,9 +97,12 @@ public class ResourcePackRewriter {
      * This must be called after setPackStack() to ensure data is available regardless of
      * whether the Java client downloads or caches the resource pack.
      */
-    public static void initRuntimeData(final ResourcePackStorage resourcePackStorage) {
+    public static void initSharedRuntimeData(final ResourcePackStorage resourcePackStorage) {
+        requireMatchingRegistry(resourcePackStorage);
         for (Rewriter rewriter : REWRITERS) {
-            rewriter.initRuntimeData(resourcePackStorage);
+            if (rewriter.runtimeDataScope() == RuntimeDataScope.SHARED) {
+                rewriter.initRuntimeData(resourcePackStorage);
+            }
         }
 
         if (!ViaBedrock.getConfig().shouldEnableServerEntityAnimation()) {
@@ -97,6 +110,58 @@ public class ResourcePackRewriter {
         }
         initBedrockMotionPackManager(resourcePackStorage);
         initCustomEntityBoneData(resourcePackStorage);
+    }
+
+    /** Runs compatibility rewriters once for every connection, preserving session-local extension data. */
+    public static void initSessionRuntimeData(final ResourcePackStorage resourcePackStorage) {
+        requireMatchingRegistry(resourcePackStorage);
+        for (Rewriter rewriter : REWRITERS) {
+            if (rewriter.runtimeDataScope() == RuntimeDataScope.SESSION) {
+                rewriter.initRuntimeData(resourcePackStorage);
+            }
+        }
+    }
+
+    /**
+     * Initializes all resource-pack runtime data using the pre-shared-cache behavior.
+     *
+     * @deprecated Shared-cache callers should initialize shared and session data separately.
+     */
+    @Deprecated(forRemoval = false)
+    public static void initRuntimeData(final ResourcePackStorage resourcePackStorage) {
+        initSharedRuntimeData(resourcePackStorage);
+        initSessionRuntimeData(resourcePackStorage);
+    }
+
+    public static String rewriterFingerprint() {
+        try {
+            final MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            digest.update("ViaBedrock-Rewriters-v1\0".getBytes(StandardCharsets.US_ASCII));
+            for (Rewriter rewriter : REWRITERS) {
+                updateFingerprint(digest, rewriter.getClass().getName());
+                updateFingerprint(digest, rewriter.artifactFingerprint());
+                updateFingerprint(digest, rewriter.runtimeDataScope().name());
+            }
+            return java.util.HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is not available", e);
+        }
+    }
+
+    private static void updateFingerprint(final MessageDigest digest, final String value) {
+        final byte[] bytes = Objects.requireNonNull(value, "rewriter fingerprint").getBytes(StandardCharsets.UTF_8);
+        digest.update((byte) (bytes.length >>> 24));
+        digest.update((byte) (bytes.length >>> 16));
+        digest.update((byte) (bytes.length >>> 8));
+        digest.update((byte) bytes.length);
+        digest.update(bytes);
+    }
+
+    private static void requireMatchingRegistry(final ResourcePackStorage resourcePackStorage) {
+        if (!resourcePackStorage.getRewriterFingerprint().equals(rewriterFingerprint())) {
+            throw new IllegalStateException(
+                    "Resource pack rewriter registry changed after this session was created");
+        }
     }
 
     /**
@@ -109,7 +174,8 @@ public class ResourcePackRewriter {
         for (Map.Entry<String, EntityDefinitions.EntityDefinition> entityEntry : resourcePackStorage.getEntities().entities().entrySet()) {
             final EntityDefinitions.EntityDefinition entityDefinition = entityEntry.getValue();
             for (Map.Entry<String, String> modelEntry : entityDefinition.entityData().getGeometries().entrySet()) {
-                final BedrockGeometryModel bedrockGeometry = resourcePackStorage.getModels().entityModels().get(modelEntry.getValue());
+                final BedrockGeometryModel bedrockGeometry = resourcePackStorage.getModels()
+                        .getEntityModel(modelEntry.getValue());
                 if (bedrockGeometry == null) continue;
 
                 for (Map.Entry<String, String> textureEntry : entityDefinition.entityData().getTextures().entrySet()) {
@@ -136,7 +202,7 @@ public class ResourcePackRewriter {
 
                             final String boneKey = baseKey + "_" + boneName;
                             final float safeScale = Float.isFinite(itemModel.getScale()) ? itemModel.getScale() : 1.0f;
-                            resourcePackStorage.getConverterData().put("ce_" + boneKey + "_scale", safeScale);
+                            resourcePackStorage.putRuntimeData("ce_" + boneKey + "_scale", safeScale);
                             boneNames.add(boneName);
                         } catch (Throwable e) {
                             ViaBedrock.getPlatform().getLogger().log(Level.WARNING,
@@ -144,7 +210,7 @@ public class ResourcePackRewriter {
                         }
                     }
 
-                    resourcePackStorage.getConverterData().put("ce_" + baseKey + "_bones", boneNames);
+                    resourcePackStorage.putRuntimeData("ce_" + baseKey + "_bones", List.copyOf(boneNames));
                 }
             }
         }
@@ -153,9 +219,18 @@ public class ResourcePackRewriter {
     /**
      * Create a BedrockMotion PackManager from ViaBedrock's resource packs.
      * This PackManager provides animation/controller definitions for server-side entity animation.
-     * Stored in converterData for access by CustomEntity's ServerEntityTicker.
+     * Shared runtimes expose their typed manager directly; the compatibility path stores its manager
+     * in session-local converter data for {@code ResourcePackStorage}'s legacy fallback.
      */
-    private static void initBedrockMotionPackManager(final ResourcePackStorage resourcePackStorage) {
+    static void initBedrockMotionPackManager(final ResourcePackStorage resourcePackStorage) {
+        final PackManager sharedPackManager = resourcePackStorage.getBedrockMotionPackManager();
+        if (sharedPackManager != null) {
+            return;
+        }
+        if (resourcePackStorage.getRuntimeStackKey() != null) {
+            throw new IllegalStateException("Shared resource pack runtime has no BedrockMotion PackManager");
+        }
+
         try {
             final List<net.easecation.bedrockmotion.pack.content.Content> contents = new ArrayList<>();
 
@@ -179,8 +254,8 @@ public class ResourcePackRewriter {
             }
 
             if (!contents.isEmpty()) {
-                final PackManager packManager = new PackManager(contents);
-                resourcePackStorage.getConverterData().put("bedrockmotion_pack_manager", packManager);
+                final PackManager packManager = new PackManager(contents, PackManager.Profile.SERVER_ANIMATION);
+                resourcePackStorage.getConverterData().put(BEDROCK_MOTION_PACK_MANAGER_KEY, packManager);
                 ViaBedrock.getPlatform().getLogger().info("Initialized BedrockMotion PackManager with " + contents.size() + " pack(s)");
             }
         } catch (Throwable e) {
@@ -195,6 +270,21 @@ public class ResourcePackRewriter {
         default void initRuntimeData(final ResourcePackStorage resourcePackStorage) {
         }
 
+        /** Existing third-party rewriters remain per-session unless they explicitly opt into immutable sharing. */
+        default RuntimeDataScope runtimeDataScope() {
+            return RuntimeDataScope.SESSION;
+        }
+
+        /** Bump this value whenever this rewriter changes Java artifact output semantics. */
+        default String artifactFingerprint() {
+            return "1";
+        }
+
+    }
+
+    public enum RuntimeDataScope {
+        SHARED,
+        SESSION
     }
 
 }

@@ -18,14 +18,39 @@
 package net.raphimc.viabedrock.protocol.provider;
 
 import com.viaversion.viaversion.api.platform.providers.Provider;
+import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.logging.Level;
+
 public abstract class ResourcePackProvider implements Provider {
+
+    private static final AtomicBoolean WARNED_UNSCOPED_ALIAS_TRUST = new AtomicBoolean();
 
     public abstract boolean has(final ResourcePack.Key key);
 
     public abstract ResourcePack load(final ResourcePack.Key key) throws Exception;
 
     public abstract void save(final ResourcePack resourcePack) throws Exception;
+
+    /**
+     * The legacy provider only receives UUID/version, so it cannot safely distinguish backends or
+     * conflicting announcements. Shared-cache mode must resolve packs through exact CAS identities.
+     */
+    public static boolean isLegacyAliasLookupAllowed(final boolean sharedCacheEnabled) {
+        return !sharedCacheEnabled;
+    }
+
+    protected final boolean isLegacyAliasLookupAllowed() {
+        final boolean allowed = isLegacyAliasLookupAllowed(ViaBedrock.isSharedResourcePackCacheEnabled());
+        if (!allowed && ViaBedrock.getConfig().shouldTrustDeclaredPackAlias()
+                && WARNED_UNSCOPED_ALIAS_TRUST.compareAndSet(false, true)) {
+            ViaBedrock.getPlatform().getLogger().log(Level.WARNING,
+                    "The legacy global UUID/version resource-pack provider remains disabled; "
+                            + "trust-declared-pack-alias only applies to backend-scoped verified CAS observations");
+        }
+        return allowed;
+    }
 
 }

@@ -25,17 +25,20 @@ import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
-public abstract class Content {
+public abstract class Content implements PackContentView {
 
-    private final Map<String, Map<String, String>> langCache = new HashMap<>();
+    private final Map<String, Map<String, String>> langCache = new java.util.concurrent.ConcurrentHashMap<>();
 
     public abstract List<String> getFilesShallow(final String path, final String extension);
 
@@ -57,6 +60,33 @@ public abstract class Content {
     public abstract boolean contains(final String path);
 
     public abstract byte[] get(final String path);
+
+    /** Opens one entry for streaming. Disk-backed content overrides this to avoid a full byte array. */
+    public InputStream open(final String path) throws IOException {
+        final byte[] data = this.get(path);
+        return data == null ? null : new ByteArrayInputStream(data);
+    }
+
+    /** Returns the exact entry size, or {@code -1} if the path does not exist. */
+    public long size(final String path) throws IOException {
+        final byte[] data = this.get(path);
+        return data == null ? -1L : data.length;
+    }
+
+    /** Visits selected entries in order while allowing disk-backed implementations to reuse one archive handle. */
+    public void visitFiles(final List<String> paths, final FileVisitor visitor) throws IOException {
+        for (String path : paths) {
+            final long size = this.size(path);
+            try (InputStream input = this.open(path)) {
+                visitor.visit(path, size, input);
+            }
+        }
+    }
+
+    /** Runs related reads in one implementation-defined session. */
+    public <T> T withReadSession(final java.util.function.Supplier<T> action) {
+        return action.get();
+    }
 
     public abstract boolean put(final String path, final byte[] data);
 
@@ -97,6 +127,11 @@ public abstract class Content {
                     .map(line -> line.split("=", 2))
                     .collect(Collectors.toMap(parts -> parts[0], parts -> parts[1], (o, n) -> n)));
         });
+    }
+
+    /** Releases parsing helpers that must not become part of a shared pack's retained runtime. */
+    public void releaseTransientCaches() {
+        this.langCache.clear();
     }
 
     public JsonObject getJson(final String path) {
@@ -155,18 +190,37 @@ public abstract class Content {
 
     public byte[] toZip() throws IOException {
         final ByteArrayOutputStream baos = new ByteArrayOutputStream(4 * 1024 * 1024);
-        final ZipOutputStream zipOutputStream = new ZipOutputStream(baos);
+        this.writeZip(baos);
+        return baos.toByteArray();
+    }
+
+    public void writeZip(final Path target) throws IOException {
+        try (java.io.OutputStream output = Files.newOutputStream(target)) {
+            this.writeZip(output);
+        }
+    }
+
+    public void writeZip(final java.io.OutputStream output) throws IOException {
+        try (ZipOutputStream zipOutputStream = new ZipOutputStream(output)) {
+            this.writeZipEntries(zipOutputStream);
+        }
+    }
+
+    public void writeZipEntries(final ZipOutputStream zipOutputStream) throws IOException {
         final List<String> paths = new ArrayList<>(this.getFilesDeep("", ""));
         Collections.sort(paths);
         for (String path : paths) {
             final ZipEntry entry = new ZipEntry(path);
             entry.setTime(0L);
             zipOutputStream.putNextEntry(entry);
-            zipOutputStream.write(this.get(path));
+            try (InputStream input = this.open(path)) {
+                if (input == null) {
+                    throw new IOException("Missing resource pack content: " + path);
+                }
+                input.transferTo(zipOutputStream);
+            }
             zipOutputStream.closeEntry();
         }
-        zipOutputStream.close();
-        return baos.toByteArray();
     }
 
     public static class LazyImage {
@@ -210,6 +264,12 @@ public abstract class Content {
             }
         }
 
+    }
+
+    @FunctionalInterface
+    public interface FileVisitor {
+
+        void visit(String path, long size, InputStream input) throws IOException;
     }
 
 }

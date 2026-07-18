@@ -18,34 +18,58 @@
 package net.raphimc.viabedrock.api.resourcepack.definition;
 
 import com.viaversion.viaversion.util.Key;
-import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 import org.cube.converter.data.bedrock.BedrockEntityData;
 import org.cube.converter.parser.bedrock.data.impl.BedrockEntityParser;
 
+import java.util.Collection;
 import java.util.Collections;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.logging.Level;
 
 // https://wiki.bedrock.dev/entities/entity-intro-rp.html
 public class EntityDefinitions {
 
-    private final Map<String, EntityDefinition> entities = new HashMap<>();
+    private final Map<String, EntityDefinition> entities;
 
     public EntityDefinitions(final ResourcePackStorage resourcePackStorage) {
-        for (ResourcePack pack : resourcePackStorage.getPackStackBottomToTop()) {
-            for (String entityPath : pack.content().getFilesDeep("entity/", ".json")) {
-                try {
-                    final BedrockEntityData entityData = BedrockEntityParser.parse(pack.content().getString(entityPath));
-                    final String identifier = Key.namespaced(entityData.getIdentifier());
-                    this.entities.put(identifier, new EntityDefinition(identifier, entityData));
-                } catch (Throwable e) {
-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to parse entity definition " + entityPath + " in pack " + pack.key(), e);
-                }
+        this(parsePacks(resourcePackStorage.getPackStackBottomToTop()));
+    }
+
+    private EntityDefinitions(final Map<String, EntityDefinition> entities) {
+        this.entities = DefinitionImmutability.map(entities);
+    }
+
+    static EntityDefinitions fromPack(final ResourcePack pack) {
+        final Map<String, EntityDefinition> entities = new LinkedHashMap<>();
+        for (String entityPath : pack.content().getFilesDeep("entity/", ".json")) {
+            try {
+                final BedrockEntityData parsed = BedrockEntityParser.parse(pack.content().getString(entityPath));
+                final BedrockEntityData entityData = DefinitionImmutability.entityData(parsed);
+                final String identifier = Key.namespaced(entityData.getIdentifier());
+                entities.put(identifier, new EntityDefinition(identifier, entityData));
+            } catch (Throwable e) {
+                DefinitionLogger.warning("Failed to parse entity definition " + entityPath + " in pack " + pack.key(), e);
             }
         }
+        return new EntityDefinitions(entities);
+    }
+
+    static EntityDefinitions fold(final Collection<EntityDefinitions> layersBottomToTop) {
+        final Map<String, EntityDefinition> entities = new LinkedHashMap<>();
+        for (EntityDefinitions layer : layersBottomToTop) {
+            entities.putAll(layer.entities);
+        }
+        return new EntityDefinitions(entities);
+    }
+
+    private static Map<String, EntityDefinition> parsePacks(final Collection<ResourcePack> packsBottomToTop) {
+        final Map<String, EntityDefinition> entities = new LinkedHashMap<>();
+        for (ResourcePack pack : packsBottomToTop) {
+            entities.putAll(fromPack(pack).entities);
+        }
+        return entities;
     }
 
     public EntityDefinition get(final String identifier) {

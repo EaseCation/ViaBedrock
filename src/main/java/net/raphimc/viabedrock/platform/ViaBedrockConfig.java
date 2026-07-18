@@ -66,6 +66,74 @@ public interface ViaBedrockConfig extends Config {
      */
     PackCacheMode getPackCacheMode();
 
+    default boolean isSharedResourcePackCacheEnabled() {
+        return true;
+    }
+
+    /**
+     * Compatibility setting reserved for a future fully scoped observation cache. It never enables
+     * the legacy UUID/version provider fast path while the shared resource-pack cache is active.
+     */
+    default boolean shouldTrustDeclaredPackAlias() {
+        return false;
+    }
+
+    default int getResourcePackCacheMemoryBudgetMiB() {
+        return 0;
+    }
+
+    default int getResourcePackCacheMemoryHardLimitMiB() {
+        return 0;
+    }
+
+    default int getResourcePackCacheCpuWorkers() {
+        return 0;
+    }
+
+    default int getResourcePackCacheIoWorkers() {
+        return 4;
+    }
+
+    default int getResourcePackCacheQueueCapacity() {
+        return 64;
+    }
+
+    default int getResourcePackCacheIdleExpireMinutes() {
+        return 30;
+    }
+
+    default int getResourcePackCacheBuildTimeoutSeconds() {
+        return 120;
+    }
+
+    default int getResourcePackCacheDiskBudgetMiB() {
+        return 20_480;
+    }
+
+    default int getResourcePackCacheDiskIdleDays() {
+        return 7;
+    }
+
+    default int getResourcePackMaxArchiveMiB() {
+        return 2_048;
+    }
+
+    default int getResourcePackMaxExpandedMiB() {
+        return 4_096;
+    }
+
+    default int getResourcePackMaxEntryMiB() {
+        return 512;
+    }
+
+    default int getResourcePackMaxEntries() {
+        return 100_000;
+    }
+
+    default int getResourcePackMaxCompressionRatio() {
+        return 200;
+    }
+
     /**
      * @return If true, translates bedrock's showCoordinates game rule to java's reduced debug info flag
      */

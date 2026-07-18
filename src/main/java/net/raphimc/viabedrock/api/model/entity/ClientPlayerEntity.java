@@ -295,7 +295,7 @@ public class ClientPlayerEntity extends PlayerEntity {
     }
 
     private boolean isImmobile() {
-        return this.entityFlags().contains(ActorFlags.NOAI);
+        return this.hasEntityFlag(ActorFlags.NOAI);
     }
 
     public void addAuthInputData(final PlayerAuthInputPacket_InputData data) {

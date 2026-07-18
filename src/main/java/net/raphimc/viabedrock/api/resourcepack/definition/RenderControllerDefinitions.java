@@ -17,34 +17,58 @@
  */
 package net.raphimc.viabedrock.api.resourcepack.definition;
 
-import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 import org.cube.converter.data.bedrock.controller.BedrockRenderController;
 import org.cube.converter.parser.bedrock.controller.BedrockControllerParser;
 
+import java.util.Collection;
 import java.util.Collections;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.logging.Level;
 
 // https://wiki.bedrock.dev/entities/render-controllers
 public class RenderControllerDefinitions {
 
-    private final Map<String, BedrockRenderController> renderControllers = new HashMap<>();
+    private final Map<String, BedrockRenderController> renderControllers;
 
     public RenderControllerDefinitions(final ResourcePackStorage resourcePackStorage) {
-        for (ResourcePack pack : resourcePackStorage.getPackStackBottomToTop()) {
-            for (String controllerPath : pack.content().getFilesDeep("render_controllers/", ".json")) {
-                try {
-                    for (BedrockRenderController bedrockRenderController : BedrockControllerParser.parse(pack.content().getString(controllerPath))) {
-                        this.renderControllers.put(bedrockRenderController.identifier(), bedrockRenderController);
-                    }
-                } catch (Throwable e) {
-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to parse render controller " + controllerPath + " in pack " + pack.key(), e);
+        this(parsePacks(resourcePackStorage.getPackStackBottomToTop()));
+    }
+
+    private RenderControllerDefinitions(final Map<String, BedrockRenderController> renderControllers) {
+        this.renderControllers = DefinitionImmutability.map(renderControllers);
+    }
+
+    static RenderControllerDefinitions fromPack(final ResourcePack pack) {
+        final Map<String, BedrockRenderController> renderControllers = new LinkedHashMap<>();
+        for (String controllerPath : pack.content().getFilesDeep("render_controllers/", ".json")) {
+            try {
+                for (BedrockRenderController parsed : BedrockControllerParser.parse(pack.content().getString(controllerPath))) {
+                    final BedrockRenderController renderController = DefinitionImmutability.renderController(parsed);
+                    renderControllers.put(renderController.identifier(), renderController);
                 }
+            } catch (Throwable e) {
+                DefinitionLogger.warning("Failed to parse render controller " + controllerPath + " in pack " + pack.key(), e);
             }
         }
+        return new RenderControllerDefinitions(renderControllers);
+    }
+
+    static RenderControllerDefinitions fold(final Collection<RenderControllerDefinitions> layersBottomToTop) {
+        final Map<String, BedrockRenderController> renderControllers = new LinkedHashMap<>();
+        for (RenderControllerDefinitions layer : layersBottomToTop) {
+            renderControllers.putAll(layer.renderControllers);
+        }
+        return new RenderControllerDefinitions(renderControllers);
+    }
+
+    private static Map<String, BedrockRenderController> parsePacks(final Collection<ResourcePack> packsBottomToTop) {
+        final Map<String, BedrockRenderController> renderControllers = new LinkedHashMap<>();
+        for (ResourcePack pack : packsBottomToTop) {
+            renderControllers.putAll(fromPack(pack).renderControllers);
+        }
+        return renderControllers;
     }
 
     public BedrockRenderController get(final String name) {

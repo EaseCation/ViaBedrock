@@ -524,7 +524,7 @@ public class ClientPlayerPackets {
             final boolean prevOnGround = clientPlayer.prevOnGround();
             final Set<InputFlag> prevInputFlags = clientPlayer.prevInputFlags();
             clientPlayer.tick();
-            final boolean immobile = clientPlayer.entityFlags().contains(ActorFlags.NOAI);
+            final boolean immobile = clientPlayer.hasEntityFlag(ActorFlags.NOAI);
 
             if (prevOnGround && clientPlayer.inputFlags().contains(InputFlag.JUMP)) {
                 clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StartJumping);

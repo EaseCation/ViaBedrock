@@ -21,7 +21,8 @@ import net.lenni0451.mcstructs_bedrock.text.utils.BedrockTranslator;
 import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 
-import java.util.HashMap;
+import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.Function;
 
@@ -31,12 +32,39 @@ public class TextDefinitions {
     private final Map<String, String> translations;
 
     public TextDefinitions(final ResourcePackStorage resourcePackStorage) {
-        this.translations = new HashMap<>();
-        for (ResourcePack pack : resourcePackStorage.getPackStackBottomToTop()) {
-            if (pack.content().contains("texts/en_US.lang")) {
-                this.translations.putAll(pack.content().getLang("texts/en_US.lang"));
+        this(parsePacks(resourcePackStorage.getPackStackBottomToTop()));
+    }
+
+    private TextDefinitions(final Map<String, String> translations) {
+        this.translations = DefinitionImmutability.map(translations);
+    }
+
+    static TextDefinitions fromPack(final ResourcePack pack) {
+        final Map<String, String> translations = new LinkedHashMap<>();
+        if (pack.content().contains("texts/en_US.lang")) {
+            try {
+                translations.putAll(pack.content().getLang("texts/en_US.lang"));
+            } catch (Throwable e) {
+                DefinitionLogger.warning("Failed to parse texts/en_US.lang in pack " + pack.key(), e);
             }
         }
+        return new TextDefinitions(translations);
+    }
+
+    static TextDefinitions fold(final Collection<TextDefinitions> layersBottomToTop) {
+        final Map<String, String> translations = new LinkedHashMap<>();
+        for (TextDefinitions layer : layersBottomToTop) {
+            translations.putAll(layer.translations);
+        }
+        return new TextDefinitions(translations);
+    }
+
+    private static Map<String, String> parsePacks(final Collection<ResourcePack> packsBottomToTop) {
+        final Map<String, String> translations = new LinkedHashMap<>();
+        for (ResourcePack pack : packsBottomToTop) {
+            translations.putAll(fromPack(pack).translations);
+        }
+        return translations;
     }
 
     public String translate(final String text, final Object... args) {

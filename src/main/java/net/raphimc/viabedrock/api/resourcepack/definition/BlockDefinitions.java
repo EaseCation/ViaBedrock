@@ -20,36 +20,60 @@ package net.raphimc.viabedrock.api.resourcepack.definition;
 import com.viaversion.viaversion.libs.gson.JsonElement;
 import com.viaversion.viaversion.libs.gson.JsonObject;
 import com.viaversion.viaversion.util.Key;
-import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 
+import java.util.Collection;
 import java.util.Collections;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.logging.Level;
 
 // https://wiki.bedrock.dev/blocks/blocks-intro.html
 public class BlockDefinitions {
 
-    private final Map<String, BlockDefinition> blocks = new HashMap<>();
+    private final Map<String, BlockDefinition> blocks;
 
     public BlockDefinitions(final ResourcePackStorage resourcePackStorage) {
-        for (ResourcePack pack : resourcePackStorage.getPackStackBottomToTop()) {
-            if (pack.content().contains("blocks.json")) {
-                try {
-                    final JsonObject blocks = pack.content().getJson("blocks.json");
-                    for (Map.Entry<String, JsonElement> entry : blocks.entrySet()) {
-                        if (entry.getKey().equals("format_version")) continue;
-                        final JsonObject block = entry.getValue().getAsJsonObject();
-                        final String sound = block.has("sound") ? block.get("sound").getAsString() : null;
-                        this.blocks.put(Key.namespaced(entry.getKey()), new BlockDefinition(Key.namespaced(entry.getKey()), sound));
-                    }
-                } catch (Throwable e) {
-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to parse blocks.json in pack " + pack.key(), e);
+        this(parsePacks(resourcePackStorage.getPackStackBottomToTop()));
+    }
+
+    private BlockDefinitions(final Map<String, BlockDefinition> blocks) {
+        this.blocks = DefinitionImmutability.map(blocks);
+    }
+
+    static BlockDefinitions fromPack(final ResourcePack pack) {
+        final Map<String, BlockDefinition> blocks = new LinkedHashMap<>();
+        if (pack.content().contains("blocks.json")) {
+            try {
+                final JsonObject blocksJson = pack.content().getJson("blocks.json");
+                for (Map.Entry<String, JsonElement> entry : blocksJson.entrySet()) {
+                    if (entry.getKey().equals("format_version")) continue;
+                    final JsonObject block = entry.getValue().getAsJsonObject();
+                    final String sound = block.has("sound") ? block.get("sound").getAsString() : null;
+                    final String identifier = Key.namespaced(entry.getKey());
+                    blocks.put(identifier, new BlockDefinition(identifier, sound));
                 }
+            } catch (Throwable e) {
+                DefinitionLogger.warning("Failed to parse blocks.json in pack " + pack.key(), e);
             }
         }
+        return new BlockDefinitions(blocks);
+    }
+
+    static BlockDefinitions fold(final Collection<BlockDefinitions> layersBottomToTop) {
+        final Map<String, BlockDefinition> blocks = new LinkedHashMap<>();
+        for (BlockDefinitions layer : layersBottomToTop) {
+            blocks.putAll(layer.blocks);
+        }
+        return new BlockDefinitions(blocks);
+    }
+
+    private static Map<String, BlockDefinition> parsePacks(final Collection<ResourcePack> packsBottomToTop) {
+        final Map<String, BlockDefinition> blocks = new LinkedHashMap<>();
+        for (ResourcePack pack : packsBottomToTop) {
+            blocks.putAll(fromPack(pack).blocks);
+        }
+        return blocks;
     }
 
     public BlockDefinition get(final String identifier) {

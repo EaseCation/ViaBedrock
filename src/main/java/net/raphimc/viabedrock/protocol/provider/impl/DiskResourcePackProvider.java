@@ -30,6 +30,9 @@ public class DiskResourcePackProvider extends ResourcePackProvider {
 
     @Override
     public boolean has(final ResourcePack.Key key) {
+        if (!this.isLegacyAliasLookupAllowed()) {
+            return false;
+        }
         return Files.isRegularFile(this.getPath(key));
     }
 
@@ -43,6 +46,9 @@ public class DiskResourcePackProvider extends ResourcePackProvider {
 
     @Override
     public void save(final ResourcePack resourcePack) throws IOException {
+        if (!this.isLegacyAliasLookupAllowed()) {
+            return;
+        }
         Files.write(this.getPath(resourcePack.key()), resourcePack.content().toZip());
     }
 

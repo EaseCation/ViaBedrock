@@ -19,35 +19,54 @@ package net.raphimc.viabedrock.api.resourcepack.definition;
 
 import com.viaversion.viaversion.libs.gson.JsonObject;
 import com.viaversion.viaversion.util.Key;
-import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 
+import java.util.Collection;
 import java.util.Collections;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.logging.Level;
 
 public class ParticleDefinitions {
 
-    private final Map<String, ParticleDefinition> particles = new HashMap<>();
+    private final Map<String, ParticleDefinition> particles;
 
     public ParticleDefinitions(final ResourcePackStorage resourcePackStorage) {
-        for (ResourcePack pack : resourcePackStorage.getPackStackBottomToTop()) {
-            for (String particlePath : pack.content().getFilesDeep("particles/", ".json")) {
-                try {
-                    final JsonObject particleEffect = pack.content().getJson(particlePath).getAsJsonObject("particle_effect");
-                    final String identifier = Key.namespaced(particleEffect.getAsJsonObject("description").get("identifier").getAsString());
-                    final ParticleDefinition particleDefinition = new ParticleDefinition(identifier);
-                    if (particleEffect.has("components")) {
-                        final JsonObject components = particleEffect.getAsJsonObject("components");
-                    }
-                    this.particles.put(identifier, particleDefinition);
-                } catch (Throwable e) {
-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to parse particle definition " + particlePath + " in pack " + pack.key(), e);
-                }
+        this(parsePacks(resourcePackStorage.getPackStackBottomToTop()));
+    }
+
+    private ParticleDefinitions(final Map<String, ParticleDefinition> particles) {
+        this.particles = DefinitionImmutability.map(particles);
+    }
+
+    static ParticleDefinitions fromPack(final ResourcePack pack) {
+        final Map<String, ParticleDefinition> particles = new LinkedHashMap<>();
+        for (String particlePath : pack.content().getFilesDeep("particles/", ".json")) {
+            try {
+                final JsonObject particleEffect = pack.content().getJson(particlePath).getAsJsonObject("particle_effect");
+                final String identifier = Key.namespaced(particleEffect.getAsJsonObject("description").get("identifier").getAsString());
+                particles.put(identifier, new ParticleDefinition(identifier));
+            } catch (Throwable e) {
+                DefinitionLogger.warning("Failed to parse particle definition " + particlePath + " in pack " + pack.key(), e);
             }
         }
+        return new ParticleDefinitions(particles);
+    }
+
+    static ParticleDefinitions fold(final Collection<ParticleDefinitions> layersBottomToTop) {
+        final Map<String, ParticleDefinition> particles = new LinkedHashMap<>();
+        for (ParticleDefinitions layer : layersBottomToTop) {
+            particles.putAll(layer.particles);
+        }
+        return new ParticleDefinitions(particles);
+    }
+
+    private static Map<String, ParticleDefinition> parsePacks(final Collection<ResourcePack> packsBottomToTop) {
+        final Map<String, ParticleDefinition> particles = new LinkedHashMap<>();
+        for (ResourcePack pack : packsBottomToTop) {
+            particles.putAll(fromPack(pack).particles);
+        }
+        return particles;
     }
 
     public ParticleDefinition get(final String identifier) {

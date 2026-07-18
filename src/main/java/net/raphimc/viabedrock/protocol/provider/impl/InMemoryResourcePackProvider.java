@@ -31,6 +31,9 @@ public class InMemoryResourcePackProvider extends ResourcePackProvider {
 
     @Override
     public boolean has(final ResourcePack.Key key) {
+        if (!this.isLegacyAliasLookupAllowed()) {
+            return false;
+        }
         return this.resourcePacks.containsKey(key.toString());
     }
 
@@ -44,6 +47,9 @@ public class InMemoryResourcePackProvider extends ResourcePackProvider {
 
     @Override
     public void save(final ResourcePack resourcePack) throws IOException {
+        if (!this.isLegacyAliasLookupAllowed()) {
+            return;
+        }
         this.resourcePacks.put(resourcePack.key().toString(), resourcePack.content().toZip());
     }
 

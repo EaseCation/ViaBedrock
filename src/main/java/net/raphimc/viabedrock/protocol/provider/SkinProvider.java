@@ -54,27 +54,40 @@ import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 public class SkinProvider implements Provider {
 
-    private static final ExecutorService SKIN_EXECUTOR = Executors.newCachedThreadPool(r -> {
-        final Thread t = new Thread(r, "ViaBedrock-Skin-Fetcher");
-        t.setDaemon(true);
-        return t;
-    });
+    private static final int SKIN_WORKERS = 4;
+    private static final int SKIN_QUEUE_CAPACITY = 64;
+    private static final ExecutorService SKIN_EXECUTOR = createSkinExecutor();
+
+    private static ExecutorService createSkinExecutor() {
+        final ThreadPoolExecutor executor = new ThreadPoolExecutor(
+                SKIN_WORKERS, SKIN_WORKERS, 60L, TimeUnit.SECONDS,
+                new ArrayBlockingQueue<>(SKIN_QUEUE_CAPACITY), runnable -> {
+                    final Thread thread = new Thread(runnable, "ViaBedrock-Skin-Fetcher");
+                    thread.setDaemon(true);
+                    return thread;
+                }, new ThreadPoolExecutor.AbortPolicy());
+        executor.allowCoreThreadTimeOut(true);
+        return executor;
+    }
 
     /**
      * Asynchronously fetches a Java Edition player's skin from Mojang API.
      * Runs on a worker thread to avoid blocking the Netty EventLoop.
      */
     public CompletableFuture<JavaSkinData> fetchJavaSkinAsync(final UUID uuid) {
-        return CompletableFuture.supplyAsync(() -> {
+        try {
+            return CompletableFuture.supplyAsync(() -> {
             try {
                 final String uuidStr = uuid.toString().replace("-", "");
 
@@ -161,7 +174,10 @@ public class SkinProvider implements Provider {
                         "Failed to fetch Java skin for " + uuid + ": " + e.getMessage());
                 return null;
             }
-        }, SKIN_EXECUTOR);
+            }, SKIN_EXECUTOR);
+        } catch (RejectedExecutionException e) {
+            return CompletableFuture.failedFuture(e);
+        }
     }
 
     public Map<String, Object> getClientPlayerSkin(final UserConnection user) {

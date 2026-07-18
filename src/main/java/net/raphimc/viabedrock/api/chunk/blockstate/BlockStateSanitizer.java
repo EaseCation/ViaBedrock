@@ -58,11 +58,14 @@ public class BlockStateSanitizer {
             }
         }
 
-        final Set<String> toRemove = new HashSet<>();
+        Set<String> toRemove = null;
         for (Map.Entry<String, Tag> entry : statesTag.entrySet()) {
             final String property = entry.getKey();
             final Set<Object> allowedValues = propertyValues.get(property);
             if (allowedValues == null) {
+                if (toRemove == null) {
+                    toRemove = new HashSet<>();
+                }
                 toRemove.add(property);
                 continue;
             }
@@ -72,8 +75,10 @@ public class BlockStateSanitizer {
             }
         }
 
-        for (String property : toRemove) {
-            statesTag.remove(property);
+        if (toRemove != null) {
+            for (String property : toRemove) {
+                statesTag.remove(property);
+            }
         }
 
         for (Map.Entry<String, Set<Object>> entry : propertyValues.entrySet()) {

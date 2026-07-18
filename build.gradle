@@ -61,12 +61,15 @@ dependencies {
         }
     }
     testImplementation "org.junit.jupiter:junit-jupiter-api:6.0.3"
+    testImplementation "org.openjdk.jol:jol-core:0.17"
     testImplementation "io.netty:netty-buffer:4.2.14.Final"
     testImplementation "io.netty:netty-handler:4.2.14.Final"
     testImplementation "io.netty:netty-transport:4.2.14.Final"
     testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:6.0.3"
     testRuntimeOnly "org.junit.platform:junit-platform-launcher:6.0.3"
     testRuntimeOnly "com.google.guava:guava:33.6.0-jre"
+    testRuntimeOnly "com.google.code.gson:gson:2.14.0"
+    testRuntimeOnly "org.slf4j:slf4j-simple:2.0.16"
 
     api("io.netty:netty-codec-http:4.2.14.Final") {
         transitive = false
@@ -112,4 +115,55 @@ dependencies {
 
 tasks.withType(Test).configureEach {
     useJUnitPlatform()
+}
+
+tasks.named("test", Test) {
+    useJUnitPlatform {
+        excludeTags "performance"
+    }
+}
+
+tasks.register("jfrAllocationTest", Test) {
+    group = "verification"
+    description = "Runs the opt-in JFR allocation regression gate"
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    environment "VIABEDROCK_JFR_ALLOCATIONS", "true"
+    useJUnitPlatform {
+        includeTags "performance"
+    }
+    filter {
+        includeTestsMatching "net.raphimc.viabedrock.protocol.rewriter.HotPathAllocationJfrTest"
+    }
+}
+
+tasks.register("resourcePackGcSoakTest", Test) {
+    group = "verification"
+    description = "Runs the opt-in 20-session resource-pack GC soak"
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    maxHeapSize = "512m"
+    jvmArgs "-XX:+UseG1GC"
+    environment "VIABEDROCK_GC_SOAK", "true"
+    useJUnitPlatform {
+        includeTags "performance"
+    }
+    filter {
+        includeTestsMatching "net.raphimc.viabedrock.protocol.storage.ResourcePackGcSoakTest"
+    }
+}
+
+tasks.register("resourcePackRetainedHeapTest", Test) {
+    group = "verification"
+    description = "Measures retained heap for 1, 10, and 20 shared resource-pack sessions"
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    environment "VIABEDROCK_RETAINED_HEAP", "true"
+    jvmArgs "-Djol.magicFieldOffset=true"
+    useJUnitPlatform {
+        includeTags "performance"
+    }
+    filter {
+        includeTestsMatching "net.raphimc.viabedrock.protocol.storage.ResourcePackRetainedHeapTest"
+    }
 }

@@ -21,105 +21,141 @@ import com.viaversion.viaversion.libs.gson.JsonArray;
 import com.viaversion.viaversion.libs.gson.JsonElement;
 import com.viaversion.viaversion.libs.gson.JsonObject;
 import com.viaversion.viaversion.util.Key;
-import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 import net.raphimc.viabedrock.api.util.JsonUtil;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 
 import java.util.*;
-import java.util.logging.Level;
 
 // https://wiki.bedrock.dev/concepts/sounds.html
 public class SoundDefinitions {
 
-    private final Map<String, SoundDefinition> soundDefinitions = new HashMap<>();
-    private final Map<String, EventSound> eventSounds = new HashMap<>();
-    private final Map<String, EventSounds> entitySounds = new HashMap<>();
-    private final Map<String, EventSounds> blockSounds = new HashMap<>();
+    private final Map<String, SoundDefinition> soundDefinitions;
+    private final Map<String, EventSound> eventSounds;
+    private final Map<String, EventSounds> entitySounds;
+    private final Map<String, EventSounds> blockSounds;
 
     public SoundDefinitions(final ResourcePackStorage resourcePackStorage) {
-        for (ResourcePack pack : resourcePackStorage.getPackStackBottomToTop()) {
-            if (pack.content().contains("sounds/sound_definitions.json")) {
-                try {
-                    JsonObject soundDefinitions = pack.content().getJson("sounds/sound_definitions.json");
-                    soundDefinitions = soundDefinitions.has("sound_definitions") ? soundDefinitions.getAsJsonObject("sound_definitions") : soundDefinitions;
-                    for (Map.Entry<String, JsonElement> entry : soundDefinitions.entrySet()) {
-                        if (!entry.getValue().isJsonObject()) {
-                            final List<SoundFile> soundFiles;
-                            if (entry.getValue().isJsonArray()) {
-                                soundFiles = SoundFile.fromSoundsArray(entry.getValue().getAsJsonArray());
-                            } else {
-                                soundFiles = Collections.emptyList();
-                            }
-                            this.soundDefinitions.put(entry.getKey(), new SoundDefinition(entry.getKey(), null, soundFiles));
+        this(parsePacks(resourcePackStorage.getPackStackBottomToTop()));
+    }
+
+    private SoundDefinitions(final MutableDefinitions definitions) {
+        this.soundDefinitions = DefinitionImmutability.map(definitions.soundDefinitions);
+        this.eventSounds = DefinitionImmutability.map(definitions.eventSounds);
+        this.entitySounds = immutableEventSounds(definitions.entitySounds);
+        this.blockSounds = immutableEventSounds(definitions.blockSounds);
+    }
+
+    static SoundDefinitions fromPack(final ResourcePack pack) {
+        final MutableDefinitions definitions = new MutableDefinitions();
+        parsePack(pack, definitions);
+        return new SoundDefinitions(definitions);
+    }
+
+    static SoundDefinitions fold(final Collection<SoundDefinitions> layersBottomToTop) {
+        final MutableDefinitions definitions = new MutableDefinitions();
+        for (SoundDefinitions layer : layersBottomToTop) {
+            definitions.soundDefinitions.putAll(layer.soundDefinitions);
+            definitions.eventSounds.putAll(layer.eventSounds);
+            mergeEventSounds(definitions.entitySounds, layer.entitySounds);
+            mergeEventSounds(definitions.blockSounds, layer.blockSounds);
+        }
+        return new SoundDefinitions(definitions);
+    }
+
+    private static MutableDefinitions parsePacks(final Collection<ResourcePack> packsBottomToTop) {
+        final MutableDefinitions definitions = new MutableDefinitions();
+        for (ResourcePack pack : packsBottomToTop) {
+            final SoundDefinitions layer = fromPack(pack);
+            definitions.soundDefinitions.putAll(layer.soundDefinitions);
+            definitions.eventSounds.putAll(layer.eventSounds);
+            mergeEventSounds(definitions.entitySounds, layer.entitySounds);
+            mergeEventSounds(definitions.blockSounds, layer.blockSounds);
+        }
+        return definitions;
+    }
+
+    private static void parsePack(final ResourcePack pack, final MutableDefinitions definitions) {
+        if (pack.content().contains("sounds/sound_definitions.json")) {
+            try {
+                JsonObject soundDefinitions = pack.content().getJson("sounds/sound_definitions.json");
+                soundDefinitions = soundDefinitions.has("sound_definitions") ? soundDefinitions.getAsJsonObject("sound_definitions") : soundDefinitions;
+                for (Map.Entry<String, JsonElement> entry : soundDefinitions.entrySet()) {
+                    if (!entry.getValue().isJsonObject()) {
+                        if (entry.getValue().isJsonArray()) {
+                            final List<SoundFile> soundFiles = SoundFile.fromSoundsArray(
+                                    entry.getValue().getAsJsonArray());
+                            definitions.soundDefinitions.put(entry.getKey(),
+                                    new SoundDefinition(entry.getKey(), null, soundFiles));
+                        }
+                        continue;
+                    }
+                    final JsonObject entryData = entry.getValue().getAsJsonObject();
+                    final String category = entryData.has("category") ? entryData.get("category").getAsString() : null;
+                    final List<SoundFile> soundFiles;
+                    if (entryData.has("sounds")) {
+                        if (!entryData.get("sounds").isJsonArray()) {
                             continue;
                         }
-                        final JsonObject entryData = entry.getValue().getAsJsonObject();
-                        final String category = entryData.has("category") ? entryData.get("category").getAsString() : null;
-                        final List<SoundFile> soundFiles;
-                        if (entryData.has("sounds") && entryData.get("sounds").isJsonArray()) {
-                            soundFiles = SoundFile.fromSoundsArray(entryData.getAsJsonArray("sounds"));
-                        } else {
-                            soundFiles = Collections.emptyList();
-                        }
-                        final SoundDefinition soundDefinition = new SoundDefinition(entry.getKey(), category, soundFiles);
-                        this.soundDefinitions.put(entry.getKey(), soundDefinition);
+                        soundFiles = SoundFile.fromSoundsArray(entryData.getAsJsonArray("sounds"));
+                    } else {
+                        soundFiles = Collections.emptyList();
                     }
-                } catch (Throwable e) {
-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to parse sound_definitions.json in pack " + pack.key(), e);
+                    definitions.soundDefinitions.put(entry.getKey(), new SoundDefinition(entry.getKey(), category, soundFiles));
                 }
+            } catch (Throwable e) {
+                DefinitionLogger.warning("Failed to parse sound_definitions.json in pack " + pack.key(), e);
             }
-            if (pack.content().contains("sounds.json")) {
-                try {
-                    final JsonObject sounds = pack.content().getJson("sounds.json");
-                    if (sounds.has("individual_event_sounds")) {
-                        final JsonObject events = sounds.getAsJsonObject("individual_event_sounds").getAsJsonObject("events");
-                        for (Map.Entry<String, JsonElement> entry : events.entrySet()) {
-                            final ConfiguredSound configuredSound = ConfiguredSound.fromJson(entry.getValue().getAsJsonObject());
-                            if (configuredSound != null) {
-                                this.eventSounds.put(entry.getKey(), new EventSound(entry.getKey(), configuredSound));
-                            }
+        }
+        if (pack.content().contains("sounds.json")) {
+            try {
+                final JsonObject sounds = pack.content().getJson("sounds.json");
+                if (sounds.has("individual_event_sounds")) {
+                    final JsonObject events = sounds.getAsJsonObject("individual_event_sounds").getAsJsonObject("events");
+                    for (Map.Entry<String, JsonElement> entry : events.entrySet()) {
+                        final ConfiguredSound configuredSound = ConfiguredSound.fromJson(entry.getValue().getAsJsonObject());
+                        if (configuredSound != null) {
+                            definitions.eventSounds.put(entry.getKey(), new EventSound(entry.getKey(), configuredSound));
                         }
                     }
-                    if (sounds.has("entity_sounds")) {
-                        final JsonObject entitySounds = sounds.getAsJsonObject("entity_sounds");
+                }
+                if (sounds.has("entity_sounds")) {
+                    final JsonObject entitySounds = sounds.getAsJsonObject("entity_sounds");
+                    final JsonObject entities = entitySounds.getAsJsonObject("entities");
+                    mergeDefaults(entitySounds, entities);
+                    parseEvents(entities, true, definitions.entitySounds);
+                }
+                if (sounds.has("block_sounds")) {
+                    parseEvents(sounds.getAsJsonObject("block_sounds"), false, definitions.blockSounds);
+                }
+                if (sounds.has("interactive_sounds")) {
+                    final JsonObject interactiveSounds = sounds.getAsJsonObject("interactive_sounds");
+                    if (interactiveSounds.has("entity_sounds")) {
+                        final JsonObject entitySounds = interactiveSounds.getAsJsonObject("entity_sounds");
                         final JsonObject entities = entitySounds.getAsJsonObject("entities");
-                        this.mergeDefaults(entitySounds, entities);
-                        this.parseEvents(entities, true, this.entitySounds);
-                    }
-                    if (sounds.has("block_sounds")) {
-                        final JsonObject blockSounds = sounds.getAsJsonObject("block_sounds");
-                        this.parseEvents(blockSounds, false, this.blockSounds);
-                    }
-                    if (sounds.has("interactive_sounds")) {
-                        final JsonObject interactiveSounds = sounds.getAsJsonObject("interactive_sounds");
-                        if (interactiveSounds.has("entity_sounds")) {
-                            final JsonObject entitySounds = interactiveSounds.getAsJsonObject("entity_sounds");
-                            final JsonObject entities = entitySounds.getAsJsonObject("entities");
-                            this.mergeDefaults(entitySounds, entities);
-                            // Entries can have different sounds for each block sound, but that's too much work and code for now, so we just modify the json to only have the default sound
-                            for (Map.Entry<String, JsonElement> entityEntry : entities.entrySet()) {
-                                final JsonObject events = entityEntry.getValue().getAsJsonObject().getAsJsonObject("events");
-                                for (Map.Entry<String, JsonElement> eventEntry : events.entrySet()) {
-                                    if (eventEntry.getValue().isJsonObject() && eventEntry.getValue().getAsJsonObject().has("default")) {
-                                        events.add(eventEntry.getKey(), eventEntry.getValue().getAsJsonObject().get("default"));
-                                    }
+                        mergeDefaults(entitySounds, entities);
+                        // Entries can have different sounds for each block sound. Keep the default path.
+                        for (Map.Entry<String, JsonElement> entityEntry : entities.entrySet()) {
+                            final JsonObject events = entityEntry.getValue().getAsJsonObject().getAsJsonObject("events");
+                            for (Map.Entry<String, JsonElement> eventEntry : events.entrySet()) {
+                                if (eventEntry.getValue().isJsonObject() && eventEntry.getValue().getAsJsonObject().has("default")) {
+                                    events.add(eventEntry.getKey(), eventEntry.getValue().getAsJsonObject().get("default"));
                                 }
                             }
-                            this.parseEvents(entities, true, this.entitySounds);
                         }
-                        if (interactiveSounds.has("block_sounds")) {
-                            this.parseEvents(interactiveSounds.getAsJsonObject("block_sounds"), false, this.blockSounds);
-                        }
+                        parseEvents(entities, true, definitions.entitySounds);
                     }
-                } catch (Throwable e) {
-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to parse sounds.json in pack " + pack.key(), e);
+                    if (interactiveSounds.has("block_sounds")) {
+                        parseEvents(interactiveSounds.getAsJsonObject("block_sounds"), false, definitions.blockSounds);
+                    }
                 }
+            } catch (Throwable e) {
+                DefinitionLogger.warning("Failed to parse sounds.json in pack " + pack.key(), e);
             }
         }
     }
 
-    private void parseEvents(final JsonObject sounds, final boolean namespace, final Map<String, EventSounds> soundMap) {
+    private static void parseEvents(final JsonObject sounds, final boolean namespace, final Map<String, EventSounds> soundMap) {
         for (Map.Entry<String, JsonElement> entry : sounds.entrySet()) {
             final JsonObject entity = entry.getValue().getAsJsonObject();
             if (!entity.has("events")) {
@@ -158,21 +194,50 @@ public class SoundDefinitions {
                 }
             }
             final String key = namespace ? Key.namespaced(entry.getKey()) : entry.getKey();
-            if (soundMap.containsKey(key)) {
-                soundMap.get(key).eventSounds().putAll(eventSounds);
+            final EventSounds current = soundMap.get(key);
+            if (current != null) {
+                final Map<String, ConfiguredSound> merged = new LinkedHashMap<>(current.eventSounds());
+                merged.putAll(eventSounds);
+                soundMap.put(key, new EventSounds(key, merged));
             } else {
                 soundMap.put(key, new EventSounds(key, eventSounds));
             }
         }
     }
 
-    private void mergeDefaults(final JsonObject sounds, final JsonObject target) {
+    private static void mergeDefaults(final JsonObject sounds, final JsonObject target) {
         if (sounds.has("defaults")) {
             final JsonObject defaults = sounds.getAsJsonObject("defaults");
             for (JsonElement value : target.asMap().values()) {
                 JsonUtil.merge(value.getAsJsonObject(), defaults);
             }
         }
+    }
+
+    private static void mergeEventSounds(final Map<String, EventSounds> target, final Map<String, EventSounds> source) {
+        for (Map.Entry<String, EventSounds> entry : source.entrySet()) {
+            final Map<String, ConfiguredSound> events = new LinkedHashMap<>();
+            final EventSounds current = target.get(entry.getKey());
+            if (current != null) {
+                events.putAll(current.eventSounds());
+            }
+            events.putAll(entry.getValue().eventSounds());
+            target.put(entry.getKey(), new EventSounds(entry.getKey(), events));
+        }
+    }
+
+    private static Map<String, EventSounds> immutableEventSounds(final Map<String, EventSounds> source) {
+        final Map<String, EventSounds> immutable = new LinkedHashMap<>();
+        source.forEach((identifier, sounds) -> immutable.put(identifier,
+                new EventSounds(identifier, sounds.eventSounds())));
+        return DefinitionImmutability.map(immutable);
+    }
+
+    private static final class MutableDefinitions {
+        private final Map<String, SoundDefinition> soundDefinitions = new LinkedHashMap<>();
+        private final Map<String, EventSound> eventSounds = new LinkedHashMap<>();
+        private final Map<String, EventSounds> entitySounds = new LinkedHashMap<>();
+        private final Map<String, EventSounds> blockSounds = new LinkedHashMap<>();
     }
 
     public Map<String, SoundDefinition> soundDefinitions() {
@@ -192,6 +257,11 @@ public class SoundDefinitions {
     }
 
     public record SoundDefinition(String name, String category, List<SoundFile> soundFiles) {
+
+        public SoundDefinition {
+            soundFiles = List.copyOf(soundFiles);
+        }
+
     }
 
     public record SoundFile(String path, float volume, float pitch) {
@@ -288,6 +358,11 @@ public class SoundDefinitions {
     }
 
     public record EventSounds(String identifier, Map<String, ConfiguredSound> eventSounds) {
+
+        public EventSounds {
+            eventSounds = DefinitionImmutability.map(eventSounds);
+        }
+
     }
 
 }

@@ -19,44 +19,69 @@ package net.raphimc.viabedrock.api.resourcepack.definition;
 
 import com.viaversion.viaversion.libs.gson.JsonObject;
 import com.viaversion.viaversion.util.Key;
-import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 
+import java.util.Collection;
 import java.util.Collections;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.logging.Level;
 
 public class BiomeDefinitions {
 
-    private final Map<String, BiomeDefinition> biomes = new HashMap<>();
+    private final Map<String, BiomeDefinition> biomes;
 
     public BiomeDefinitions(final ResourcePackStorage resourcePackStorage) {
-        for (ResourcePack pack : resourcePackStorage.getPackStackBottomToTop()) {
-            for (String biomePath : pack.content().getFilesDeep("biomes/", ".json")) {
-                try {
-                    final JsonObject biome = pack.content().getJson(biomePath).getAsJsonObject("minecraft:client_biome");
-                    final String name = biome.getAsJsonObject("description").get("identifier").getAsString();
-                    final BiomeDefinition biomeDefinition = new BiomeDefinition(name);
-                    if (biome.has("components")) {
-                        final JsonObject components = biome.getAsJsonObject("components");
-                        if (components.has("minecraft:sky_color")) {
-                            biomeDefinition.skyColor = Integer.parseInt(components.getAsJsonObject("minecraft:sky_color").get("sky_color").getAsString().substring(1, 7), 16);
-                        }
-                        if (components.has("minecraft:water_appearance")) {
-                            biomeDefinition.waterSurfaceColor = Integer.parseInt(components.getAsJsonObject("minecraft:water_appearance").get("surface_color").getAsString().substring(1, 7), 16);
-                        }
-                        if (components.has("minecraft:fog_appearance")) {
-                            biomeDefinition.fog = Key.namespaced(components.getAsJsonObject("minecraft:fog_appearance").get("fog_identifier").getAsString());
-                        }
+        this(parsePacks(resourcePackStorage.getPackStackBottomToTop()));
+    }
+
+    private BiomeDefinitions(final Map<String, BiomeDefinition> biomes) {
+        this.biomes = DefinitionImmutability.map(biomes);
+    }
+
+    static BiomeDefinitions fromPack(final ResourcePack pack) {
+        final Map<String, BiomeDefinition> biomes = new LinkedHashMap<>();
+        for (String biomePath : pack.content().getFilesDeep("biomes/", ".json")) {
+            try {
+                final JsonObject biome = pack.content().getJson(biomePath).getAsJsonObject("minecraft:client_biome");
+                final String name = biome.getAsJsonObject("description").get("identifier").getAsString();
+                Integer skyColor = null;
+                Integer waterSurfaceColor = null;
+                String fog = null;
+                if (biome.has("components")) {
+                    final JsonObject components = biome.getAsJsonObject("components");
+                    if (components.has("minecraft:sky_color")) {
+                        skyColor = Integer.parseInt(components.getAsJsonObject("minecraft:sky_color").get("sky_color").getAsString().substring(1, 7), 16);
                     }
-                    this.biomes.put(name, biomeDefinition);
-                } catch (Throwable e) {
-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to parse biome definition " + biomePath + " in pack " + pack.key(), e);
+                    if (components.has("minecraft:water_appearance")) {
+                        waterSurfaceColor = Integer.parseInt(components.getAsJsonObject("minecraft:water_appearance").get("surface_color").getAsString().substring(1, 7), 16);
+                    }
+                    if (components.has("minecraft:fog_appearance")) {
+                        fog = Key.namespaced(components.getAsJsonObject("minecraft:fog_appearance").get("fog_identifier").getAsString());
+                    }
                 }
+                biomes.put(name, new BiomeDefinition(name, skyColor, waterSurfaceColor, fog));
+            } catch (Throwable e) {
+                DefinitionLogger.warning("Failed to parse biome definition " + biomePath + " in pack " + pack.key(), e);
             }
         }
+        return new BiomeDefinitions(biomes);
+    }
+
+    static BiomeDefinitions fold(final Collection<BiomeDefinitions> layersBottomToTop) {
+        final Map<String, BiomeDefinition> biomes = new LinkedHashMap<>();
+        for (BiomeDefinitions layer : layersBottomToTop) {
+            biomes.putAll(layer.biomes);
+        }
+        return new BiomeDefinitions(biomes);
+    }
+
+    private static Map<String, BiomeDefinition> parsePacks(final Collection<ResourcePack> packsBottomToTop) {
+        final Map<String, BiomeDefinition> biomes = new LinkedHashMap<>();
+        for (ResourcePack pack : packsBottomToTop) {
+            biomes.putAll(fromPack(pack).biomes);
+        }
+        return biomes;
     }
 
     public BiomeDefinition get(final String name) {
@@ -70,12 +95,19 @@ public class BiomeDefinitions {
     public static class BiomeDefinition {
 
         private final String name;
-        private Integer skyColor;
-        private Integer waterSurfaceColor;
-        private String fog;
+        private final Integer skyColor;
+        private final Integer waterSurfaceColor;
+        private final String fog;
 
         public BiomeDefinition(final String name) {
+            this(name, null, null, null);
+        }
+
+        private BiomeDefinition(final String name, final Integer skyColor, final Integer waterSurfaceColor, final String fog) {
             this.name = name;
+            this.skyColor = skyColor;
+            this.waterSurfaceColor = waterSurfaceColor;
+            this.fog = fog;
         }
 
         public String name() {

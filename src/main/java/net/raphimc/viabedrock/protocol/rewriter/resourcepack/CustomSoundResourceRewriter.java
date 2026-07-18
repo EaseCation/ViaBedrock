@@ -27,6 +27,7 @@ import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.rewriter.ResourcePackRewriter;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -38,13 +39,20 @@ public class CustomSoundResourceRewriter implements ResourcePackRewriter.Rewrite
 
     @Override
     public void apply(final ResourcePackStorage resourcePackStorage, final Content javaContent) {
-        final Set<String> customSoundNames = this.collectCustomSoundNames(resourcePackStorage, javaContent);
-        resourcePackStorage.getConverterData().put(CUSTOM_SOUNDS_KEY, customSoundNames);
+        this.collectCustomSoundNames(resourcePackStorage, javaContent);
     }
 
     @Override
     public void initRuntimeData(final ResourcePackStorage resourcePackStorage) {
-        resourcePackStorage.getConverterData().put(CUSTOM_SOUNDS_KEY, this.collectCustomSoundNames(resourcePackStorage, null));
+        final Set<String> sharedNames = resourcePackStorage.getSharedCustomSoundNames();
+        resourcePackStorage.putRuntimeData(
+                CUSTOM_SOUNDS_KEY, sharedNames != null
+                        ? sharedNames : Set.copyOf(this.collectCustomSoundNames(resourcePackStorage, null)));
+    }
+
+    @Override
+    public ResourcePackRewriter.RuntimeDataScope runtimeDataScope() {
+        return ResourcePackRewriter.RuntimeDataScope.SHARED;
     }
 
     private Set<String> collectCustomSoundNames(final ResourcePackStorage resourcePackStorage, final Content javaContent) {
@@ -56,7 +64,8 @@ public class CustomSoundResourceRewriter implements ResourcePackRewriter.Rewrite
             final String soundName = entry.getKey();
 
             // Skip sounds that already have a Java mapping
-            if (BedrockProtocol.MAPPINGS.getBedrockToJavaSounds().containsKey(soundName)) {
+            if (BedrockProtocol.MAPPINGS.getBedrockToJavaSounds() != null
+                    && BedrockProtocol.MAPPINGS.getBedrockToJavaSounds().containsKey(soundName)) {
                 continue;
             }
 
@@ -121,6 +130,27 @@ public class CustomSoundResourceRewriter implements ResourcePackRewriter.Rewrite
         }
 
         return customSoundNames;
+    }
+
+    /** Computes stack-derived sound names while runtime construction still owns its temporary pack stack. */
+    public static Set<String> findCustomSoundNames(final SoundDefinitions sounds,
+                                                   final Collection<ResourcePack> packsTopToBottom) {
+        final Set<String> customSoundNames = new HashSet<>();
+        soundDefinitions:
+        for (Map.Entry<String, SoundDefinitions.SoundDefinition> entry : sounds.soundDefinitions().entrySet()) {
+            if (BedrockProtocol.MAPPINGS.getBedrockToJavaSounds() != null
+                    && BedrockProtocol.MAPPINGS.getBedrockToJavaSounds().containsKey(entry.getKey())) continue;
+            for (SoundDefinitions.SoundFile soundFile : entry.getValue().soundFiles()) {
+                final String path = soundFile.path() + ".ogg";
+                for (ResourcePack pack : packsTopToBottom) {
+                    if (pack.content().contains(path)) {
+                        customSoundNames.add(entry.getKey());
+                        continue soundDefinitions;
+                    }
+                }
+            }
+        }
+        return Set.copyOf(customSoundNames);
     }
 
 }

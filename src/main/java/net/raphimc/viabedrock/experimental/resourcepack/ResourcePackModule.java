@@ -17,14 +17,22 @@
  */
 package net.raphimc.viabedrock.experimental.resourcepack;
 
+import com.viaversion.viaversion.api.Via;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.experimental.FeatureModule;
+import net.raphimc.viabedrock.experimental.resourcepack.cache.SharedPackRuntimeCache.RuntimeLease;
 import net.raphimc.viabedrock.protocol.rewriter.ResourcePackRewriter;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.logging.Level;
 
 /**
@@ -32,17 +40,12 @@ import java.util.logging.Level;
  */
 public class ResourcePackModule implements FeatureModule {
 
-    // initRuntimeData() builds a BedrockMotion PackManager (loading dozens of packs) and per-bone
-    // entity models - several seconds of CPU work. It used to run synchronously on the Bedrock IO
-    // thread (Netty NIO Client IO #N) inside the RESOURCE_PACK_STACK handler, which blocked that
-    // thread from answering the server's keep-alive and caused the connection to be timed out on the
-    // first (cache-cold) join. Offload it here so the IO thread keeps processing packets; consumers
-    // (CustomEntity) already null-check the converterData entries and degrade gracefully until ready.
-    private static final ExecutorService RUNTIME_DATA_EXECUTOR = Executors.newCachedThreadPool(r -> {
-        final Thread t = new Thread(r, "ViaBedrock RuntimeData Executor");
-        t.setDaemon(true);
-        return t;
-    });
+    private static final String SHARED_RUNTIME_DATA_FUTURE = "resource_pack_shared_runtime_data_future:";
+    private static final String SESSION_RUNTIME_DATA_FUTURE = "resource_pack_session_runtime_data_future:";
+    private static final ThreadLocal<Map<ResourcePackStorage, Set<String>>> ACTIVE_INITIALIZATIONS =
+            ThreadLocal.withInitial(IdentityHashMap::new);
+    private static final ThreadLocal<Set<CompletableFuture<Void>>> ACTIVE_INITIALIZATION_FUTURES =
+            ThreadLocal.withInitial(() -> Collections.newSetFromMap(new IdentityHashMap<>()));
 
     public ResourcePackModule() {
         ResourcePackRewriter.registerRewriter(new UITextureResourceRewriter());
@@ -51,16 +54,160 @@ public class ResourcePackModule implements FeatureModule {
     @Override
     public void onResourcePackStackSet(final UserConnection user) {
         final ResourcePackStorage resourcePackStorage = user.get(ResourcePackStorage.class);
-        RUNTIME_DATA_EXECUTOR.execute(() -> {
-            final long start = System.nanoTime();
-            try {
-                ResourcePackRewriter.initRuntimeData(resourcePackStorage);
-                ViaBedrock.getPlatform().getLogger().info(
-                        "Initialized entity runtime data in " + ((System.nanoTime() - start) / 1_000_000L) + "ms (async)");
-            } catch (Throwable e) {
-                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to initialize entity runtime data", e);
+        ensureRuntimeData(resourcePackStorage);
+    }
+
+    /** Completes only after all stack-derived runtime data is fully initialized and published. */
+    public static CompletableFuture<Void> ensureRuntimeData(final ResourcePackStorage resourcePackStorage) {
+        final String fingerprint = resourcePackStorage.getRewriterFingerprint();
+        return ensureSharedRuntimeData(resourcePackStorage, fingerprint)
+                .thenCompose(ignored -> ensureSessionRuntimeData(resourcePackStorage, fingerprint));
+    }
+
+    private static CompletableFuture<Void> ensureSharedRuntimeData(
+            final ResourcePackStorage resourcePackStorage, final String fingerprint) {
+        final String marker = SHARED_RUNTIME_DATA_FUTURE + fingerprint;
+        return initializeOnce(resourcePackStorage, marker, true, lease -> {
+            if (lease != null) {
+                lease.initializeRuntimeData(() -> ResourcePackRewriter.initSharedRuntimeData(resourcePackStorage));
+            } else {
+                ResourcePackRewriter.initSharedRuntimeData(resourcePackStorage);
             }
         });
+    }
+
+    private static CompletableFuture<Void> ensureSessionRuntimeData(
+            final ResourcePackStorage resourcePackStorage, final String fingerprint) {
+        final String marker = SESSION_RUNTIME_DATA_FUTURE + fingerprint;
+        return initializeOnce(resourcePackStorage, marker, false,
+                ignored -> ResourcePackRewriter.initSessionRuntimeData(resourcePackStorage));
+    }
+
+    private static CompletableFuture<Void> initializeOnce(
+            final ResourcePackStorage resourcePackStorage, final String marker, final boolean shared,
+            final java.util.function.Consumer<RuntimeLease> initializer) {
+        if (isInitializationActive(resourcePackStorage, marker)) {
+            return CompletableFuture.failedFuture(new IllegalStateException(
+                    "Resource pack runtime initialization cannot wait on itself"));
+        }
+        final CompletableFuture<Void> completion = new CompletableFuture<>();
+        final CompletableFuture<Void> existing = resourcePackStorage
+                .putRuntimeInitializationIfAbsent(marker, completion, shared);
+        if (existing != null) {
+            if (ACTIVE_INITIALIZATION_FUTURES.get().contains(existing)) {
+                return CompletableFuture.failedFuture(new IllegalStateException(
+                        "Resource pack runtime initialization cannot wait on itself"));
+            }
+            return existing.thenApply(ignored -> null);
+        }
+
+        final RuntimeLease retained;
+        try {
+            retained = resourcePackStorage.retainRuntimeLease();
+        } catch (Throwable error) {
+            resourcePackStorage.removeRuntimeInitialization(marker, completion, shared);
+            completion.completeExceptionally(error);
+            return completion.thenApply(ignored -> null);
+        }
+        final Runnable initialize = () -> {
+            final long start = System.nanoTime();
+            beginInitialization(resourcePackStorage, marker, completion);
+            try {
+                try {
+                    resourcePackStorage.withLazyPackStack(() -> {
+                        initializer.accept(retained);
+                        return null;
+                    });
+                } catch (IOException e) {
+                    throw new UncheckedIOException("Failed to materialize shared resource pack content", e);
+                }
+                ViaBedrock.getPlatform().getLogger().info(
+                        "Initialized " + (shared ? "shared" : "session") + " resource pack runtime data in "
+                                + ((System.nanoTime() - start) / 1_000_000L) + "ms (async)");
+            } catch (Throwable e) {
+                if (shared) {
+                    resourcePackStorage.rejectSharedRuntime(e);
+                }
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to initialize entity runtime data", e);
+                throw e;
+            } finally {
+                endInitialization(resourcePackStorage, marker, completion);
+            }
+        };
+        final CompletableFuture<Void> task;
+        try {
+            task = ViaBedrock.getResourcePackWorkScheduler() != null
+                    ? ViaBedrock.getResourcePackWorkScheduler().runCpu(initialize)
+                    : runOnPlatformWorker(initialize);
+        } catch (Throwable error) {
+            if (retained != null) retained.close();
+            resourcePackStorage.removeRuntimeInitialization(marker, completion, shared);
+            completion.completeExceptionally(error);
+            return completion.thenApply(ignored -> null);
+        }
+        task.whenComplete((ignored, error) -> {
+            if (retained != null) retained.close();
+            if (error == null) {
+                completion.complete(null);
+            } else {
+                completion.completeExceptionally(error);
+                resourcePackStorage.removeRuntimeInitialization(marker, completion, shared);
+            }
+        });
+        return completion.thenApply(ignored -> null);
+    }
+
+    private static boolean isInitializationActive(
+            final ResourcePackStorage storage, final String marker) {
+        final Set<String> active = ACTIVE_INITIALIZATIONS.get().get(storage);
+        return active != null && active.contains(marker);
+    }
+
+    private static void beginInitialization(
+            final ResourcePackStorage storage, final String marker,
+            final CompletableFuture<Void> completion) {
+        final Set<CompletableFuture<Void>> activeFutures = ACTIVE_INITIALIZATION_FUTURES.get();
+        if (!activeFutures.add(completion)) {
+            throw new IllegalStateException("Resource pack runtime initialization future is already active");
+        }
+        final Map<ResourcePackStorage, Set<String>> activeByStorage = ACTIVE_INITIALIZATIONS.get();
+        final Set<String> active = activeByStorage.computeIfAbsent(storage, ignored -> new HashSet<>());
+        if (!active.add(marker)) {
+            activeFutures.remove(completion);
+            if (activeFutures.isEmpty()) ACTIVE_INITIALIZATION_FUTURES.remove();
+            throw new IllegalStateException("Resource pack runtime initialization is already active");
+        }
+    }
+
+    private static void endInitialization(
+            final ResourcePackStorage storage, final String marker,
+            final CompletableFuture<Void> completion) {
+        final Map<ResourcePackStorage, Set<String>> activeByStorage = ACTIVE_INITIALIZATIONS.get();
+        final Set<String> active = activeByStorage.get(storage);
+        if (active != null && active.remove(marker) && active.isEmpty()) {
+            activeByStorage.remove(storage);
+        }
+        if (activeByStorage.isEmpty()) ACTIVE_INITIALIZATIONS.remove();
+        final Set<CompletableFuture<Void>> activeFutures = ACTIVE_INITIALIZATION_FUTURES.get();
+        activeFutures.remove(completion);
+        if (activeFutures.isEmpty()) ACTIVE_INITIALIZATION_FUTURES.remove();
+    }
+
+    private static CompletableFuture<Void> runOnPlatformWorker(final Runnable task) {
+        final CompletableFuture<Void> future = new CompletableFuture<>();
+        try {
+            Via.getPlatform().runAsync(() -> {
+                try {
+                    task.run();
+                    future.complete(null);
+                } catch (Throwable e) {
+                    future.completeExceptionally(e);
+                }
+            });
+        } catch (Throwable e) {
+            future.completeExceptionally(e);
+        }
+        return future;
     }
 
 }

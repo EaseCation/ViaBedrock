@@ -19,44 +19,68 @@ package net.raphimc.viabedrock.api.resourcepack.definition;
 
 import com.viaversion.viaversion.libs.gson.JsonElement;
 import com.viaversion.viaversion.libs.gson.JsonObject;
-import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 
 import java.util.*;
-import java.util.logging.Level;
 
 public class TextureDefinitions {
 
-    private final Map<String, List<ItemTextureDefinition>> itemTextures = new HashMap<>();
+    private final Map<String, List<ItemTextureDefinition>> itemTextures;
 
     public TextureDefinitions(final ResourcePackStorage resourcePackStorage) {
-        for (ResourcePack pack : resourcePackStorage.getPackStackBottomToTop()) {
-            if (pack.content().contains("textures/item_texture.json")) {
-                try {
-                    final JsonObject itemTexture = pack.content().getJson("textures/item_texture.json");
-                    final String textureName = itemTexture.has("texture_name") ? itemTexture.get("texture_name").getAsString() : "atlas.items";
-                    if (textureName.equals("atlas.items")) {
-                        final JsonObject textureData = itemTexture.getAsJsonObject("texture_data");
-                        for (Map.Entry<String, JsonElement> entry : textureData.entrySet()) {
-                            final String name = entry.getKey();
-                            final JsonElement textures = entry.getValue().getAsJsonObject().get("textures");
-                            final List<ItemTextureDefinition> itemTextureDefinitions = new ArrayList<>();
-                            if (textures.isJsonPrimitive() && textures.getAsJsonPrimitive().isString()) {
-                                itemTextureDefinitions.add(new ItemTextureDefinition(name, textures.getAsString()));
-                            } else if (textures.isJsonArray()) {
-                                for (JsonElement texture : textures.getAsJsonArray()) {
-                                    itemTextureDefinitions.add(new ItemTextureDefinition(name, texture.getAsString()));
-                                }
+        this(parsePacks(resourcePackStorage.getPackStackBottomToTop()));
+    }
+
+    private TextureDefinitions(final Map<String, List<ItemTextureDefinition>> itemTextures) {
+        final Map<String, List<ItemTextureDefinition>> immutable = new LinkedHashMap<>();
+        itemTextures.forEach((name, definitions) -> immutable.put(name, List.copyOf(definitions)));
+        this.itemTextures = DefinitionImmutability.map(immutable);
+    }
+
+    static TextureDefinitions fromPack(final ResourcePack pack) {
+        final Map<String, List<ItemTextureDefinition>> itemTextures = new LinkedHashMap<>();
+        if (pack.content().contains("textures/item_texture.json")) {
+            try {
+                final JsonObject itemTexture = pack.content().getJson("textures/item_texture.json");
+                final String textureName = itemTexture.has("texture_name") ? itemTexture.get("texture_name").getAsString() : "atlas.items";
+                if (textureName.equals("atlas.items")) {
+                    final JsonObject textureData = itemTexture.getAsJsonObject("texture_data");
+                    for (Map.Entry<String, JsonElement> entry : textureData.entrySet()) {
+                        final String name = entry.getKey();
+                        final JsonElement textures = entry.getValue().getAsJsonObject().get("textures");
+                        final List<ItemTextureDefinition> itemTextureDefinitions = new ArrayList<>();
+                        if (textures.isJsonPrimitive() && textures.getAsJsonPrimitive().isString()) {
+                            itemTextureDefinitions.add(new ItemTextureDefinition(name, textures.getAsString()));
+                        } else if (textures.isJsonArray()) {
+                            for (JsonElement texture : textures.getAsJsonArray()) {
+                                itemTextureDefinitions.add(new ItemTextureDefinition(name, texture.getAsString()));
                             }
-                            this.itemTextures.put(name, itemTextureDefinitions);
                         }
+                        itemTextures.put(name, itemTextureDefinitions);
                     }
-                } catch (Throwable e) {
-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to parse item_texture.json in pack " + pack.key(), e);
                 }
+            } catch (Throwable e) {
+                DefinitionLogger.warning("Failed to parse item_texture.json in pack " + pack.key(), e);
             }
         }
+        return new TextureDefinitions(itemTextures);
+    }
+
+    static TextureDefinitions fold(final Collection<TextureDefinitions> layersBottomToTop) {
+        final Map<String, List<ItemTextureDefinition>> itemTextures = new LinkedHashMap<>();
+        for (TextureDefinitions layer : layersBottomToTop) {
+            itemTextures.putAll(layer.itemTextures);
+        }
+        return new TextureDefinitions(itemTextures);
+    }
+
+    private static Map<String, List<ItemTextureDefinition>> parsePacks(final Collection<ResourcePack> packsBottomToTop) {
+        final Map<String, List<ItemTextureDefinition>> itemTextures = new LinkedHashMap<>();
+        for (ResourcePack pack : packsBottomToTop) {
+            itemTextures.putAll(fromPack(pack).itemTextures);
+        }
+        return itemTextures;
     }
 
     public Map<String, List<ItemTextureDefinition>> itemTextures() {

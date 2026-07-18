@@ -1,0 +1,63 @@
+/*
+ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
+ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ */
+package net.raphimc.viabedrock;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.logging.Logger;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+class ViaBedrockConfigTest {
+
+    @Test
+    void normalizesNonPositiveResourcePackCacheLimits(@TempDir final Path tempDir) throws Exception {
+        final Path configFile = tempDir.resolve("viabedrock.yml");
+        Files.writeString(configFile, """
+                resource-pack-cache:
+                  memory-budget-mib: -1
+                  memory-hard-limit-mib: -1
+                  cpu-workers: -1
+                  io-workers: -1
+                  queue-capacity: -1
+                  idle-expire-minutes: -1
+                  build-timeout-seconds: -1
+                  disk-budget-mib: -1
+                  disk-idle-days: -1
+                  max-archive-mib: -1
+                  max-expanded-mib: -1
+                  max-entry-mib: -1
+                  max-entries: -1
+                  max-compression-ratio: -1
+                """);
+
+        final ViaBedrockConfig config = new ViaBedrockConfig(configFile.toFile(), Logger.getAnonymousLogger());
+        config.reload();
+
+        assertEquals(0, config.getResourcePackCacheMemoryBudgetMiB());
+        assertEquals(0, config.getResourcePackCacheMemoryHardLimitMiB());
+        assertEquals(0, config.getResourcePackCacheCpuWorkers());
+        assertEquals(1, config.getResourcePackCacheIoWorkers());
+        assertEquals(1, config.getResourcePackCacheQueueCapacity());
+        assertEquals(1, config.getResourcePackCacheIdleExpireMinutes());
+        assertEquals(1, config.getResourcePackCacheBuildTimeoutSeconds());
+        assertEquals(2, config.getResourcePackCacheDiskBudgetMiB());
+        assertEquals(1, config.getResourcePackCacheDiskIdleDays());
+        assertEquals(1, config.getResourcePackMaxArchiveMiB());
+        assertEquals(1, config.getResourcePackMaxExpandedMiB());
+        assertEquals(1, config.getResourcePackMaxEntryMiB());
+        assertEquals(1, config.getResourcePackMaxEntries());
+        assertEquals(1, config.getResourcePackMaxCompressionRatio());
+    }
+
+}

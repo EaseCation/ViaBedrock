@@ -17,14 +17,28 @@
  */
 package net.raphimc.viabedrock.protocol.packet;
 
+import com.viaversion.viaversion.connection.UserConnectionImpl;
+import io.netty.buffer.ByteBuf;
+import io.netty.channel.embedded.EmbeddedChannel;
 import net.raphimc.viabedrock.protocol.storage.ClientLightStorage;
+import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -73,6 +87,163 @@ class JoinPacketsTest {
         assertNotNull(released);
         released.run();
         assertEquals(List.of("finish-and-play", "play-dependent"), events);
+    }
+
+    @Test
+    void coldSkippedNegotiationBuildDoesNotBlockAndReplaysOnEventLoop() throws Exception {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        final UserConnectionImpl user = new UserConnectionImpl(channel);
+        final ByteBuf payload = channel.alloc().buffer().writeInt(0x1234ABCD);
+        final CompletableFuture<ResourcePackStorage> creation = new CompletableFuture<>();
+        final CompletableFuture<Void> initialization = new CompletableFuture<>();
+        final CountDownLatch workerStarted = new CountDownLatch(1);
+        final CountDownLatch releaseCreation = new CountDownLatch(1);
+        final CountDownLatch initializerStarted = new CountDownLatch(1);
+        final CountDownLatch releaseInitialization = new CountDownLatch(1);
+        final CountDownLatch replayed = new CountDownLatch(1);
+        final AtomicReference<Thread> buildThread = new AtomicReference<>();
+        final AtomicReference<Thread> initializerThread = new AtomicReference<>();
+        final AtomicReference<Thread> replayThread = new AtomicReference<>();
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+        final AtomicReference<Integer> replayedValue = new AtomicReference<>();
+        final CompletableFuture<ResourcePackStorage> preparation =
+                JoinPackets.initializePreparedResourcePackStorage(creation, storage -> {
+                    initializerThread.set(Thread.currentThread());
+                    initializerStarted.countDown();
+                    return initialization;
+                });
+        final ExecutorService worker = Executors.newSingleThreadExecutor();
+        try {
+            worker.execute(() -> {
+                buildThread.set(Thread.currentThread());
+                workerStarted.countDown();
+                await(releaseCreation);
+                creation.complete(ResourcePackStorage.createUnshared(List.of()));
+                await(releaseInitialization);
+                initialization.complete(null);
+            });
+            assertTrue(workerStarted.await(5L, TimeUnit.SECONDS));
+
+            JoinPackets.resumeStartGameAfterResourcePackPreparation(
+                    user, payload, preparation,
+                    (liveUser, deferredPayload) -> {
+                        replayThread.set(Thread.currentThread());
+                        replayedValue.set(deferredPayload.readInt());
+                        replayed.countDown();
+                    }, (liveUser, error) -> failure.set(error));
+
+            assertFalse(preparation.isDone());
+            assertNull(user.get(ResourcePackStorage.class));
+            assertEquals(1, payload.refCnt());
+
+            releaseCreation.countDown();
+            assertTrue(initializerStarted.await(5L, TimeUnit.SECONDS));
+            channel.runPendingTasks();
+            assertTrue(creation.isDone());
+            assertFalse(preparation.isDone());
+            assertNull(user.get(ResourcePackStorage.class));
+            assertEquals(1L, replayed.getCount());
+
+            releaseInitialization.countDown();
+            final ResourcePackStorage storage = preparation.get(5L, TimeUnit.SECONDS);
+            runPendingTasksUntil(channel, replayed);
+
+            assertNull(failure.get());
+            assertSame(storage, user.get(ResourcePackStorage.class));
+            assertEquals(0x1234ABCD, replayedValue.get());
+            assertNotSame(buildThread.get(), replayThread.get());
+            assertSame(buildThread.get(), initializerThread.get());
+            assertTrue(channel.eventLoop().inEventLoop(replayThread.get()));
+            assertEquals(0, payload.refCnt());
+        } finally {
+            releaseCreation.countDown();
+            releaseInitialization.countDown();
+            worker.shutdownNow();
+            user.clearStoredObjects();
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void disconnectReleasesDeferredStartGameAndCancelsOnlyItsWaiter() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        final UserConnectionImpl user = new UserConnectionImpl(channel);
+        final ByteBuf payload = channel.alloc().buffer().writeByte(1);
+        final CompletableFuture<ResourcePackStorage> preparation = new CompletableFuture<>();
+        try {
+            JoinPackets.resumeStartGameAfterResourcePackPreparation(
+                    user, payload, preparation,
+                    (liveUser, deferredPayload) -> {
+                        throw new AssertionError("Disconnected START_GAME must not be replayed");
+                    }, (liveUser, error) -> {
+                        throw new AssertionError("Disconnected START_GAME must not report a build failure", error);
+                    });
+
+            channel.close();
+            channel.runPendingTasks();
+
+            assertTrue(preparation.isCancelled());
+            assertEquals(0, payload.refCnt());
+            assertNull(user.get(ResourcePackStorage.class));
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void runtimeInitializationFailurePreventsPublicationAndReplay() throws Exception {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        final UserConnectionImpl user = new UserConnectionImpl(channel);
+        final ByteBuf payload = channel.alloc().buffer().writeByte(1);
+        final ResourcePackStorage storage = ResourcePackStorage.createUnshared(List.of());
+        final CompletableFuture<Void> initialization = new CompletableFuture<>();
+        final CompletableFuture<ResourcePackStorage> preparation =
+                JoinPackets.initializePreparedResourcePackStorage(
+                        CompletableFuture.completedFuture(storage), ignored -> initialization);
+        final IllegalStateException expected = new IllegalStateException("runtime initialization failed");
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+        final CountDownLatch failureReported = new CountDownLatch(1);
+        try {
+            JoinPackets.resumeStartGameAfterResourcePackPreparation(
+                    user, payload, preparation,
+                    (liveUser, deferredPayload) -> {
+                        throw new AssertionError("Uninitialized START_GAME must not be replayed");
+                    }, (liveUser, error) -> {
+                        failure.set(error);
+                        failureReported.countDown();
+                    });
+
+            initialization.completeExceptionally(new java.util.concurrent.CompletionException(expected));
+            runPendingTasksUntil(channel, failureReported);
+
+            assertSame(expected, failure.get());
+            assertTrue(preparation.isCompletedExceptionally());
+            assertNull(user.get(ResourcePackStorage.class));
+            assertEquals(0, payload.refCnt());
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    private static void runPendingTasksUntil(final EmbeddedChannel channel,
+                                             final CountDownLatch completion) throws Exception {
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5L);
+        while (completion.getCount() != 0L && System.nanoTime() < deadline) {
+            channel.runPendingTasks();
+            Thread.onSpinWait();
+        }
+        assertTrue(completion.await(0L, TimeUnit.SECONDS));
+    }
+
+    private static void await(final CountDownLatch latch) {
+        try {
+            if (!latch.await(5L, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Timed out waiting for test latch");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while waiting for test latch", e);
+        }
     }
 
 }

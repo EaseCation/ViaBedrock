@@ -55,18 +55,27 @@ public class LivingEntity extends Entity {
     public void tick() {
         super.tick();
 
-        final Set<String> effectsToRemove = new HashSet<>();
+        Set<String> effectsToRemove = null;
         for (EntityEffect effect : this.effects.values()) {
             if (effect.duration().get() != -1 && effect.duration().decrementAndGet() <= 0) {
+                if (effectsToRemove == null) {
+                    effectsToRemove = new HashSet<>();
+                }
                 effectsToRemove.add(effect.identifier());
             }
         }
         // Bedrock client removes effects clientside, but Java Edition doesn't, so we need to send a remove packet for each effect
-        for (String identifier : effectsToRemove) {
-            final PacketWrapper removeMobEffect = PacketWrapper.create(ClientboundPackets26_1.REMOVE_MOB_EFFECT, this.user);
-            this.removeEffect(identifier, removeMobEffect);
-            removeMobEffect.send(BedrockProtocol.class);
+        if (effectsToRemove != null) {
+            for (String identifier : effectsToRemove) {
+                this.removeExpiredEffect(identifier);
+            }
         }
+    }
+
+    protected void removeExpiredEffect(final String identifier) {
+        final PacketWrapper removeMobEffect = PacketWrapper.create(ClientboundPackets26_1.REMOVE_MOB_EFFECT, this.user);
+        this.removeEffect(identifier, removeMobEffect);
+        removeMobEffect.send(BedrockProtocol.class);
     }
 
     public final void sendAttribute(final String name) {

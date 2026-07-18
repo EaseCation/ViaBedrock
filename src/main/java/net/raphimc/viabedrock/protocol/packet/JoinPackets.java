@@ -36,6 +36,9 @@ import com.viaversion.viaversion.protocols.base.ClientboundLoginPackets;
 import com.viaversion.viaversion.protocols.base.v1_7.ClientboundBaseProtocol1_7;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import com.viaversion.viaversion.protocols.v1_21_7to1_21_9.packet.ClientboundConfigurationPackets1_21_9;
+import io.netty.buffer.ByteBuf;
+import io.netty.channel.Channel;
+import io.netty.util.ReferenceCountUtil;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.modinterface.ECClientLightInterface;
 import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
@@ -45,6 +48,7 @@ import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.api.util.StringUtil;
 import net.raphimc.viabedrock.api.util.TextUtil;
 import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
+import net.raphimc.viabedrock.experimental.resourcepack.ResourcePackModule;
 import net.raphimc.viabedrock.platform.ViaBedrockConfig;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
@@ -67,6 +71,14 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiConsumer;
+import java.util.function.Function;
 import java.util.logging.Level;
 
 public class JoinPackets {
@@ -217,14 +229,42 @@ public class JoinPackets {
         protocol.registerClientboundTransition(ClientboundBedrockPackets.START_GAME,
                 State.CONFIGURATION, (PacketHandler) wrapper -> {
                     wrapper.cancel();
-                    final GameSessionStorage gameSession = wrapper.user().get(GameSessionStorage.class);
-                    ResourcePackStorage resourcePackStorage = wrapper.user().get(ResourcePackStorage.class);
+                    final UserConnection user = wrapper.user();
+                    final ResourcePackStorage resourcePackStorage = user.get(ResourcePackStorage.class);
                     if (resourcePackStorage == null) {
                         ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Skipping resource pack negotiation");
-                        wrapper.user().remove(ResourcePackLoadStateTracker.class);
-                        resourcePackStorage = new ResourcePackStorage(Collections.emptyList());
-                        wrapper.user().put(resourcePackStorage);
+                        user.remove(ResourcePackLoadStateTracker.class);
+                        final ByteBuf payload = copyDeferredStartGamePayload(wrapper);
+                        final CompletableFuture<ResourcePackStorage> preparation;
+                        try {
+                            final int buildTimeoutSeconds =
+                                    ViaBedrock.getConfig().getResourcePackCacheBuildTimeoutSeconds();
+                            final CompletableFuture<ResourcePackStorage> initialized =
+                                    initializePreparedResourcePackStorage(
+                                            ResourcePackStorage.createAsync(List.of(), List.of()),
+                                            ResourcePackModule::ensureRuntimeData);
+                            preparation = ResourcePackPackets.detachedTimeout(
+                                    initialized, buildTimeoutSeconds,
+                                    TimeUnit.SECONDS, () -> {
+                                    }, JoinPackets::cleanupDeferredStorage,
+                                    user.getChannel().eventLoop());
+                        } catch (Throwable error) {
+                            ReferenceCountUtil.safeRelease(payload);
+                            BedrockProtocol.kickForIllegalState(
+                                    user, "Failed to prepare resource packs before START_GAME", error);
+                            return;
+                        }
+                        resumeStartGameAfterResourcePackPreparation(
+                                user, payload, preparation,
+                                (liveUser, deferredPayload) -> PacketWrapper.create(
+                                        ClientboundBedrockPackets.START_GAME,
+                                        deferredPayload.duplicate(), liveUser)
+                                        .send(BedrockProtocol.class, false),
+                                (liveUser, error) -> BedrockProtocol.kickForIllegalState(
+                                        liveUser, "Failed to prepare resource packs before START_GAME", error));
+                        return;
                     }
+                    final GameSessionStorage gameSession = user.get(GameSessionStorage.class);
 
                     final long entityUniqueId = wrapper.read(BedrockTypes.VAR_LONG); // entity unique id
                     final long entityRuntimeId = wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // entity runtime id
@@ -473,6 +513,164 @@ public class JoinPackets {
                     }
                 }
         );
+    }
+
+    private static ByteBuf copyDeferredStartGamePayload(final PacketWrapper wrapper) {
+        final Channel channel = wrapper.user().getChannel();
+        if (channel == null) {
+            throw new IllegalStateException("Cannot defer START_GAME without an active channel");
+        }
+
+        final ByteBuf framedPacket = channel.alloc().buffer();
+        try {
+            wrapper.writeToBuffer(framedPacket);
+            Types.VAR_INT.readPrimitive(framedPacket); // Replay restores the Bedrock packet id.
+            return framedPacket.readRetainedSlice(framedPacket.readableBytes());
+        } finally {
+            framedPacket.release();
+        }
+    }
+
+    static CompletableFuture<ResourcePackStorage> initializePreparedResourcePackStorage(
+            final CompletionStage<ResourcePackStorage> creation,
+            final Function<ResourcePackStorage, ? extends CompletionStage<Void>> initializer) {
+        Objects.requireNonNull(creation, "creation");
+        Objects.requireNonNull(initializer, "initializer");
+        final CompletableFuture<ResourcePackStorage> ready = new CompletableFuture<>();
+        creation.whenComplete((storage, creationError) -> {
+            if (creationError != null) {
+                ready.completeExceptionally(unwrapCompletion(creationError));
+                return;
+            }
+            if (storage == null) {
+                ready.completeExceptionally(
+                        new IllegalStateException("Resource pack creation returned no storage"));
+                return;
+            }
+            if (ready.isDone()) {
+                cleanupDeferredStorage(storage);
+                return;
+            }
+
+            final CompletionStage<Void> initialization;
+            try {
+                initialization = Objects.requireNonNull(
+                        initializer.apply(storage), "resource pack initializer returned null");
+            } catch (Throwable error) {
+                cleanupDeferredStorage(storage);
+                ready.completeExceptionally(error);
+                return;
+            }
+            initialization.whenComplete((ignored, initializationError) -> {
+                if (initializationError != null) {
+                    cleanupDeferredStorage(storage);
+                    ready.completeExceptionally(unwrapCompletion(initializationError));
+                } else if (!ready.complete(storage)) {
+                    cleanupDeferredStorage(storage);
+                }
+            });
+        });
+        return ready;
+    }
+
+    static void resumeStartGameAfterResourcePackPreparation(
+            final UserConnection user, final ByteBuf payload,
+            final CompletableFuture<ResourcePackStorage> preparation,
+            final DeferredStartGameReplayer replayer,
+            final BiConsumer<UserConnection, Throwable> failureHandler) {
+        Objects.requireNonNull(user, "user");
+        Objects.requireNonNull(payload, "payload");
+        Objects.requireNonNull(preparation, "preparation");
+        Objects.requireNonNull(replayer, "replayer");
+        Objects.requireNonNull(failureHandler, "failureHandler");
+
+        final Channel channel = user.getChannel();
+        if (channel == null) {
+            ReferenceCountUtil.safeRelease(payload);
+            preparation.cancel(false);
+            return;
+        }
+
+        final AtomicReference<ByteBuf> pendingPayload = new AtomicReference<>(payload);
+        channel.closeFuture().addListener(ignored -> {
+            ReferenceCountUtil.safeRelease(pendingPayload.getAndSet(null));
+            preparation.cancel(false);
+        });
+        preparation.whenComplete((storage, buildError) -> {
+            final ByteBuf ownedPayload = pendingPayload.getAndSet(null);
+            if (ownedPayload == null) {
+                cleanupDeferredStorage(storage);
+                return;
+            }
+
+            if (buildError != null || storage == null) {
+                ReferenceCountUtil.safeRelease(ownedPayload);
+                final Throwable failure = buildError != null ? unwrapCompletion(buildError)
+                        : new IllegalStateException("Resource pack preparation returned no storage");
+                if (!executeDeferredStartGame(channel, () -> {
+                    if (channel.isActive()) failureHandler.accept(user, failure);
+                })) {
+                    channel.close();
+                }
+                return;
+            }
+
+            if (!executeDeferredStartGame(channel, () -> {
+                boolean storageAccountedFor = false;
+                try {
+                    if (!channel.isActive()) {
+                        cleanupDeferredStorage(storage);
+                        storageAccountedFor = true;
+                        return;
+                    }
+
+                    final ResourcePackStorage existing = user.get(ResourcePackStorage.class);
+                    if (existing == null) {
+                        user.put(storage);
+                    } else if (existing != storage) {
+                        cleanupDeferredStorage(storage);
+                    }
+                    storageAccountedFor = true;
+                    replayer.replay(user, ownedPayload);
+                } catch (Throwable error) {
+                    if (!storageAccountedFor) cleanupDeferredStorage(storage);
+                    if (channel.isActive()) failureHandler.accept(user, error);
+                } finally {
+                    ReferenceCountUtil.safeRelease(ownedPayload);
+                }
+            })) {
+                ReferenceCountUtil.safeRelease(ownedPayload);
+                cleanupDeferredStorage(storage);
+                channel.close();
+            }
+        });
+    }
+
+    private static boolean executeDeferredStartGame(final Channel channel, final Runnable task) {
+        try {
+            channel.eventLoop().execute(task);
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static void cleanupDeferredStorage(final ResourcePackStorage storage) {
+        if (storage != null) storage.onRemove();
+    }
+
+    private static Throwable unwrapCompletion(final Throwable error) {
+        Throwable current = error;
+        while (current instanceof CompletionException && current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current;
+    }
+
+    @FunctionalInterface
+    interface DeferredStartGameReplayer {
+
+        void replay(UserConnection user, ByteBuf payload) throws Exception;
     }
 
     public record PendingStartGame(

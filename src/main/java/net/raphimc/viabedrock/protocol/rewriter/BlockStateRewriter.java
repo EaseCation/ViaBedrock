@@ -27,6 +27,7 @@ import com.viaversion.viaversion.libs.fastutil.objects.Object2ObjectMap;
 import com.viaversion.viaversion.libs.fastutil.objects.Object2ObjectOpenHashMap;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.chunk.blockstate.BlockStateSanitizer;
+import net.raphimc.viabedrock.api.chunk.blockstate.BlockStateUpgrader;
 import net.raphimc.viabedrock.api.model.BedrockBlockState;
 import net.raphimc.viabedrock.api.model.BlockState;
 import net.raphimc.viabedrock.api.util.HashedPaletteComparator;
@@ -47,11 +48,13 @@ public class BlockStateRewriter implements StorableObject {
     private final BiMap<BlockState, Integer> blockStateMappings = HashBiMap.create(); // Bedrock -> Bedrock
     private final Object2ObjectMap<String, IntSortedSet> validBlockStates = new Object2ObjectOpenHashMap<>(); // Bedrock -> Bedrock
     private final Int2ObjectMap<String> blockStateTags = new Int2ObjectOpenHashMap<>(); // Bedrock
+    private final BlockStateUpgrader blockStateUpgrader;
     private final BlockStateSanitizer blockStateSanitizer;
 
     public BlockStateRewriter(final UserConnection user, final BlockProperties[] blockProperties, final boolean hashedRuntimeBlockIds) {
         this.blockStateIdMappings.defaultReturnValue(-1);
         this.legacyBlockStateIdMappings.defaultReturnValue(-1);
+        this.blockStateUpgrader = BedrockProtocol.MAPPINGS.getBedrockBlockStateUpgrader();
 
         final List<BedrockBlockState> bedrockBlockStates = new ArrayList<>(BedrockProtocol.MAPPINGS.getBedrockBlockStates());
         final Map<BlockState, Integer> javaBlockStates = BedrockProtocol.MAPPINGS.getJavaBlockStates();
@@ -174,15 +177,33 @@ public class BlockStateRewriter implements StorableObject {
         this.blockStateSanitizer = new BlockStateSanitizer(bedrockBlockStates);
     }
 
-    public int bedrockId(final CompoundTag bedrockBlockStateTag) {
-        final CompoundTag bedrockBlockStateTagClone = bedrockBlockStateTag.copy();
-        try {
-            BedrockProtocol.MAPPINGS.getBedrockBlockStateUpgrader().upgradeToLatest(bedrockBlockStateTagClone);
-            this.blockStateSanitizer.sanitize(bedrockBlockStateTagClone);
+    BlockStateRewriter(final BlockStateUpgrader blockStateUpgrader, final Map<BedrockBlockState, Integer> blockStateMappings) {
+        this.blockStateIdMappings.defaultReturnValue(-1);
+        this.legacyBlockStateIdMappings.defaultReturnValue(-1);
+        this.blockStateUpgrader = Objects.requireNonNull(blockStateUpgrader, "blockStateUpgrader");
+        this.blockStateMappings.putAll(blockStateMappings);
+        this.blockStateSanitizer = new BlockStateSanitizer(List.copyOf(blockStateMappings.keySet()));
+    }
 
-            return this.bedrockId(BedrockBlockState.fromNbt(bedrockBlockStateTagClone));
+    public int bedrockId(final CompoundTag bedrockBlockStateTag) {
+        return this.bedrockId(bedrockBlockStateTag.copy(), bedrockBlockStateTag);
+    }
+
+    /**
+     * Resolves an exclusively owned block state tag and may mutate it while upgrading and sanitizing it.
+     */
+    public int bedrockIdOwned(final CompoundTag bedrockBlockStateTag) {
+        return this.bedrockId(bedrockBlockStateTag, bedrockBlockStateTag);
+    }
+
+    private int bedrockId(final CompoundTag mutableBlockStateTag, final CompoundTag diagnosticBlockStateTag) {
+        try {
+            this.blockStateUpgrader.upgradeToLatest(mutableBlockStateTag);
+            this.blockStateSanitizer.sanitize(mutableBlockStateTag);
+
+            return this.bedrockId(BedrockBlockState.fromNbt(mutableBlockStateTag));
         } catch (Throwable e) {
-            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error while rewriting block state tag: " + bedrockBlockStateTag, e);
+            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error while rewriting block state tag: " + diagnosticBlockStateTag, e);
             return this.bedrockId(BedrockBlockState.AIR);
         }
     }

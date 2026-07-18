@@ -123,15 +123,28 @@ public class Entity {
             this.entityData.put(dataId, data);
             validData.add(Map.entry(dataId, data));
         }
-        // Second pass: translate all validated entity data
+        this.translateEntityDataBatch(validData, javaEntityData);
+        this.onEntityDataChanged();
+        ExperimentalFeatures.dispatchEntityDataChanged(this.user, this, entityData);
+    }
+
+    final void translateEntityDataBatch(final List<Map.Entry<ActorDataIDs, EntityData>> validData,
+                                        final List<EntityData> javaEntityData) {
+        // Both words describe one logical flag set. The validation pass already stored the complete
+        // batch, so translating either word once observes the final low/high values.
+        boolean actorFlagsTranslated = false;
         for (Map.Entry<ActorDataIDs, EntityData> entry : validData) {
+            if (entry.getKey() == ActorDataIDs.RESERVED_0 || entry.getKey() == ActorDataIDs.RESERVED_092) {
+                if (actorFlagsTranslated) {
+                    continue;
+                }
+                actorFlagsTranslated = true;
+            }
             if (!this.translateEntityData(entry.getKey(), entry.getValue(), javaEntityData)) {
                 // TODO: Log warning when entity data translation is fully implemented
                 // ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received unknown entity data: " + entry.getKey() + " for entity type: " + this.type);
             }
         }
-        this.onEntityDataChanged();
-        ExperimentalFeatures.dispatchEntityDataChanged(this.user, this, entityData);
     }
 
     public void playSound(final SharedTypes_Legacy_LevelSoundEvent soundEvent) {
@@ -208,12 +221,21 @@ public class Entity {
     }
 
     public Set<ActorFlags> entityFlags() {
-        final long flags = this.entityData.containsKey(ActorDataIDs.RESERVED_0)
-                ? this.entityData.get(ActorDataIDs.RESERVED_0).<Long>value() : 0L;
-        final long flags2 = this.entityData.containsKey(ActorDataIDs.RESERVED_092)
-                ? this.entityData.get(ActorDataIDs.RESERVED_092).<Long>value() : 0L;
-        final BigInteger combinedFlags = combineEntityFlags(flags, flags2);
-        return EnumUtil.getEnumSetFromBitmask(ActorFlags.class, combinedFlags, ActorFlags::getValue);
+        final EntityData flagsData = this.entityData.get(ActorDataIDs.RESERVED_0);
+        final EntityData flags2Data = this.entityData.get(ActorDataIDs.RESERVED_092);
+        final long flags = flagsData != null ? flagsData.<Long>value() : 0L;
+        final long flags2 = flags2Data != null ? flags2Data.<Long>value() : 0L;
+        return EnumUtil.getEnumSetFromBitmask(ActorFlags.class, flags, flags2, ActorFlags::getValue);
+    }
+
+    public final boolean hasEntityFlag(final ActorFlags flag) {
+        if (flag == null || flag.getValue() < 0 || flag.getValue() >= Long.SIZE * 2) {
+            return false;
+        }
+
+        final int bit = flag.getValue();
+        final EntityData flagsData = this.entityData.get(bit < Long.SIZE ? ActorDataIDs.RESERVED_0 : ActorDataIDs.RESERVED_092);
+        return flagsData != null && (flagsData.<Long>value() & (1L << (bit & (Long.SIZE - 1)))) != 0;
     }
 
     static BigInteger combineEntityFlags(final long flags, final long flags2) {

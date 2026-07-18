@@ -25,6 +25,7 @@ import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 import net.raphimc.viabedrock.api.resourcepack.content.Content;
 import net.raphimc.viabedrock.api.resourcepack.definition.AttachableDefinitions;
 import net.raphimc.viabedrock.api.util.StringUtil;
+import net.raphimc.viabedrock.protocol.rewriter.ResourcePackRewriter;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 import org.cube.converter.converter.enums.RotationType;
 import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
@@ -60,7 +61,8 @@ public class CustomAttachableResourceRewriter extends ItemModelResourceRewriter 
                 }
             }
             for (Map.Entry<String, String> modelEntry : attachableDefinition.attachableData().getGeometries().entrySet()) {
-                final BedrockGeometryModel bedrockGeometry = resourcePackStorage.getModels().entityModels().get(modelEntry.getValue());
+                final BedrockGeometryModel bedrockGeometry = resourcePackStorage.getModels()
+                        .getEntityModel(modelEntry.getValue());
                 if (bedrockGeometry == null) {
                     continue;
                 }
@@ -95,7 +97,6 @@ public class CustomAttachableResourceRewriter extends ItemModelResourceRewriter 
 
                 final String modelKey = modelEntry.getKey();
                 javaModelDefinitions.put(modelKey, itemModel);
-                resourcePackStorage.getConverterData().put("ca_" + attachableEntry.getKey() + '_' + modelKey, true);
             }
             this.putItemDefinition(javaContent, attachableEntry.getKey(), javaModelDefinitions, resourcePackStorage.isSupportsFreeRotation());
         }
@@ -109,11 +110,17 @@ public class CustomAttachableResourceRewriter extends ItemModelResourceRewriter 
                 if (!attachableDefinition.attachableData().getTextures().containsKey(modelEntry.getKey())) {
                     continue;
                 }
-                if (resourcePackStorage.getModels().entityModels().containsKey(modelEntry.getValue())) {
-                    resourcePackStorage.getConverterData().put("ca_" + attachableEntry.getKey() + '_' + modelEntry.getKey(), true);
+                if (resourcePackStorage.getModels().containsEntityModel(modelEntry.getValue())) {
+                    resourcePackStorage.putRuntimeData(
+                            "ca_" + attachableEntry.getKey() + '_' + modelEntry.getKey(), true);
                 }
             }
         }
+    }
+
+    @Override
+    public ResourcePackRewriter.RuntimeDataScope runtimeDataScope() {
+        return ResourcePackRewriter.RuntimeDataScope.SHARED;
     }
 
 }

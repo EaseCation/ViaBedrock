@@ -40,6 +40,22 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
     private int resourcePackPort;
     private String resourcePackUrl;
     private PackCacheMode packCacheMode;
+    private boolean sharedResourcePackCacheEnabled;
+    private boolean trustDeclaredPackAlias;
+    private int resourcePackCacheMemoryBudgetMiB;
+    private int resourcePackCacheMemoryHardLimitMiB;
+    private int resourcePackCacheCpuWorkers;
+    private int resourcePackCacheIoWorkers;
+    private int resourcePackCacheQueueCapacity;
+    private int resourcePackCacheIdleExpireMinutes;
+    private int resourcePackCacheBuildTimeoutSeconds;
+    private int resourcePackCacheDiskBudgetMiB;
+    private int resourcePackCacheDiskIdleDays;
+    private int resourcePackMaxArchiveMiB;
+    private int resourcePackMaxExpandedMiB;
+    private int resourcePackMaxEntryMiB;
+    private int resourcePackMaxEntries;
+    private int resourcePackMaxCompressionRatio;
     private boolean translateShowCoordinatesGameRule;
     private boolean disableServerBlacklist;
     private String language;
@@ -85,6 +101,23 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
         this.resourcePackPort = this.getInt("resource-pack-port", 0);
         this.resourcePackUrl = this.getString("resource-pack-url", "");
         this.packCacheMode = PackCacheMode.byName(this.getString("pack-cache", "disk"));
+        final ConfigSection resourcePackCache = this.getSection("resource-pack-cache");
+        this.sharedResourcePackCacheEnabled = getBoolean(resourcePackCache, "enabled", true);
+        this.trustDeclaredPackAlias = getBoolean(resourcePackCache, "trust-declared-pack-alias", false);
+        this.resourcePackCacheMemoryBudgetMiB = Math.max(0, getInt(resourcePackCache, "memory-budget-mib", 0));
+        this.resourcePackCacheMemoryHardLimitMiB = Math.max(0, getInt(resourcePackCache, "memory-hard-limit-mib", 0));
+        this.resourcePackCacheCpuWorkers = Math.max(0, getInt(resourcePackCache, "cpu-workers", 0));
+        this.resourcePackCacheIoWorkers = Math.max(1, getInt(resourcePackCache, "io-workers", 4));
+        this.resourcePackCacheQueueCapacity = Math.max(1, getInt(resourcePackCache, "queue-capacity", 64));
+        this.resourcePackCacheIdleExpireMinutes = Math.max(1, getInt(resourcePackCache, "idle-expire-minutes", 30));
+        this.resourcePackCacheBuildTimeoutSeconds = Math.max(1, getInt(resourcePackCache, "build-timeout-seconds", 120));
+        this.resourcePackCacheDiskBudgetMiB = Math.max(2, getInt(resourcePackCache, "disk-budget-mib", 20_480));
+        this.resourcePackCacheDiskIdleDays = Math.max(1, getInt(resourcePackCache, "disk-idle-days", 7));
+        this.resourcePackMaxArchiveMiB = Math.max(1, getInt(resourcePackCache, "max-archive-mib", 2_048));
+        this.resourcePackMaxExpandedMiB = Math.max(1, getInt(resourcePackCache, "max-expanded-mib", 4_096));
+        this.resourcePackMaxEntryMiB = Math.max(1, getInt(resourcePackCache, "max-entry-mib", 512));
+        this.resourcePackMaxEntries = Math.max(1, getInt(resourcePackCache, "max-entries", 100_000));
+        this.resourcePackMaxCompressionRatio = Math.max(1, getInt(resourcePackCache, "max-compression-ratio", 200));
         this.translateShowCoordinatesGameRule = this.getBoolean("translate-show-coordinates-game-rule", false);
         this.disableServerBlacklist = this.getBoolean("disable-server-blacklist", false);
         this.language = this.getString("language", "");
@@ -179,6 +212,86 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
     @Override
     public PackCacheMode getPackCacheMode() {
         return this.packCacheMode;
+    }
+
+    @Override
+    public boolean isSharedResourcePackCacheEnabled() {
+        return this.sharedResourcePackCacheEnabled;
+    }
+
+    @Override
+    public boolean shouldTrustDeclaredPackAlias() {
+        return this.trustDeclaredPackAlias;
+    }
+
+    @Override
+    public int getResourcePackCacheMemoryBudgetMiB() {
+        return this.resourcePackCacheMemoryBudgetMiB;
+    }
+
+    @Override
+    public int getResourcePackCacheMemoryHardLimitMiB() {
+        return this.resourcePackCacheMemoryHardLimitMiB;
+    }
+
+    @Override
+    public int getResourcePackCacheCpuWorkers() {
+        return this.resourcePackCacheCpuWorkers;
+    }
+
+    @Override
+    public int getResourcePackCacheIoWorkers() {
+        return this.resourcePackCacheIoWorkers;
+    }
+
+    @Override
+    public int getResourcePackCacheQueueCapacity() {
+        return this.resourcePackCacheQueueCapacity;
+    }
+
+    @Override
+    public int getResourcePackCacheIdleExpireMinutes() {
+        return this.resourcePackCacheIdleExpireMinutes;
+    }
+
+    @Override
+    public int getResourcePackCacheBuildTimeoutSeconds() {
+        return this.resourcePackCacheBuildTimeoutSeconds;
+    }
+
+    @Override
+    public int getResourcePackCacheDiskBudgetMiB() {
+        return this.resourcePackCacheDiskBudgetMiB;
+    }
+
+    @Override
+    public int getResourcePackCacheDiskIdleDays() {
+        return this.resourcePackCacheDiskIdleDays;
+    }
+
+    @Override
+    public int getResourcePackMaxArchiveMiB() {
+        return this.resourcePackMaxArchiveMiB;
+    }
+
+    @Override
+    public int getResourcePackMaxExpandedMiB() {
+        return this.resourcePackMaxExpandedMiB;
+    }
+
+    @Override
+    public int getResourcePackMaxEntryMiB() {
+        return this.resourcePackMaxEntryMiB;
+    }
+
+    @Override
+    public int getResourcePackMaxEntries() {
+        return this.resourcePackMaxEntries;
+    }
+
+    @Override
+    public int getResourcePackMaxCompressionRatio() {
+        return this.resourcePackMaxCompressionRatio;
     }
 
     @Override

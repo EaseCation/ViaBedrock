@@ -18,6 +18,37 @@ resource-pack-port: 0
 resource-pack-url: ""
 # Controls resource pack caching (Reduces network usage and loading time), Valid options: "disabled", "memory", "disk"
 pack-cache: "disk"
+
+# Process-wide content-addressed resource-pack cache. Set enabled to false to use the legacy per-connection path.
+# The mode is fixed at process startup; changing enabled requires a full ViaBedrock restart.
+resource-pack-cache:
+  enabled: true
+  # If true, a previously verified CDN pack may be reused only when backend address, UUID, raw version,
+  # announced size, content id, content-key fingerprint, and the full ordered RESOURCE_PACKS_INFO
+  # announcement are identical. Conflicting content always forces acquisition. UUID/version alone is never trusted.
+  trust-declared-pack-alias: false
+  # 0 = auto (min(3072 MiB, max(512 MiB, one quarter of max heap))).
+  memory-budget-mib: 0
+  # 0 = auto (min(one half of max heap, twice memory-budget-mib)).
+  memory-hard-limit-mib: 0
+  # 0 = auto (half the available processors, clamped to 2..4); configured values are clamped to 1..64.
+  cpu-workers: 0
+  # Clamped to 1..64.
+  io-workers: 4
+  # Per executor and for all pending resource-pack HTTP requests; clamped to 1..4096.
+  # A single HTTP token may consume at most min(8, queue-capacity) pending requests.
+  queue-capacity: 64
+  # Durations and size/count limits below must be positive; most non-positive values are normalized to 1.
+  idle-expire-minutes: 30
+  build-timeout-seconds: 120
+  # Total raw/canonical CAS plus Java artifact budget; minimum 2 MiB, divided evenly between both stores.
+  disk-budget-mib: 20480
+  disk-idle-days: 7
+  max-archive-mib: 2048
+  max-expanded-mib: 4096
+  max-entry-mib: 512
+  max-entries: 100000
+  max-compression-ratio: 200
 # If true, translates bedrock's showCoordinates game rule to java's reduced debug info flag
 translate-show-coordinates-game-rule: false
 # If true, disables the internal server blacklist. This will allow you to connect to any server, even if it's known to ban ViaBedrock clients

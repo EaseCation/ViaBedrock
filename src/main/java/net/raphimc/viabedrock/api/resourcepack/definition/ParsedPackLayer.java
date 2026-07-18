@@ -1,0 +1,163 @@
+/*
+ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
+ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ */
+package net.raphimc.viabedrock.api.resourcepack.definition;
+
+import net.easecation.bedrockmotion.pack.ServerAnimationLayer;
+import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
+import net.raphimc.viabedrock.api.resourcepack.content.SelectedSubpackContent;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Objects;
+
+/**
+ * Immutable definitions parsed from one resource pack. Layers can be cached by content digest and
+ * folded in bottom-to-top order without retaining the source pack contents.
+ */
+public record ParsedPackLayer(
+        ResourcePack.Key sourceKey,
+        String selectedSubpack,
+        TextDefinitions texts,
+        BlockDefinitions blocks,
+        ItemDefinitions items,
+        AttachableDefinitions attachables,
+        TextureDefinitions textures,
+        SoundDefinitions sounds,
+        ParticleDefinitions particles,
+        EntityDefinitions entities,
+        ModelDefinitions models,
+        FogDefinitions fogs,
+        BiomeDefinitions biomes,
+        RenderControllerDefinitions renderControllers,
+        ServerAnimationLayer serverAnimation
+) {
+
+    public ParsedPackLayer {
+        Objects.requireNonNull(sourceKey, "sourceKey");
+        selectedSubpack = Objects.requireNonNullElse(selectedSubpack, "");
+        Objects.requireNonNull(texts, "texts");
+        Objects.requireNonNull(blocks, "blocks");
+        Objects.requireNonNull(items, "items");
+        Objects.requireNonNull(attachables, "attachables");
+        Objects.requireNonNull(textures, "textures");
+        Objects.requireNonNull(sounds, "sounds");
+        Objects.requireNonNull(particles, "particles");
+        Objects.requireNonNull(entities, "entities");
+        Objects.requireNonNull(models, "models");
+        Objects.requireNonNull(fogs, "fogs");
+        Objects.requireNonNull(biomes, "biomes");
+        Objects.requireNonNull(renderControllers, "renderControllers");
+        Objects.requireNonNull(serverAnimation, "serverAnimation");
+    }
+
+    public static ParsedPackLayer parse(final ResourcePack pack) {
+        return parse(pack, "");
+    }
+
+    public static ParsedPackLayer parse(final ResourcePack pack, final String selectedSubpack) {
+        Objects.requireNonNull(pack, "pack");
+        final String subpack = Objects.requireNonNullElse(selectedSubpack, "");
+        final ResourcePack effectivePack = subpack.isEmpty() ? pack
+                : new ResourcePack(new SelectedSubpackContent(pack.content(), subpack));
+        if (!pack.key().equals(effectivePack.key())) {
+            throw new IllegalArgumentException("Selected subpack changed the resource pack manifest identity");
+        }
+        try {
+            return effectivePack.content().withReadSession(() -> {
+                final RenderControllerDefinitions renderControllers = RenderControllerDefinitions.fromPack(effectivePack);
+                return new ParsedPackLayer(
+                    effectivePack.key(),
+                    subpack,
+                    TextDefinitions.fromPack(effectivePack),
+                    BlockDefinitions.fromPack(effectivePack),
+                    ItemDefinitions.fromPack(effectivePack),
+                    AttachableDefinitions.fromPack(effectivePack),
+                    TextureDefinitions.fromPack(effectivePack),
+                    SoundDefinitions.fromPack(effectivePack),
+                    ParticleDefinitions.fromPack(effectivePack),
+                    EntityDefinitions.fromPack(effectivePack),
+                    ModelDefinitions.fromPack(effectivePack),
+                    FogDefinitions.fromPack(effectivePack),
+                    BiomeDefinitions.fromPack(effectivePack),
+                    renderControllers,
+                    ServerAnimationLayer.parseWithFrozenRenderControllers(new ServerAnimationLayer.ContentView() {
+                        @Override
+                        public List<String> getFilesDeep(final String path, final String extension) {
+                            return effectivePack.content().getFilesDeep(path, extension);
+                        }
+
+                        @Override
+                        public String getString(final String path) {
+                            return effectivePack.content().getString(path);
+                        }
+                    }, renderControllers.renderControllers())
+                );
+            });
+        } finally {
+            effectivePack.content().releaseTransientCaches();
+        }
+    }
+
+    /**
+     * Folds layers using Bedrock's pack precedence: later layers override earlier layers. Sound
+     * entity/block definitions merge at event granularity rather than replacing the whole entity.
+     */
+    public static FoldedDefinitions foldBottomToTop(final Collection<ParsedPackLayer> layersBottomToTop) {
+        return foldBottomToTop(layersBottomToTop, List.of());
+    }
+
+    /**
+     * Folds the normal stack and prepends model-only base layers, such as ViaBedrock's skin pack.
+     * Definitions other than models are intentionally ignored from the model base layers.
+     */
+    public static FoldedDefinitions foldBottomToTop(final Collection<ParsedPackLayer> layersBottomToTop,
+                                                     final Collection<ParsedPackLayer> modelBaseLayersBottomToTop) {
+        final List<ParsedPackLayer> layers = List.copyOf(layersBottomToTop);
+        final List<ModelDefinitions> modelLayers = new ArrayList<>();
+        for (ParsedPackLayer layer : modelBaseLayersBottomToTop) {
+            modelLayers.add(layer.models());
+        }
+        for (ParsedPackLayer layer : layers) {
+            modelLayers.add(layer.models());
+        }
+        return new FoldedDefinitions(
+                TextDefinitions.fold(layers.stream().map(ParsedPackLayer::texts).toList()),
+                BlockDefinitions.fold(layers.stream().map(ParsedPackLayer::blocks).toList()),
+                ItemDefinitions.fold(layers.stream().map(ParsedPackLayer::items).toList()),
+                AttachableDefinitions.fold(layers.stream().map(ParsedPackLayer::attachables).toList()),
+                TextureDefinitions.fold(layers.stream().map(ParsedPackLayer::textures).toList()),
+                SoundDefinitions.fold(layers.stream().map(ParsedPackLayer::sounds).toList()),
+                ParticleDefinitions.fold(layers.stream().map(ParsedPackLayer::particles).toList()),
+                EntityDefinitions.fold(layers.stream().map(ParsedPackLayer::entities).toList()),
+                ModelDefinitions.fold(modelLayers),
+                FogDefinitions.fold(layers.stream().map(ParsedPackLayer::fogs).toList()),
+                BiomeDefinitions.fold(layers.stream().map(ParsedPackLayer::biomes).toList()),
+                RenderControllerDefinitions.fold(layers.stream().map(ParsedPackLayer::renderControllers).toList())
+        );
+    }
+
+    public record FoldedDefinitions(
+            TextDefinitions texts,
+            BlockDefinitions blocks,
+            ItemDefinitions items,
+            AttachableDefinitions attachables,
+            TextureDefinitions textures,
+            SoundDefinitions sounds,
+            ParticleDefinitions particles,
+            EntityDefinitions entities,
+            ModelDefinitions models,
+            FogDefinitions fogs,
+            BiomeDefinitions biomes,
+            RenderControllerDefinitions renderControllers
+    ) {
+    }
+
+}

@@ -36,14 +36,12 @@ import java.util.logging.Level;
 
 public class FlowerPotBlockEntityRewriter implements BlockEntityRewriter.Rewriter {
 
-    private static final int DEFAULT_BLOCK_STATE = BedrockProtocol.MAPPINGS.getJavaBlockStates().get(new BlockState("flower_pot", Collections.emptyMap()));
-
     @Override
     public BlockEntity toJava(UserConnection user, BedrockBlockEntity bedrockBlockEntity) {
         final CompoundTag bedrockTag = bedrockBlockEntity.tag();
 
         final BlockEntity javaBlockEntity = new BlockEntityImpl(bedrockBlockEntity.packedXZ(), bedrockBlockEntity.y(), -1, null);
-        final BlockEntity defaultJavaBlockEntity = new BlockEntityWithBlockState(javaBlockEntity, DEFAULT_BLOCK_STATE);
+        final BlockEntity defaultJavaBlockEntity = new BlockEntityWithBlockState(javaBlockEntity, DefaultBlockStateHolder.VALUE);
 
         final BlockStateRewriter blockStateRewriter = user.get(BlockStateRewriter.class);
         final int bedrockBlockState;
@@ -59,7 +57,7 @@ public class FlowerPotBlockEntityRewriter implements BlockEntityRewriter.Rewrite
                 return defaultJavaBlockEntity;
             }
         } else if (bedrockTag.get("PlantBlock") instanceof CompoundTag plantBlockTag && !plantBlockTag.isEmpty()) {
-            bedrockBlockState = blockStateRewriter.bedrockId(plantBlockTag);
+            bedrockBlockState = resolvePlantBlockState(blockStateRewriter, plantBlockTag);
             if (bedrockBlockState == -1) {
                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing block state: " + plantBlockTag);
                 return defaultJavaBlockEntity;
@@ -81,6 +79,15 @@ public class FlowerPotBlockEntityRewriter implements BlockEntityRewriter.Rewrite
         }
 
         return new BlockEntityWithBlockState(javaBlockEntity, pottedJavaBlockState);
+    }
+
+    static int resolvePlantBlockState(final BlockStateRewriter blockStateRewriter, final CompoundTag plantBlockTag) {
+        return blockStateRewriter.bedrockId(plantBlockTag);
+    }
+
+    private static final class DefaultBlockStateHolder {
+
+        private static final int VALUE = BedrockProtocol.MAPPINGS.getJavaBlockStates().get(new BlockState("flower_pot", Collections.emptyMap()));
     }
 
 }

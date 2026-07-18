@@ -768,7 +768,7 @@ public class WorldEffectPackets {
     private static Holder<SoundEvent> tryResolveCustomSound(final UserConnection user, final String bedrockSoundName) {
         final ResourcePackStorage resourcePackStorage = user.get(ResourcePackStorage.class);
         if (resourcePackStorage == null || !resourcePackStorage.isLoadedOnJavaClient()) return null;
-        final Set<String> customSounds = (Set<String>) resourcePackStorage.getConverterData().get(CustomSoundResourceRewriter.CUSTOM_SOUNDS_KEY);
+        final Set<String> customSounds = (Set<String>) resourcePackStorage.getRuntimeData().get(CustomSoundResourceRewriter.CUSTOM_SOUNDS_KEY);
         if (customSounds == null || !customSounds.contains(bedrockSoundName)) return null;
         return Holder.of(new SoundEvent("bedrock:" + bedrockSoundName, null));
     }

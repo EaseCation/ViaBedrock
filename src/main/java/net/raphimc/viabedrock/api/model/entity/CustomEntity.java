@@ -208,14 +208,12 @@ public class CustomEntity extends Entity {
 
         // Find the first geometry model for this entity
         for (Map.Entry<String, String> entry : this.entityDefinition.entityData().getGeometries().entrySet()) {
-            final BedrockGeometryModel geometry = resourcePackStorage.getModels().entityModels().get(entry.getValue());
+            final BedrockGeometryModel geometry = resourcePackStorage.getModels().getEntityModel(entry.getValue());
             if (geometry == null) continue;
 
             final SimpleBoneModel boneModel = new SimpleBoneModel(geometry);
 
-            // Build a PackManager from bedrockmotion definitions
-            // The PackManager is stored in ResourcePackStorage's converterData during resource pack processing
-            final PackManager packManager = (PackManager) resourcePackStorage.getConverterData().get("bedrockmotion_pack_manager");
+            final PackManager packManager = resourcePackStorage.getBedrockMotionPackManager();
             if (packManager == null) {
                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING,
                         "BedrockMotion PackManager not found, server-side animation disabled");
@@ -255,12 +253,12 @@ public class CustomEntity extends Entity {
             final String baseKey = this.entityDefinition.identifier() + "_" + model.key();
 
             @SuppressWarnings("unchecked")
-            final List<String> boneNames = (List<String>) resourcePackStorage.getConverterData().get("ce_" + baseKey + "_bones");
+            final List<String> boneNames = (List<String>) resourcePackStorage.getRuntimeData().get("ce_" + baseKey + "_bones");
             if (boneNames == null || boneNames.isEmpty()) continue;
 
             for (String boneName : boneNames) {
                 final String boneKey = baseKey + "_" + boneName;
-                final Object scaleObj = resourcePackStorage.getConverterData().get("ce_" + boneKey + "_scale");
+                final Object scaleObj = resourcePackStorage.getRuntimeData().get("ce_" + boneKey + "_scale");
                 if (scaleObj == null) continue;
                 final float scale = (float) scaleObj;
 
