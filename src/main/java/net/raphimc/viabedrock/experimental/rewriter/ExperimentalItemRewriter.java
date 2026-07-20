@@ -167,8 +167,16 @@ public class ExperimentalItemRewriter {
     }
 
     public static boolean isSwordBlockingAnimationItem(final ItemRewriter itemRewriter, final BedrockItem item) {
-        return ViaBedrock.getConfig().shouldEnableSwordBlockingAnimation()
-                && VANILLA_SWORDS.contains(itemRewriter.bedrockIdentifier(item));
+        final boolean enabled = ViaBedrock.getConfig().shouldEnableSwordBlockingAnimation();
+        if (!enabled) {
+            return false;
+        }
+
+        return shouldApplySwordBlockingAnimation(enabled, itemRewriter.bedrockIdentifier(item));
+    }
+
+    static boolean shouldApplySwordBlockingAnimation(final boolean enabled, final String identifier) {
+        return enabled && identifier != null && VANILLA_SWORDS.contains(identifier);
     }
 
     private static void requestMapInfo(final UserConnection user, final long bedrockMapId) {
