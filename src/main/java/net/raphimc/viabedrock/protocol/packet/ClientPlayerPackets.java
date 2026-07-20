@@ -345,18 +345,14 @@ public class ClientPlayerPackets {
             wrapper.read(Types.VAR_INT); // entity id
             final PlayerCommandAction action = PlayerCommandAction.values()[wrapper.read(Types.VAR_INT)]; // action
             final int data = wrapper.read(Types.VAR_INT); // data
+            final PlayerAuthInputPacket_InputData inputData = playerCommandInputData(action);
 
-            switch (action) {
-                case START_SPRINTING -> {
-                    clientPlayer.setSprinting(true);
-                    clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StartSprinting);
-                }
-                case STOP_SPRINTING -> {
-                    clientPlayer.setSprinting(false);
-                    clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StopSprinting);
-                }
-                default -> throw new IllegalStateException("Unhandled PlayerCommandAction: " + action);
+            if (action == PlayerCommandAction.START_SPRINTING) {
+                clientPlayer.setSprinting(true);
+            } else if (action == PlayerCommandAction.STOP_SPRINTING) {
+                clientPlayer.setSprinting(false);
             }
+            clientPlayer.addAuthInputData(inputData);
         });
         protocol.registerServerbound(ServerboundPackets26_1.PLAYER_ACTION, null, wrapper -> {
             wrapper.cancel();
@@ -711,5 +707,14 @@ public class ClientPlayerPackets {
 
     static void removeImmobileMovementInput(final Set<PlayerAuthInputPacket_InputData> inputData) {
         inputData.removeAll(IMMOBILE_MOVEMENT_INPUTS);
+    }
+
+    static PlayerAuthInputPacket_InputData playerCommandInputData(final PlayerCommandAction action) {
+        return switch (action) {
+            case START_SPRINTING -> PlayerAuthInputPacket_InputData.StartSprinting;
+            case STOP_SPRINTING -> PlayerAuthInputPacket_InputData.StopSprinting;
+            case START_FALL_FLYING -> PlayerAuthInputPacket_InputData.StartGliding;
+            default -> throw new IllegalStateException("Unhandled PlayerCommandAction: " + action);
+        };
     }
 }
