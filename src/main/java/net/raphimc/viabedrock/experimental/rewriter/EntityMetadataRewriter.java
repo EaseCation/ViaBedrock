@@ -76,7 +76,7 @@ public class EntityMetadataRewriter {
                 }
 
                 upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SILENT), VersionedTypes.V26_1.entityDataTypes().booleanType, bedrockFlags.contains(ActorFlags.SILENT)));
-                upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.NO_GRAVITY), VersionedTypes.V26_1.entityDataTypes().booleanType, !bedrockFlags.contains(ActorFlags.HAS_GRAVITY)));
+                upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.NO_GRAVITY), VersionedTypes.V26_1.entityDataTypes().booleanType, noGravity(entity.javaType(), bedrockFlags)));
 
                 if (entity instanceof LivingEntity) {
                     upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.LIVING_ENTITY_FLAGS), VersionedTypes.V26_1.entityDataTypes().byteType, livingFlags(bedrockFlags)));
@@ -830,6 +830,11 @@ public class EntityMetadataRewriter {
         }
 
         return true;
+    }
+
+    static boolean noGravity(final EntityTypes1_21_11 type, final Set<ActorFlags> bedrockFlags) {
+        // Bedrock servers can omit HAS_GRAVITY for dropped items while still simulating item gravity.
+        return !type.is(EntityTypes1_21_11.ITEM) && !bedrockFlags.contains(ActorFlags.HAS_GRAVITY);
     }
 
     static byte livingFlags(final Set<ActorFlags> bedrockFlags) {
