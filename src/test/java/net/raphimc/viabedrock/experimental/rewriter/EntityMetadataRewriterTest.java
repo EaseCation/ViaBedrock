@@ -16,6 +16,8 @@ import org.junit.jupiter.api.Test;
 import java.util.EnumSet;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class EntityMetadataRewriterTest {
 
@@ -66,5 +68,19 @@ class EntityMetadataRewriterTest {
                 ActorFlags.SNEEZING, ActorFlags.ROLLING, ActorFlags.SITTING, ActorFlags.LAYING_DOWN)));
         assertEquals(0x1E, Byte.toUnsignedInt(EntityMetadataRewriter.sheepFlags(14, true)));
         assertEquals(0x03, Byte.toUnsignedInt(EntityMetadataRewriter.sheepFlags(3, false)));
+    }
+
+    @Test
+    void keepsJavaGravityEnabledForDroppedItemsWithoutBedrockGravityFlag() {
+        assertFalse(EntityMetadataRewriter.noGravity(
+                EntityTypes1_21_11.ITEM, EnumSet.noneOf(ActorFlags.class)));
+    }
+
+    @Test
+    void preservesBedrockGravitySemanticsForOtherEntities() {
+        assertTrue(EntityMetadataRewriter.noGravity(
+                EntityTypes1_21_11.ARMOR_STAND, EnumSet.noneOf(ActorFlags.class)));
+        assertFalse(EntityMetadataRewriter.noGravity(
+                EntityTypes1_21_11.ARMOR_STAND, EnumSet.of(ActorFlags.HAS_GRAVITY)));
     }
 }
