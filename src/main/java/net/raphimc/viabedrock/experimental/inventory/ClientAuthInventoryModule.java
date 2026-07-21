@@ -169,6 +169,11 @@ public class ClientAuthInventoryModule implements FeatureModule {
             if (actions.isEmpty()) {
                 return; // No-op, no packet needed
             }
+            if (!BedrockItemLockPolicy.allows(actions)) {
+                dragState.reset();
+                resyncAfterRejectedClick(wrapper.user(), inventoryTracker, containerId, container);
+                return;
+            }
 
             sendNormalTransaction(wrapper.user(), actions);
 
@@ -210,11 +215,24 @@ public class ClientAuthInventoryModule implements FeatureModule {
         if (actions.isEmpty()) {
             return true;
         }
+        if (!BedrockItemLockPolicy.allows(actions)) {
+            PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
+            return true;
+        }
 
         sendNormalTransaction(user, actions);
         applyMirrorUpdates(actions, tracker);
         PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
         return true;
+    }
+
+    private static void resyncAfterRejectedClick(final UserConnection user, final InventoryTracker tracker,
+                                                 final int containerId, final Container container) {
+        if (containerId != ContainerID.CONTAINER_ID_INVENTORY.getValue()) {
+            PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
+        }
+        PacketFactory.sendJavaContainerSetContent(user, container);
+        sendJavaCursor(user, tracker);
     }
 
     private static void sendNormalTransaction(final UserConnection user, final List<InventoryActionData> actions) {

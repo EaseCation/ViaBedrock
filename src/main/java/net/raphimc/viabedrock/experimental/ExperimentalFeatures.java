@@ -47,8 +47,9 @@ import net.raphimc.viabedrock.experimental.model.PlayerAuthInputContext;
 import net.raphimc.viabedrock.experimental.block.CustomBlockMappingModule;
 import net.raphimc.viabedrock.experimental.blockbreak.BlockBreakingProgressModule;
 import net.raphimc.viabedrock.experimental.camera.CameraModule;
-import net.raphimc.viabedrock.experimental.inventory.CraftingDataModule;
+import net.raphimc.viabedrock.experimental.inventory.BedrockItemLockPolicy;
 import net.raphimc.viabedrock.experimental.inventory.ClientAuthInventoryModule;
+import net.raphimc.viabedrock.experimental.inventory.CraftingDataModule;
 import net.raphimc.viabedrock.experimental.inventory.ItemUseHandContext;
 import net.raphimc.viabedrock.experimental.pyrpc.PyRpcDispatcherModule;
 import net.raphimc.viabedrock.experimental.dimension.AlternateDimensionModule;
@@ -825,6 +826,10 @@ public class ExperimentalFeatures {
 
                 wrapper.cancel();
                 if (currentItem.isEmpty()) {
+                    return;
+                }
+                if (!BedrockItemLockPolicy.canDrop(currentItem)) {
+                    PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getInventoryContainer());
                     return;
                 }
 
