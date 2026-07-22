@@ -81,7 +81,7 @@ public class ClientAuthInventoryModule implements FeatureModule {
         // is forwarded to the server.
         ProtocolUtil.appendServerbound(protocol, ServerboundPackets26_1.CONTAINER_CLOSE, wrapper -> {
             final InventoryTracker tracker = wrapper.user().get(InventoryTracker.class);
-            final Container pending = tracker.getPendingCloseContainer();
+            final Container pending = tracker.completePendingCloseWithoutConfirmation();
             // The server (Nukkit) returns the crafting grid items to the inventory on close
             // (resetCraftingGridType -> inventory.addItem) and echoes the inventory, but it does NOT echo the
             // UI grid being emptied. Clear the 2x2/3x3 crafting grid + output mirror here so stale 3x3 items
@@ -92,9 +92,6 @@ public class ClientAuthInventoryModule implements FeatureModule {
                     hud.setItemSilent(slot, BedrockItem.empty());
                 }
                 hud.setItemSilent(50, BedrockItem.empty());
-            }
-            if (pending != null) {
-                tracker.setCurrentContainerClosed(false);
             }
         });
     }

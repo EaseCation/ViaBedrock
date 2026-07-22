@@ -22,31 +22,13 @@ import com.viaversion.nbt.tag.IntTag;
 import com.viaversion.nbt.tag.StringTag;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.minecraft.BlockPosition;
-import com.viaversion.viaversion.api.minecraft.Holder;
 import com.viaversion.viaversion.api.minecraft.item.Item;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.protocol.remapper.PacketHandlers;
-import com.viaversion.viaversion.api.protocol.version.ProtocolVersion;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
 import com.viaversion.viaversion.libs.fastutil.ints.IntObjectPair;
-import com.viaversion.viaversion.libs.mcstructs.converter.impl.v1_21_5.NbtConverter_v1_21_5;
-import com.viaversion.viaversion.libs.mcstructs.core.Identifier;
-import com.viaversion.viaversion.libs.mcstructs.dialog.ActionButton;
-import com.viaversion.viaversion.libs.mcstructs.dialog.AfterAction;
-import com.viaversion.viaversion.libs.mcstructs.dialog.Dialog;
-import com.viaversion.viaversion.libs.mcstructs.dialog.Input;
-import com.viaversion.viaversion.libs.mcstructs.dialog.action.CustomAllAction;
-import com.viaversion.viaversion.libs.mcstructs.dialog.body.PlainMessageBody;
-import com.viaversion.viaversion.libs.mcstructs.dialog.impl.MultiActionDialog;
-import com.viaversion.viaversion.libs.mcstructs.dialog.impl.NoticeDialog;
-import com.viaversion.viaversion.libs.mcstructs.dialog.input.BooleanInput;
-import com.viaversion.viaversion.libs.mcstructs.dialog.input.NumberRangeInput;
-import com.viaversion.viaversion.libs.mcstructs.dialog.input.SingleOptionInput;
-import com.viaversion.viaversion.libs.mcstructs.dialog.input.TextInput;
-import com.viaversion.viaversion.libs.mcstructs.dialog.serializer.DialogSerializer;
 import com.viaversion.viaversion.libs.mcstructs.text.TextComponent;
-import com.viaversion.viaversion.libs.mcstructs.text.components.StringComponent;
 import com.viaversion.viaversion.libs.mcstructs.text.components.TranslationComponent;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ServerboundPackets26_1;
@@ -56,7 +38,6 @@ import net.lenni0451.mcstructs_bedrock.forms.serializer.FormSerializer;
 import net.lenni0451.mcstructs_bedrock.forms.types.ActionForm;
 import net.lenni0451.mcstructs_bedrock.forms.types.CustomForm;
 import net.lenni0451.mcstructs_bedrock.forms.types.ModalForm;
-import net.lenni0451.mcstructs_bedrock.text.utils.BedrockTextUtils;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.chunk.BedrockBlockEntity;
 import net.raphimc.viabedrock.api.model.container.*;
@@ -78,14 +59,9 @@ import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 import net.raphimc.viabedrock.protocol.storage.*;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
-import java.util.ArrayList;
 import java.util.logging.Level;
 
 public class InventoryPackets {
-
-    private static final int DIALOG_BUTTON_WIDTH = 200;
-    private static final int DIALOG_FAKE_BUTTON_WIDTH = 300;
-    private static final String DIALOG_FAKE_BUTTON_TEXT = "This is not actually a button, but has to be one because dialogs don't support adding text only elements. Clicking it has the same effect as closing the dialog.";
 
     public static void register(final BedrockProtocol protocol) {
         protocol.registerClientbound(ClientboundBedrockPackets.CONTAINER_OPEN, ClientboundPackets26_1.OPEN_SCREEN, wrapper -> {
@@ -193,9 +169,16 @@ public class InventoryPackets {
                 handler(wrapper -> {
                     final ContainerType containerType = ContainerType.getByValue(wrapper.read(Types.BYTE)); // type
                     final boolean serverInitiated = wrapper.read(Types.BOOLEAN); // server initiated
+                    final byte bedrockContainerId = (byte) (int) wrapper.get(Types.VAR_INT, 0);
 
                     final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
-                    final Container container = serverInitiated ? inventoryTracker.getCurrentContainer() : inventoryTracker.getPendingCloseContainer();
+                    final Container container;
+                    if (serverInitiated) {
+                        container = inventoryTracker.acceptServerClose(bedrockContainerId, containerType);
+                    } else {
+                        container = inventoryTracker.acceptClientCloseConfirmation(bedrockContainerId);
+                        wrapper.cancel(); // Java already closed the screen which initiated this acknowledgement.
+                    }
                     if (container == null) {
                         wrapper.cancel();
                         return;
@@ -203,22 +186,7 @@ public class InventoryPackets {
                     // Java window id must match what CONTAINER_OPEN sent (javaContainerId), not the raw Bedrock containerId.
                     wrapper.set(Types.VAR_INT, 0, (int) container.javaContainerId());
 
-                    if (serverInitiated && containerType != container.type()) {
-                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Server tried to close container, but container type was not correct");
-                        wrapper.cancel();
-                        return;
-                    }
-
-                    // Clear crafting grid and output slots when closing a crafting table
-                    if (container instanceof CraftingTableContainer) {
-                        final Container hudContainer = inventoryTracker.getHudContainer();
-                        for (int slot = 32; slot <= 40; slot++) {
-                            hudContainer.setItemSilent(slot, BedrockItem.empty());
-                        }
-                        hudContainer.setItemSilent(50, BedrockItem.empty());
-                    }
-
-                    inventoryTracker.setCurrentContainerClosed(serverInitiated);
+                    clearClosedCraftingTable(inventoryTracker, container);
                 });
             }
         });
@@ -309,12 +277,7 @@ public class InventoryPackets {
             final String data = wrapper.read(BedrockTypes.STRING); // data
 
             if (inventoryTracker.getCurrentContainer() != null || inventoryTracker.getCurrentForm() != null) {
-                final PacketWrapper modalFormResponse = PacketWrapper.create(ServerboundBedrockPackets.MODAL_FORM_RESPONSE, wrapper.user());
-                modalFormResponse.write(BedrockTypes.UNSIGNED_VAR_INT, id); // id
-                modalFormResponse.write(Types.BOOLEAN, false); // has response
-                modalFormResponse.write(Types.BOOLEAN, true); // has cancel reason
-                modalFormResponse.write(Types.BYTE, (byte) ModalFormCancelReason.UserBusy.getValue()); // cancel reason
-                modalFormResponse.sendToServer(BedrockProtocol.class);
+                sendModalFormCancel(wrapper.user(), id, ModalFormCancelReason.UserBusy);
                 wrapper.cancel();
                 return;
             }
@@ -322,114 +285,23 @@ public class InventoryPackets {
             final Form form;
             try {
                 form = FormSerializer.deserialize(data);
-            } catch (Throwable e) { // Bedrock client shows error modal form
-                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error while deserializing form data: " + data, e);
+            } catch (RuntimeException e) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error while deserializing modal form " + id, e);
+                sendModalFormCancel(wrapper.user(), id, ModalFormCancelReason.UserClosed);
                 wrapper.cancel();
                 return;
             }
             final ResourcePackStorage resourcePackStorage = wrapper.user().get(ResourcePackStorage.class);
             form.setTranslator(resourcePackStorage.getTexts()::translate);
-            inventoryTracker.setCurrentForm(IntObjectPair.of(id, form));
-
-            final Identifier responseIdentifier = Identifier.of("viabedrock", "form/" + id);
-            final CompoundTag exitButtonAdditions = new CompoundTag();
-            exitButtonAdditions.putBoolean("exit", true);
-            final ActionButton exitButton = new ActionButton(new TranslationComponent("gui.cancel"), DIALOG_BUTTON_WIDTH, new CustomAllAction(responseIdentifier, exitButtonAdditions));
-
-            final Dialog dialog;
-            if (form instanceof ModalForm modalForm) {
-                final MultiActionDialog actionDialog = new MultiActionDialog(TextUtil.stringToTextComponent(form.getTitle()), true, false, AfterAction.CLOSE, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), exitButton, 1);
-                addTextToDialog(wrapper.user(), actionDialog, modalForm.getText());
-                final CompoundTag button1Additions = new CompoundTag();
-                button1Additions.putInt("button_id", 0);
-                actionDialog.getActions().add(new ActionButton(TextUtil.stringToTextComponent(modalForm.getButton1()), DIALOG_BUTTON_WIDTH, new CustomAllAction(responseIdentifier, button1Additions)));
-                final CompoundTag button2Additions = new CompoundTag();
-                button2Additions.putInt("button_id", 1);
-                actionDialog.getActions().add(new ActionButton(TextUtil.stringToTextComponent(modalForm.getButton2()), DIALOG_BUTTON_WIDTH, new CustomAllAction(responseIdentifier, button2Additions)));
-                dialog = actionDialog;
-            } else if (form instanceof ActionForm actionForm) {
-                if (actionForm.getElements().length == 0) { // Text only form
-                    final NoticeDialog noticeDialog = new NoticeDialog(TextUtil.stringToTextComponent(form.getTitle()), true, false, AfterAction.CLOSE, new ArrayList<>(), new ArrayList<>(), exitButton);
-                    addTextToDialog(wrapper.user(), noticeDialog, actionForm.getText());
-                    dialog = noticeDialog;
-                } else {
-                    final MultiActionDialog actionDialog = new MultiActionDialog(TextUtil.stringToTextComponent(form.getTitle()), true, false, AfterAction.CLOSE, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), exitButton, 1);
-                    addTextToDialog(wrapper.user(), actionDialog, actionForm.getText());
-                    int buttonIndex = 0;
-                    for (int elementIndex = 0; elementIndex < actionForm.getElements().length; elementIndex++) {
-                        final FormElement element = actionForm.getElements()[elementIndex];
-                        if (element instanceof ButtonFormElement button) {
-                            final CompoundTag buttonAdditions = new CompoundTag();
-                            buttonAdditions.putInt("button_id", buttonIndex);
-                            actionDialog.getActions().add(new ActionButton(TextUtil.stringToTextComponent(button.getText()), DIALOG_BUTTON_WIDTH, new CustomAllAction(responseIdentifier, buttonAdditions)));
-                            buttonIndex++;
-                        } else if (element instanceof HeaderFormElement header) {
-                            actionDialog.getActions().add(new ActionButton(TextUtil.stringToTextComponent(header.getText()), new StringComponent(DIALOG_FAKE_BUTTON_TEXT), DIALOG_FAKE_BUTTON_WIDTH, exitButton.getAction()));
-                        } else if (element instanceof LabelFormElement label) {
-                            actionDialog.getActions().add(new ActionButton(TextUtil.stringToTextComponent(label.getText()), new StringComponent(DIALOG_FAKE_BUTTON_TEXT), DIALOG_FAKE_BUTTON_WIDTH, exitButton.getAction()));
-                        } else if (element instanceof DividerFormElement) {
-                        } else {
-                            throw new IllegalArgumentException("Unhandled form element type: " + element.getClass().getSimpleName());
-                        }
-                    }
-                    dialog = actionDialog;
-                }
-            } else if (form instanceof CustomForm customForm) {
-                final MultiActionDialog actionDialog = new MultiActionDialog(TextUtil.stringToTextComponent(form.getTitle()), false, false, AfterAction.CLOSE, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), 1);
-                for (int elementIndex = 0; elementIndex < customForm.getElements().length; elementIndex++) {
-                    final FormElement element = customForm.getElements()[elementIndex];
-                    final String inputKey = String.valueOf(elementIndex);
-                    if (element instanceof CheckboxFormElement checkbox) {
-                        final BooleanInput booleanInput = new BooleanInput(TextUtil.stringToTextComponent(checkbox.getText()));
-                        booleanInput.setInitial(checkbox.getDefaultValue());
-                        actionDialog.getInputs().add(new Input(inputKey, booleanInput));
-                    } else if (element instanceof DropdownFormElement dropdown) {
-                        final SingleOptionInput singleOptionInput = new SingleOptionInput(new ArrayList<>(dropdown.getOptions().length), TextUtil.stringToTextComponent(dropdown.getText()));
-                        for (int dropdownIndex = 0; dropdownIndex < dropdown.getOptions().length; dropdownIndex++) {
-                            final String option = dropdown.getOptions()[dropdownIndex];
-                            singleOptionInput.getOptions().add(new SingleOptionInput.Entry(String.valueOf(dropdownIndex), TextUtil.stringToTextComponent(option), dropdownIndex == dropdown.getDefaultOption()));
-                        }
-                        actionDialog.getInputs().add(new Input(inputKey, singleOptionInput));
-                    } else if (element instanceof SliderFormElement slider) {
-                        final NumberRangeInput numberRangeInput = new NumberRangeInput(TextUtil.stringToTextComponent(slider.getText()), new NumberRangeInput.Range(slider.getMin(), slider.getMax(), slider.getDefaultValue(), slider.getStep()));
-                        actionDialog.getInputs().add(new Input(inputKey, numberRangeInput));
-                    } else if (element instanceof StepSliderFormElement stepSlider) {
-                        final SingleOptionInput singleOptionInput = new SingleOptionInput(new ArrayList<>(stepSlider.getSteps().length), TextUtil.stringToTextComponent(stepSlider.getText()));
-                        for (int stepIndex = 0; stepIndex < stepSlider.getSteps().length; stepIndex++) {
-                            final String step = stepSlider.getSteps()[stepIndex];
-                            final String stepKey = String.valueOf(stepIndex);
-                            singleOptionInput.getOptions().add(new SingleOptionInput.Entry(stepKey, TextUtil.stringToTextComponent(step), stepIndex == stepSlider.getDefaultStep()));
-                        }
-                        actionDialog.getInputs().add(new Input(inputKey, singleOptionInput));
-                    } else if (element instanceof TextFieldFormElement textField) {
-                        final TextInput textInput = new TextInput(TextUtil.stringToTextComponent(textField.getText()));
-                        textInput.setMaxLength(100);
-                        textInput.setInitial(textField.getDefaultValue());
-                        actionDialog.getInputs().add(new Input(inputKey, textInput));
-                    } else if (element instanceof HeaderFormElement header) {
-                        addTextToDialog(wrapper.user(), actionDialog, header.getText());
-                    } else if (element instanceof LabelFormElement label) {
-                        addTextToDialog(wrapper.user(), actionDialog, label.getText());
-                    } else if (element instanceof DividerFormElement) {
-                        if (wrapper.user().getProtocolInfo().protocolVersion().newerThanOrEqualTo(ProtocolVersion.v1_21_6)) {
-                            final TextInput textInput = new TextInput(new StringComponent());
-                            textInput.setLabelVisible(false);
-                            textInput.setMaxLength(Integer.MAX_VALUE);
-                            textInput.setMultiline(new TextInput.MultilineOptions(null, 1));
-                            actionDialog.getInputs().add(new Input("dummy", textInput));
-                        }
-                    } else {
-                        throw new IllegalArgumentException("Unhandled form element type: " + element.getClass().getSimpleName());
-                    }
-                }
-                actionDialog.getActions().add(new ActionButton(new TranslationComponent("gui.done"), DIALOG_BUTTON_WIDTH, new CustomAllAction(responseIdentifier, null)));
-                actionDialog.getActions().add(new ActionButton(new TranslationComponent("gui.cancel"), DIALOG_BUTTON_WIDTH, new CustomAllAction(responseIdentifier, exitButtonAdditions)));
-                dialog = actionDialog;
-            } else {
-                throw new IllegalArgumentException("Unhandled form type: " + form.getClass().getSimpleName());
+            try {
+                wrapper.write(Types.TRUSTED_COMPOUND_TAG_HOLDER, BedrockFormDialogConverter.serialize(BedrockFormDialogConverter.convert(id, form, wrapper.user().getProtocolInfo().protocolVersion()))); // dialog data
+            } catch (RuntimeException e) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error while converting modal form " + id + " (" + form.getClass().getSimpleName() + ")", e);
+                sendModalFormCancel(wrapper.user(), id, ModalFormCancelReason.UserClosed);
+                wrapper.cancel();
+                return;
             }
-
-            wrapper.write(Types.TRUSTED_COMPOUND_TAG_HOLDER, Holder.of((CompoundTag) DialogSerializer.V1_21_6.getDirectCodec().serialize(NbtConverter_v1_21_5.INSTANCE, dialog).get())); // dialog data
+            inventoryTracker.setCurrentForm(IntObjectPair.of(id, form));
         });
         protocol.registerClientbound(ClientboundBedrockPackets.CLOSE_FORM, ClientboundPackets26_1.CLEAR_DIALOG, wrapper -> {
             final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
@@ -625,7 +497,9 @@ public class InventoryPackets {
                     if (container.javaContainerId() != container.containerId()) {
                         wrapper.set(Types.BYTE, 0, container.containerId());
                     }
-                    inventoryTracker.markPendingClose(container);
+                    if (!inventoryTracker.beginClientClose(container)) {
+                        wrapper.cancel();
+                    }
                 });
             }
         });
@@ -654,23 +528,24 @@ public class InventoryPackets {
         });
     }
 
-    private static void addTextToDialog(final UserConnection userConnection, final Dialog dialog, final String text) {
-        if (dialog.getInputs().isEmpty()) {
-            for (String line : BedrockTextUtils.split(text, "\n")) {
-                dialog.getBody().add(new PlainMessageBody(TextUtil.stringToTextComponent(line)));
-            }
-        } else {
-            if (userConnection.getProtocolInfo().protocolVersion().newerThanOrEqualTo(ProtocolVersion.v1_21_6)) {
-                for (String line : BedrockTextUtils.split(text, "\n")) {
-                    final TextInput textInput = new TextInput(TextUtil.stringToTextComponent(line));
-                    textInput.setMaxLength(Integer.MAX_VALUE);
-                    textInput.setMultiline(new TextInput.MultilineOptions(null, 1));
-                    dialog.getInputs().add(new Input("dummy", textInput));
-                }
-            } else { // VB compatibility
-                dialog.getInputs().add(new Input("dummy", new BooleanInput(TextUtil.stringToTextComponent(text))));
-            }
+    private static void sendModalFormCancel(final UserConnection user, final int formId, final ModalFormCancelReason reason) {
+        final PacketWrapper response = PacketWrapper.create(ServerboundBedrockPackets.MODAL_FORM_RESPONSE, user);
+        response.write(BedrockTypes.UNSIGNED_VAR_INT, formId); // id
+        response.write(Types.BOOLEAN, false); // has response
+        response.write(Types.BOOLEAN, true); // has cancel reason
+        response.write(Types.BYTE, (byte) reason.getValue()); // cancel reason
+        response.sendToServer(BedrockProtocol.class);
+    }
+
+    private static void clearClosedCraftingTable(final InventoryTracker inventoryTracker, final Container container) {
+        if (!(container instanceof CraftingTableContainer)) {
+            return;
         }
+        final Container hudContainer = inventoryTracker.getHudContainer();
+        for (int slot = 32; slot <= 40; slot++) {
+            hudContainer.setItemSilent(slot, BedrockItem.empty());
+        }
+        hudContainer.setItemSilent(50, BedrockItem.empty());
     }
 
 }

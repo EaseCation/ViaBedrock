@@ -195,9 +195,7 @@ public class WorldPackets {
             PacketFactory.sendBedrockLoadingScreen(wrapper.user(), ServerboundLoadingScreenPacketType.StartLoadingScreen, loadingScreenId);
             clientPlayer.setPosition(new Position3f(position.x(), position.y() + clientPlayer.eyeOffset(), position.z()));
             clientPlayer.setDimensionChangeInfo(new ClientPlayerEntity.DimensionChangeInfo(loadingScreenId));
-            if (inventoryTracker.isContainerOpen()) {
-                inventoryTracker.setCurrentContainerClosed(true);
-            }
+            inventoryTracker.closeForDimensionChange();
             if (inventoryTracker.getCurrentForm() != null) {
                 inventoryTracker.closeCurrentForm();
             }
