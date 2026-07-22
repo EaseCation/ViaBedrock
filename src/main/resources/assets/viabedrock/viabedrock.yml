@@ -16,6 +16,15 @@ resource-pack-host: 127.0.0.1
 resource-pack-port: 0
 # Resource pack URL which the clients will use to download the resource pack (empty = auto)
 resource-pack-url: ""
+# Resource pack delivery mode. "embedded" serves packs from this ViaProxy process;
+# "remote" uploads converted packs to the shared pack service.
+resource-pack-delivery:
+  mode: embedded
+  internal-url: ""
+  public-url: ""
+  shared-secret: ""
+  connect-timeout-millis: 2000
+  request-timeout-millis: 10000
 # Controls resource pack caching (Reduces network usage and loading time), Valid options: "disabled", "memory", "disk"
 pack-cache: "disk"
 

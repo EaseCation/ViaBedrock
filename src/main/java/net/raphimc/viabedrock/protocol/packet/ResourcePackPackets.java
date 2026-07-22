@@ -30,6 +30,7 @@ import io.netty.buffer.ByteBuf;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 import net.raphimc.viabedrock.api.resourcepack.cache.ArchiveDigest;
+import net.raphimc.viabedrock.api.resourcepack.http.RemotePackServiceClient;
 import net.raphimc.viabedrock.api.util.TextUtil;
 import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
@@ -43,6 +44,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PackType;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ResourcePackResponse;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.ResourcePackAction;
 import net.raphimc.viabedrock.protocol.model.Experiment;
+import net.raphimc.viabedrock.platform.ResourcePackDeliveryMode;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackDownloadTracker;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackLoadStateTracker;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
@@ -121,21 +123,19 @@ public class ResourcePackPackets {
                     wrapper.user().put(loadStateTracker);
 
                     if (ViaBedrock.getConfig().shouldTranslateResourcePacks() && wrapper.user().getProtocolInfo().protocolVersion().newerThanOrEqualTo(ProtocolVersion.v1_21_7)) {
-                        final UUID httpToken = UUID.randomUUID();
-                        loadStateTracker.setHttpToken(httpToken);
-                        ViaBedrock.getResourcePackServer().addConnection(
-                                httpToken, wrapper.user().getChannel().closeFuture());
-                        final String resourcePackUrl = ViaBedrock.getResourcePackServer().getUrl() + "?token=" + httpToken;
-
-                        wrapper.write(Types.UUID, httpToken); // id
-                        wrapper.write(Types.STRING, resourcePackUrl); // url
-                        wrapper.write(Types.STRING, ""); // hash is unknown until the exact stack has been verified
-                        wrapper.write(Types.BOOLEAN, false); // required
-                        wrapper.write(Types.OPTIONAL_TAG, TextUtil.stringToNbt(
-                                "\n§aIf you press 'Yes', the resource packs will be downloaded and converted to the Java Edition format. " +
-                                        "This may take a while, depending on your internet connection and the size of the packs. " +
-                                        "If you press 'No', you can join without loading the resource packs but you will have a worse gameplay experience.")
-                        ); // prompt
+                        if (ViaBedrock.getConfig().getResourcePackDeliveryMode()
+                                == ResourcePackDeliveryMode.REMOTE) {
+                            wrapper.cancel();
+                            announceRemotePack(wrapper.user(), loadStateTracker);
+                        } else {
+                            final UUID httpToken = UUID.randomUUID();
+                            loadStateTracker.setHttpToken(httpToken);
+                            ViaBedrock.getResourcePackServer().addConnection(
+                                    httpToken, wrapper.user().getChannel().closeFuture());
+                            final String resourcePackUrl = ViaBedrock.getResourcePackServer().getUrl()
+                                    + "?token=" + httpToken;
+                            writeJavaPackAnnouncement(wrapper, httpToken, resourcePackUrl, "");
+                        }
                     } else {
                         wrapper.cancel();
                         final PacketWrapper resourcePack = PacketWrapper.create(ServerboundConfigurationPackets1_21_9.RESOURCE_PACK, wrapper.user());
@@ -199,7 +199,17 @@ public class ResourcePackPackets {
                         });
                 final CompletableFuture<ResourcePackStorage> connectedBuild = detachedCancellation(
                         build, connectionClosed, ResourcePackPackets::cleanupStorage);
-                detachedTimeout(connectedBuild,
+                final CompletableFuture<ResourcePackStorage> deliveryReadyBuild;
+                if (ViaBedrock.getConfig().getResourcePackDeliveryMode() == ResourcePackDeliveryMode.REMOTE) {
+                    deliveryReadyBuild = awaitRemoteLookup(
+                            connectedBuild, loadStateTracker.remotePackLookupFuture());
+                    deliveryReadyBuild.whenComplete((ignored, error) -> {
+                        if (error != null) cleanupStorage(acquiredStorage.getAndSet(null));
+                    });
+                } else {
+                    deliveryReadyBuild = connectedBuild;
+                }
+                detachedTimeout(deliveryReadyBuild,
                         ViaBedrock.getConfig().getResourcePackCacheBuildTimeoutSeconds(), TimeUnit.SECONDS,
                         () -> {
                             buildAbortReason.compareAndSet(null,
@@ -303,10 +313,12 @@ public class ResourcePackPackets {
                 }
                 case FAILED_DOWNLOAD, FAILED_RELOAD, DISCARDED -> {
                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Client resource pack download/load failed");
+                    cancelRemotePackDelivery(wrapper.user().get(ResourcePackLoadStateTracker.class));
                     wrapper.cancel();
                     delayResourcePackStackFinished(wrapper.user());
                 }
                 case DECLINED, INVALID_URL -> {
+                    cancelRemotePackDelivery(wrapper.user().get(ResourcePackLoadStateTracker.class));
                     wrapper.write(Types.BYTE, (byte) ResourcePackResponse.DownloadingFinished.getValue()); // status
                     wrapper.write(BedrockTypes.SHORT_LE_STRING_ARRAY, new String[0]); // downloading packs
                 }
@@ -370,7 +382,7 @@ public class ResourcePackPackets {
                 if (resourcePackStorage != null) {
                     resourcePackStorage.onRemove();
                 }
-                failHttpConnection(loadStateTracker, buildError);
+                failPackDelivery(loadStateTracker, buildError);
                 if (user.getChannel().isActive()) {
                     BedrockProtocol.kickForIllegalState(
                             user, "Failed to build the shared resource pack runtime", buildError);
@@ -379,7 +391,7 @@ public class ResourcePackPackets {
             }
             if (!user.getChannel().isActive()) {
                 resourcePackStorage.onRemove();
-                failHttpConnection(loadStateTracker,
+                failPackDelivery(loadStateTracker,
                         new CancellationException("Resource pack connection closed before runtime publication"));
                 return;
             }
@@ -392,6 +404,21 @@ public class ResourcePackPackets {
                 if (ViaBedrock.getResourcePackServer() != null && loadStateTracker.httpToken() != null) {
                     ViaBedrock.getResourcePackServer().completeConnection(
                             loadStateTracker.httpToken(), resourcePackStorage);
+                } else if (ViaBedrock.getRemotePackServiceClient() != null
+                        && loadStateTracker.remotePackLookup() != null) {
+                    final RemotePackServiceClient remotePackServiceClient =
+                            ViaBedrock.getRemotePackServiceClient();
+                    remotePackServiceClient
+                            .publish(loadStateTracker.remotePackLookup(), resourcePackStorage)
+                            .whenComplete((ignored, uploadError) -> {
+                                if (uploadError != null) {
+                                    remotePackServiceClient.cancel(loadStateTracker.remotePackLookup());
+                                    if (user.getChannel().isActive()) {
+                                        BedrockProtocol.kickForIllegalState(
+                                                user, "Failed to publish the Java resource pack", uploadError);
+                                    }
+                                }
+                            });
                 }
                 ExperimentalFeatures.dispatchResourcePackStackSet(user);
                 if (delayAfterBuild) {
@@ -403,7 +430,7 @@ public class ResourcePackPackets {
                 } else {
                     resourcePackStorage.onRemove();
                 }
-                failHttpConnection(loadStateTracker, publishError);
+                failPackDelivery(loadStateTracker, publishError);
                 BedrockProtocol.kickForIllegalState(
                         user, "Failed to publish the shared resource pack runtime", publishError);
             }
@@ -416,7 +443,7 @@ public class ResourcePackPackets {
                     }
                 });
         if (rejection != null) {
-            failHttpConnection(loadStateTracker, rejection);
+            failPackDelivery(loadStateTracker, rejection);
             BedrockProtocol.kickForIllegalState(
                     user, "Failed to publish the shared resource pack runtime", rejection);
         }
@@ -510,11 +537,97 @@ public class ResourcePackPackets {
         if (storage != null) storage.onRemove();
     }
 
-    private static void failHttpConnection(final ResourcePackLoadStateTracker loadStateTracker,
-                                           final Throwable error) {
+    private static void failPackDelivery(final ResourcePackLoadStateTracker loadStateTracker,
+                                         final Throwable error) {
         if (ViaBedrock.getResourcePackServer() != null && loadStateTracker.httpToken() != null) {
             ViaBedrock.getResourcePackServer().failConnection(loadStateTracker.httpToken(), error);
+        } else if (ViaBedrock.getRemotePackServiceClient() != null
+                && loadStateTracker.remotePackLookup() != null) {
+            ViaBedrock.getRemotePackServiceClient().cancel(loadStateTracker.remotePackLookup());
         }
+    }
+
+    private static void cancelRemotePackDelivery(final ResourcePackLoadStateTracker loadStateTracker) {
+        if (loadStateTracker != null && ViaBedrock.getRemotePackServiceClient() != null) {
+            ViaBedrock.getRemotePackServiceClient().cancel(loadStateTracker.remotePackLookup());
+        }
+    }
+
+    static <T> CompletableFuture<T> awaitRemoteLookup(
+            final CompletableFuture<T> build,
+            final CompletionStage<RemotePackServiceClient.Lookup> lookup) {
+        if (lookup == null) {
+            return CompletableFuture.failedFuture(
+                    new IllegalStateException("Remote resource pack lookup was not started"));
+        }
+        return build.thenCombine(lookup, (value, ignored) -> value);
+    }
+
+    private static void announceRemotePack(final UserConnection user,
+                                           final ResourcePackLoadStateTracker loadStateTracker) {
+        final RemotePackServiceClient client = ViaBedrock.getRemotePackServiceClient();
+        if (client == null) {
+            BedrockProtocol.kickForIllegalState(user, "Remote resource pack service is unavailable",
+                    new IllegalStateException("Remote resource pack client is not initialized"));
+            return;
+        }
+        final boolean supportsFreeRotation = user.getProtocolInfo().protocolVersion()
+                .newerThanOrEqualTo(ProtocolVersion.v1_21_11);
+        final String lookupKey = RemotePackServiceClient.computeLookupKey(
+                loadStateTracker.announcementSequenceFingerprint(), supportsFreeRotation);
+        final CompletableFuture<RemotePackServiceClient.Lookup> lookupFuture;
+        try {
+            loadStateTracker.setRemotePackLookupFuture(client.lookup(lookupKey));
+            lookupFuture = loadStateTracker.remotePackLookupFuture();
+        } catch (Throwable lookupStartError) {
+            BedrockProtocol.kickForIllegalState(
+                    user, "Failed to start the Java resource pack service lookup", lookupStartError);
+            return;
+        }
+        user.getChannel().closeFuture().addListener(ignored ->
+                lookupFuture.thenAccept(client::cancel));
+        lookupFuture.whenComplete((lookup, error) -> {
+            final Runnable announce = () -> {
+                if (!user.getChannel().isActive()) {
+                    client.cancel(lookup);
+                    return;
+                }
+                if (error != null) {
+                    BedrockProtocol.kickForIllegalState(
+                            user, "Failed to query the Java resource pack service", error);
+                    return;
+                }
+                try {
+                    final PacketWrapper resourcePack = PacketWrapper.create(
+                            ClientboundConfigurationPackets1_21_9.RESOURCE_PACK_PUSH, user);
+                    writeJavaPackAnnouncement(resourcePack, lookup.id(), lookup.publicUrl(),
+                            lookup.ready() ? lookup.sha1() : "");
+                    resourcePack.send(BedrockProtocol.class);
+                } catch (Throwable sendError) {
+                    client.cancel(lookup);
+                    BedrockProtocol.kickForIllegalState(
+                            user, "Failed to announce the Java resource pack", sendError);
+                }
+            };
+            final RejectedExecutionException rejection = executeOnEventLoop(
+                    user.getChannel().eventLoop(), announce, () -> client.cancel(lookup));
+            if (rejection != null && user.getChannel().isActive()) {
+                BedrockProtocol.kickForIllegalState(
+                        user, "Failed to schedule the Java resource pack announcement", rejection);
+            }
+        });
+    }
+
+    private static void writeJavaPackAnnouncement(final PacketWrapper wrapper, final UUID id,
+                                                  final String url, final String hash) {
+        wrapper.write(Types.UUID, id);
+        wrapper.write(Types.STRING, url);
+        wrapper.write(Types.STRING, hash);
+        wrapper.write(Types.BOOLEAN, false);
+        wrapper.write(Types.OPTIONAL_TAG, TextUtil.stringToNbt(
+                "\n§aIf you press 'Yes', the resource packs will be downloaded and converted to the Java Edition format. "
+                        + "This may take a while, depending on your internet connection and the size of the packs. "
+                        + "If you press 'No', you can join without loading the resource packs but you will have a worse gameplay experience."));
     }
 
     private static void delayResourcePackStackFinished(final UserConnection user) {

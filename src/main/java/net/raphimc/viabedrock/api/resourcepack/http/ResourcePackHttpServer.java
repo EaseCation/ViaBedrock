@@ -709,7 +709,7 @@ public class ResourcePackHttpServer {
         });
     }
 
-    private JavaPackCache.ArtifactBuildResult convertJavaPackWithAdmission(
+    static JavaPackCache.ArtifactBuildResult convertJavaPackWithAdmission(
             final JavaPackCache cache, final ResourcePackStorage resourcePackStorage,
             final Path target) throws IOException {
         return resourcePackStorage.withPackStack(() -> {
