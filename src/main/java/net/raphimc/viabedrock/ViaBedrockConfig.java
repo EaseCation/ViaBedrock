@@ -19,6 +19,7 @@ package net.raphimc.viabedrock;
 
 import com.viaversion.viaversion.util.Config;
 import com.viaversion.viaversion.util.ConfigSection;
+import net.raphimc.viabedrock.platform.ResourcePackDeliveryMode;
 
 import java.io.File;
 import java.net.URL;
@@ -39,6 +40,12 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
     private String resourcePackHost;
     private int resourcePackPort;
     private String resourcePackUrl;
+    private ResourcePackDeliveryMode resourcePackDeliveryMode;
+    private String remotePackServiceInternalUrl;
+    private String remotePackServicePublicUrl;
+    private String remotePackServiceSecret;
+    private int remotePackServiceConnectTimeoutMillis;
+    private int remotePackServiceRequestTimeoutMillis;
     private PackCacheMode packCacheMode;
     private boolean sharedResourcePackCacheEnabled;
     private boolean trustDeclaredPackAlias;
@@ -100,6 +107,16 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
         this.resourcePackHost = this.getString("resource-pack-host", "127.0.0.1");
         this.resourcePackPort = this.getInt("resource-pack-port", 0);
         this.resourcePackUrl = this.getString("resource-pack-url", "");
+        final ConfigSection resourcePackDelivery = this.getSection("resource-pack-delivery");
+        this.resourcePackDeliveryMode = ResourcePackDeliveryMode.byName(
+                getString(resourcePackDelivery, "mode", "embedded"));
+        this.remotePackServiceInternalUrl = getString(resourcePackDelivery, "internal-url", "");
+        this.remotePackServicePublicUrl = getString(resourcePackDelivery, "public-url", "");
+        this.remotePackServiceSecret = getString(resourcePackDelivery, "shared-secret", "");
+        this.remotePackServiceConnectTimeoutMillis = Math.max(1,
+                getInt(resourcePackDelivery, "connect-timeout-millis", 2_000));
+        this.remotePackServiceRequestTimeoutMillis = Math.max(1,
+                getInt(resourcePackDelivery, "request-timeout-millis", 10_000));
         this.packCacheMode = PackCacheMode.byName(this.getString("pack-cache", "disk"));
         final ConfigSection resourcePackCache = this.getSection("resource-pack-cache");
         this.sharedResourcePackCacheEnabled = getBoolean(resourcePackCache, "enabled", true);
@@ -207,6 +224,36 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
     @Override
     public String getResourcePackUrl() {
         return this.resourcePackUrl;
+    }
+
+    @Override
+    public ResourcePackDeliveryMode getResourcePackDeliveryMode() {
+        return this.resourcePackDeliveryMode;
+    }
+
+    @Override
+    public String getRemotePackServiceInternalUrl() {
+        return this.remotePackServiceInternalUrl;
+    }
+
+    @Override
+    public String getRemotePackServicePublicUrl() {
+        return this.remotePackServicePublicUrl;
+    }
+
+    @Override
+    public String getRemotePackServiceSecret() {
+        return this.remotePackServiceSecret;
+    }
+
+    @Override
+    public int getRemotePackServiceConnectTimeoutMillis() {
+        return this.remotePackServiceConnectTimeoutMillis;
+    }
+
+    @Override
+    public int getRemotePackServiceRequestTimeoutMillis() {
+        return this.remotePackServiceRequestTimeoutMillis;
     }
 
     @Override

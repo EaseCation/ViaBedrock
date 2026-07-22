@@ -18,6 +18,7 @@
 package net.raphimc.viabedrock;
 
 import net.raphimc.viabedrock.api.resourcepack.http.ResourcePackHttpServer;
+import net.raphimc.viabedrock.api.resourcepack.http.RemotePackServiceClient;
 import net.raphimc.viabedrock.experimental.resourcepack.JavaPackCache;
 import net.raphimc.viabedrock.experimental.resourcepack.cache.ResourcePackCacheMetrics;
 import net.raphimc.viabedrock.experimental.resourcepack.cache.ResourcePackWorkScheduler;
@@ -25,6 +26,7 @@ import net.raphimc.viabedrock.experimental.resourcepack.cache.SharedPackRuntimeC
 import net.raphimc.viabedrock.experimental.resourcepack.cache.ResourcePackArchiveStore;
 import net.raphimc.viabedrock.platform.ViaBedrockConfig;
 import net.raphimc.viabedrock.platform.ViaBedrockPlatform;
+import net.raphimc.viabedrock.platform.ResourcePackDeliveryMode;
 
 import java.net.InetSocketAddress;
 import java.util.logging.Level;
@@ -37,6 +39,7 @@ public class ViaBedrock {
     private static ViaBedrockPlatform platform;
     private static ViaBedrockConfig config;
     private static ResourcePackHttpServer resourcePackServer;
+    private static RemotePackServiceClient remotePackServiceClient;
     private static JavaPackCache javaPackCache;
     private static ResourcePackCacheMetrics resourcePackCacheMetrics;
     private static ResourcePackWorkScheduler resourcePackWorkScheduler;
@@ -78,8 +81,16 @@ public class ViaBedrock {
                         platform.getJavaPacksCacheFolder(), ViaBedrock.resourcePackWorkScheduler,
                         ViaBedrock.resourcePackCacheMetrics, artifactDiskBudgetMiB,
                         config.getResourcePackCacheDiskIdleDays());
-                ViaBedrock.resourcePackServer = new ResourcePackHttpServer(new InetSocketAddress(config.getResourcePackHost(), config.getResourcePackPort()));
-                platform.getLogger().log(Level.INFO, "Started resource pack HTTP server on " + resourcePackServer.getUrl());
+                if (config.getResourcePackDeliveryMode() == ResourcePackDeliveryMode.REMOTE) {
+                    ViaBedrock.remotePackServiceClient = new RemotePackServiceClient(config);
+                    platform.getLogger().log(Level.INFO, "Using remote Java resource pack delivery at "
+                            + config.getRemotePackServicePublicUrl());
+                } else {
+                    ViaBedrock.resourcePackServer = new ResourcePackHttpServer(
+                            new InetSocketAddress(config.getResourcePackHost(), config.getResourcePackPort()));
+                    platform.getLogger().log(Level.INFO, "Started resource pack HTTP server on "
+                            + resourcePackServer.getUrl());
+                }
                 ViaBedrock.registerShutdownHook();
             } catch (Throwable e) {
                 ViaBedrock.shutdownResourcePackServices();
@@ -101,6 +112,10 @@ public class ViaBedrock {
 
     public static ResourcePackHttpServer getResourcePackServer() {
         return ViaBedrock.resourcePackServer;
+    }
+
+    public static RemotePackServiceClient getRemotePackServiceClient() {
+        return ViaBedrock.remotePackServiceClient;
     }
 
     public static JavaPackCache getJavaPackCache() {
@@ -173,6 +188,7 @@ public class ViaBedrock {
             ViaBedrock.resourcePackCacheMetrics = null;
         }
         ViaBedrock.RESOURCE_PACK_CACHE_MODE.reset();
+        ViaBedrock.remotePackServiceClient = null;
         ViaBedrock.resourcePackArchiveStore = null;
         ViaBedrock.sharedPackRuntimeCache = null;
         ViaBedrock.javaPackCache = null;

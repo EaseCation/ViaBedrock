@@ -9,6 +9,7 @@
  */
 package net.raphimc.viabedrock;
 
+import net.raphimc.viabedrock.platform.ResourcePackDeliveryMode;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -58,6 +59,31 @@ class ViaBedrockConfigTest {
         assertEquals(1, config.getResourcePackMaxEntryMiB());
         assertEquals(1, config.getResourcePackMaxEntries());
         assertEquals(1, config.getResourcePackMaxCompressionRatio());
+        assertEquals(ResourcePackDeliveryMode.EMBEDDED, config.getResourcePackDeliveryMode());
+    }
+
+    @Test
+    void loadsRemoteResourcePackDelivery(@TempDir final Path tempDir) throws Exception {
+        final Path configFile = tempDir.resolve("viabedrock.yml");
+        Files.writeString(configFile, """
+                resource-pack-delivery:
+                  mode: remote
+                  internal-url: http://viabedrock-pack-service:8081/
+                  public-url: http://je-res-test.easecation.net/
+                  shared-secret: test-secret
+                  connect-timeout-millis: 1500
+                  request-timeout-millis: 9000
+                """);
+
+        final ViaBedrockConfig config = new ViaBedrockConfig(configFile.toFile(), Logger.getAnonymousLogger());
+        config.reload();
+
+        assertEquals(ResourcePackDeliveryMode.REMOTE, config.getResourcePackDeliveryMode());
+        assertEquals("http://viabedrock-pack-service:8081/", config.getRemotePackServiceInternalUrl());
+        assertEquals("http://je-res-test.easecation.net/", config.getRemotePackServicePublicUrl());
+        assertEquals("test-secret", config.getRemotePackServiceSecret());
+        assertEquals(1500, config.getRemotePackServiceConnectTimeoutMillis());
+        assertEquals(9000, config.getRemotePackServiceRequestTimeoutMillis());
     }
 
 }

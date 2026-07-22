@@ -27,6 +27,7 @@ import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 import net.raphimc.viabedrock.api.resourcepack.cache.PackAlias;
 import net.raphimc.viabedrock.api.resourcepack.content.ZipContent;
 import net.raphimc.viabedrock.api.resourcepack.http.BedrockPackDownloader;
+import net.raphimc.viabedrock.api.resourcepack.http.RemotePackServiceClient;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ResourcePackResponse;
@@ -62,6 +63,8 @@ public class ResourcePackLoadStateTracker extends StoredObject {
     private final CompletableFuture<Void> loadFuture = new CompletableFuture<>();
     private final String announcementSequenceFingerprint;
     private UUID httpToken;
+    private volatile RemotePackServiceClient.Lookup remotePackLookup;
+    private CompletableFuture<RemotePackServiceClient.Lookup> remotePackLookupFuture;
     private boolean javaClientAccepted;
 
     public ResourcePackLoadStateTracker(final UserConnection user, final ResourcePackLoadStateTracker.Info[] infos) {
@@ -452,6 +455,26 @@ public class ResourcePackLoadStateTracker extends StoredObject {
             throw new IllegalStateException("Resource pack HTTP token was already assigned");
         }
         this.httpToken = Objects.requireNonNull(httpToken, "httpToken");
+    }
+
+    public RemotePackServiceClient.Lookup remotePackLookup() {
+        return this.remotePackLookup;
+    }
+
+    public CompletableFuture<RemotePackServiceClient.Lookup> remotePackLookupFuture() {
+        return this.remotePackLookupFuture;
+    }
+
+    public void setRemotePackLookupFuture(
+            final CompletableFuture<RemotePackServiceClient.Lookup> remotePackLookupFuture) {
+        if (this.remotePackLookupFuture != null) {
+            throw new IllegalStateException("Remote resource pack lookup future was already assigned");
+        }
+        this.remotePackLookupFuture = Objects.requireNonNull(remotePackLookupFuture, "remotePackLookupFuture")
+                .thenApply(lookup -> {
+                    this.remotePackLookup = Objects.requireNonNull(lookup, "remotePackLookup");
+                    return lookup;
+                });
     }
 
     public record Info(ResourcePack.Key key, long announcedSize, byte[] contentKey, String contentId,

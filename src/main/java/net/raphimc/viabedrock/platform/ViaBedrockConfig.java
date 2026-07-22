@@ -61,6 +61,30 @@ public interface ViaBedrockConfig extends Config {
      */
     String getResourcePackUrl();
 
+    default ResourcePackDeliveryMode getResourcePackDeliveryMode() {
+        return ResourcePackDeliveryMode.EMBEDDED;
+    }
+
+    default String getRemotePackServiceInternalUrl() {
+        return "";
+    }
+
+    default String getRemotePackServicePublicUrl() {
+        return "";
+    }
+
+    default String getRemotePackServiceSecret() {
+        return "";
+    }
+
+    default int getRemotePackServiceConnectTimeoutMillis() {
+        return 2_000;
+    }
+
+    default int getRemotePackServiceRequestTimeoutMillis() {
+        return 10_000;
+    }
+
     /**
      * @return The pack cache mode to use.
      */
