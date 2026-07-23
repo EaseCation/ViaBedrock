@@ -155,7 +155,7 @@ public abstract class Content implements PackContentView {
     }
 
     public LazyImage getShortnameImage(final String path) {
-        return this.getImage(this.getFullPath(path, "png", "jpg"));
+        return this.getImage(this.getFullPath(path, "png", "jpg", "tga"));
     }
 
     public LazyImage getImage(final String path) {
@@ -169,11 +169,12 @@ public abstract class Content implements PackContentView {
 
         final boolean isPng = bytes.length > 8 && bytes[0] == (byte) 0x89 && bytes[1] == (byte) 0x50 && bytes[2] == (byte) 0x4E && bytes[3] == (byte) 0x47 && bytes[4] == (byte) 0x0D && bytes[5] == (byte) 0x0A && bytes[6] == (byte) 0x1A && bytes[7] == (byte) 0x0A;
         final boolean isJpg = bytes.length > 2 && bytes[0] == (byte) 0xFF && bytes[1] == (byte) 0xD8 && bytes[2] == (byte) 0xFF;
-        if (!isPng && !isJpg) {
+        final boolean isTga = TgaReader.isTga(bytes);
+        if (!isPng && !isJpg && !isTga) {
             return null;
         }
 
-        return new LazyImage(bytes, isPng ? "png" : "jpg");
+        return new LazyImage(bytes, isPng ? "png" : isJpg ? "jpg" : "tga");
     }
 
     public boolean putPngImage(final String path, final LazyImage image) {
@@ -243,7 +244,9 @@ public abstract class Content implements PackContentView {
         public BufferedImage getImage() {
             if (this.image == null) {
                 try {
-                    this.image = ImageIO.read(new ByteArrayInputStream(this.bytes));
+                    this.image = this.format.equals("tga")
+                            ? TgaReader.read(this.bytes)
+                            : ImageIO.read(new ByteArrayInputStream(this.bytes));
                 } catch (IOException e) {
                     throw new RuntimeException(e);
                 }
