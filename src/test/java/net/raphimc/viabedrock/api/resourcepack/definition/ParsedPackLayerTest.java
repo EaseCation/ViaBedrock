@@ -20,6 +20,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -39,7 +40,8 @@ class ParsedPackLayerTest {
                         {"texture_name":"atlas.items","texture_data":{"test_icon":{"textures":"textures/items/test"}}}
                         """),
                 Map.entry("sounds/sound_definitions.json", """
-                        {"test.sound":{"category":"neutral","sounds":["sounds/test"]}}
+                        {"test.sound":{"category":"neutral","min_distance":2.5,"max_distance":24.0,
+                          "sounds":[{"name":"sounds/test","volume":0.4,"pitch":1.2,"weight":3,"is3D":false}]}}
                         """),
                 Map.entry("particles/test.json", """
                         {"particle_effect":{"description":{"identifier":"test:particle"},"components":{}}}
@@ -68,7 +70,16 @@ class ParsedPackLayerTest {
         assertEquals("test_icon", layer.items().get("test:item").iconComponent());
         assertNotNull(layer.attachables().attachables().get("test:attachable"));
         assertEquals("textures/items/test", layer.textures().itemTextures().get("test_icon").getFirst().texturePath());
-        assertEquals("sounds/test", layer.sounds().soundDefinitions().get("test.sound").soundFiles().getFirst().path());
+        final SoundDefinitions.SoundDefinition soundDefinition =
+                layer.sounds().soundDefinitions().get("test.sound");
+        final SoundDefinitions.SoundFile soundFile = soundDefinition.soundFiles().getFirst();
+        assertEquals("sounds/test", soundFile.path());
+        assertEquals(2.5F, soundDefinition.minDistance());
+        assertEquals(24F, soundDefinition.maxDistance());
+        assertEquals(0.4F, soundFile.volume());
+        assertEquals(1.2F, soundFile.pitch());
+        assertEquals(3, soundFile.weight());
+        assertFalse(soundFile.is3D());
         assertNotNull(layer.particles().get("test:particle"));
         assertNotNull(layer.entities().get("test:entity"));
         assertNotNull(layer.models().getEntityModel("geometry.test"));
@@ -89,6 +100,22 @@ class ParsedPackLayerTest {
                 () -> layer.entities().get("test:entity").entityData().getTextures().put("other", "other"));
         assertThrows(UnsupportedOperationException.class,
                 () -> layer.renderControllers().get("controller.render.test").materialsMap().put("*", "Material.default"));
+    }
+
+    @Test
+    void acceptsVanillaNullDistanceFields() {
+        final ParsedPackLayer layer = ParsedPackLayer.parse(pack(Map.of(
+                "sounds/sound_definitions.json", """
+                        {"random.splash":{"category":"player","min_distance":null,"max_distance":null,
+                          "sounds":["sounds/random/splash"]}}
+                        """
+        )));
+
+        final SoundDefinitions.SoundDefinition definition =
+                layer.sounds().soundDefinitions().get("random.splash");
+        assertNotNull(definition);
+        assertEquals(0F, definition.minDistance());
+        assertNull(definition.maxDistance());
     }
 
     @Test

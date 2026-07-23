@@ -58,6 +58,7 @@ import net.raphimc.viabedrock.protocol.model.Position3f;
 import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomSoundResourceRewriter;
+import net.raphimc.viabedrock.protocol.rewriter.sound.SoundPacketProjection;
 import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
 import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
@@ -85,6 +86,7 @@ public class WorldEffectPackets {
             wrapper.read(BedrockTypes.OPTIONAL_UNSIGNED_LONG_LE); // server sound handle
 
             final BedrockMappingData.JavaSound javaSound = BedrockProtocol.MAPPINGS.getBedrockToJavaSounds().get(name);
+            final Position3f sourcePosition = new Position3f(position.x() / 8F, position.y() / 8F, position.z() / 8F);
             if (javaSound == null) {
                 // Try custom sound from resource pack
                 final Holder<SoundEvent> customHolder = tryResolveCustomSound(wrapper.user(), name);
@@ -93,26 +95,15 @@ public class WorldEffectPackets {
                     wrapper.cancel();
                     return;
                 }
-                final SoundSource category = getCustomSoundCategory(wrapper.user(), name);
-                wrapper.write(Types.SOUND_EVENT, customHolder); // sound event
-                wrapper.write(Types.VAR_INT, category.ordinal()); // category
-                wrapper.write(Types.INT, position.x()); // x
-                wrapper.write(Types.INT, position.y()); // y
-                wrapper.write(Types.INT, position.z()); // z
-                wrapper.write(Types.FLOAT, volume); // volume
-                wrapper.write(Types.FLOAT, pitch); // pitch
-                wrapper.write(Types.LONG, ThreadLocalRandom.current().nextLong()); // seed
+                final SoundSource category = getSoundCategory(wrapper.user(), name, SoundSource.MASTER);
+                writeProjectedSound(wrapper, customHolder, category, name, "bedrock:" + name,
+                        sourcePosition, volume, pitch, false, true);
                 return;
             }
 
-            wrapper.write(Types.SOUND_EVENT, Holder.of(javaSound.id())); // sound id
-            wrapper.write(Types.VAR_INT, javaSound.category().ordinal()); // category
-            wrapper.write(Types.INT, position.x()); // x
-            wrapper.write(Types.INT, position.y()); // y
-            wrapper.write(Types.INT, position.z()); // z
-            wrapper.write(Types.FLOAT, volume); // volume
-            wrapper.write(Types.FLOAT, pitch); // pitch
-            wrapper.write(Types.LONG, ThreadLocalRandom.current().nextLong()); // seed
+            writeProjectedSound(wrapper, Holder.of(javaSound.id()),
+                    getSoundCategory(wrapper.user(), name, javaSound.category()), name,
+                    javaSound.identifier(), sourcePosition, volume, pitch, false, false);
         });
         protocol.registerClientbound(ClientboundBedrockPackets.STOP_SOUND, ClientboundPackets26_1.STOP_SOUND, wrapper -> {
             final String name = wrapper.read(BedrockTypes.STRING); // sound name
@@ -244,26 +235,22 @@ public class WorldEffectPackets {
                     wrapper.cancel();
                     return;
                 }
-                final SoundSource category = getCustomSoundCategory(wrapper.user(), configuredSound.sound());
-                wrapper.write(Types.SOUND_EVENT, customHolder); // sound event
-                wrapper.write(Types.VAR_INT, category.ordinal()); // category
-                wrapper.write(Types.INT, (int) (position.x() * 8F)); // x
-                wrapper.write(Types.INT, (int) (position.y() * 8F)); // y
-                wrapper.write(Types.INT, (int) (position.z() * 8F)); // z
-                wrapper.write(Types.FLOAT, globalSound ? Integer.MAX_VALUE : MathUtil.randomFloatInclusive(configuredSound.minVolume(), configuredSound.maxVolume())); // volume
-                wrapper.write(Types.FLOAT, MathUtil.randomFloatInclusive(configuredSound.minPitch(), configuredSound.maxPitch())); // pitch
-                wrapper.write(Types.LONG, ThreadLocalRandom.current().nextLong()); // seed
+                final SoundSource category = getSoundCategory(
+                        wrapper.user(), configuredSound.sound(), SoundSource.MASTER);
+                writeProjectedSound(wrapper, customHolder, category, configuredSound.sound(),
+                        "bedrock:" + configuredSound.sound(), position,
+                        MathUtil.randomFloatInclusive(configuredSound.minVolume(), configuredSound.maxVolume()),
+                        MathUtil.randomFloatInclusive(configuredSound.minPitch(), configuredSound.maxPitch()),
+                        globalSound, true);
                 return;
             }
 
-            wrapper.write(Types.SOUND_EVENT, Holder.of(javaSound.id())); // sound id
-            wrapper.write(Types.VAR_INT, javaSound.category().ordinal()); // category
-            wrapper.write(Types.INT, (int) (position.x() * 8F)); // x
-            wrapper.write(Types.INT, (int) (position.y() * 8F)); // y
-            wrapper.write(Types.INT, (int) (position.z() * 8F)); // z
-            wrapper.write(Types.FLOAT, globalSound ? Integer.MAX_VALUE : MathUtil.randomFloatInclusive(configuredSound.minVolume(), configuredSound.maxVolume())); // volume
-            wrapper.write(Types.FLOAT, MathUtil.randomFloatInclusive(configuredSound.minPitch(), configuredSound.maxPitch())); // pitch
-            wrapper.write(Types.LONG, ThreadLocalRandom.current().nextLong()); // seed
+            writeProjectedSound(wrapper, Holder.of(javaSound.id()),
+                    getSoundCategory(wrapper.user(), configuredSound.sound(), javaSound.category()),
+                    configuredSound.sound(), javaSound.identifier(), position,
+                    MathUtil.randomFloatInclusive(configuredSound.minVolume(), configuredSound.maxVolume()),
+                    MathUtil.randomFloatInclusive(configuredSound.minPitch(), configuredSound.maxPitch()),
+                    globalSound, false);
         });
         protocol.registerClientbound(ClientboundBedrockPackets.LEVEL_EVENT, ClientboundPackets26_1.LEVEL_EVENT, wrapper -> {
             final int rawLevelEvent = wrapper.read(BedrockTypes.VAR_INT); // event id
@@ -413,19 +400,16 @@ public class WorldEffectPackets {
                         wrapper.write(Types.BOOLEAN, false); // global
                     } else if (levelEventMapping instanceof BedrockMappingData.JavaSound javaSound) {
                         wrapper.setPacketType(ClientboundPackets26_1.SOUND);
-                        wrapper.write(Types.SOUND_EVENT, Holder.of(javaSound.id())); // sound id
-                        wrapper.write(Types.VAR_INT, javaSound.category().ordinal()); // category
-                        wrapper.write(Types.INT, (int) (position.x() * 8F)); // x
-                        wrapper.write(Types.INT, (int) (position.y() * 8F)); // y
-                        wrapper.write(Types.INT, (int) (position.z() * 8F)); // z
-                        wrapper.write(Types.FLOAT, 1F); // volume
-                        wrapper.write(Types.FLOAT, switch (levelEvent) {
+                        final float pitch = switch (levelEvent) {
                             case SoundClick, SoundClickFail, SoundOpenDoor, SoundFizz, SoundInfinityArrowPickup, SoundAmethystResonate -> {
                                 yield data > 0 && data <= 256_000 ? (data / 1000F) : 1F;
                             }
                             default -> 1F;
-                        }); // pitch
-                        wrapper.write(Types.LONG, ThreadLocalRandom.current().nextLong()); // seed
+                        };
+                        writeProjectedSound(wrapper, Holder.of(javaSound.id()),
+                                getSoundCategory(wrapper.user(), javaSound.bedrockIdentifier(), javaSound.category()),
+                                javaSound.bedrockIdentifier(), javaSound.identifier(), position,
+                                1F, pitch, false, false);
                     } else if (levelEventMapping instanceof BedrockMappingData.JavaParticle javaParticle) {
                         wrapper.setPacketType(ClientboundPackets26_1.LEVEL_PARTICLES);
                         PacketFactory.writeJavaLevelParticles(wrapper, switch (levelEvent) {
@@ -555,15 +539,14 @@ public class WorldEffectPackets {
                     final Particle particle = new Particle(BedrockProtocol.MAPPINGS.getJavaParticles().get("minecraft:sculk_soul"));
                     PacketFactory.writeJavaLevelParticles(wrapper, new Position3f(position.x() + 0.5F, position.y() + 1.15F, position.z() + 0.5F), new BedrockMappingData.JavaParticle(particle, 0F, 0F, 0F, 0F, 0));
                     final PacketWrapper sound = PacketWrapper.create(ClientboundPackets26_1.SOUND, wrapper.user());
-                    sound.write(Types.SOUND_EVENT, Holder.of((int) BedrockProtocol.MAPPINGS.getJavaSounds().get("minecraft:block.sculk_catalyst.bloom"))); // sound id
-                    sound.write(Types.VAR_INT, SoundSource.BLOCKS.ordinal()); // category
-                    sound.write(Types.INT, (int) (position.x() * 8F)); // x
-                    sound.write(Types.INT, (int) (position.y() * 8F)); // y
-                    sound.write(Types.INT, (int) (position.z() * 8F)); // z
-                    sound.write(Types.FLOAT, 2F); // volume
-                    sound.write(Types.FLOAT, 0.6F + ThreadLocalRandom.current().nextFloat() * 0.4F); // pitch
-                    sound.write(Types.LONG, ThreadLocalRandom.current().nextLong()); // seed
-                    sound.send(BedrockProtocol.class);
+                    if (writeProjectedSound(sound,
+                            Holder.of((int) BedrockProtocol.MAPPINGS.getJavaSounds().get("minecraft:block.sculk_catalyst.bloom")),
+                            getSoundCategory(wrapper.user(), "bloom.sculk_catalyst", SoundSource.BLOCKS),
+                            "bloom.sculk_catalyst", "minecraft:block.sculk_catalyst.bloom",
+                            position, 2F, 0.6F + ThreadLocalRandom.current().nextFloat() * 0.4F,
+                            false, false)) {
+                        sound.send(BedrockProtocol.class);
+                    }
                 }
                 case SculkCharge -> {
                     wrapper.setPacketType(ClientboundPackets26_1.LEVEL_EVENT);
@@ -764,6 +747,31 @@ public class WorldEffectPackets {
         return configuredSound;
     }
 
+    private static boolean writeProjectedSound(final PacketWrapper wrapper, final Holder<SoundEvent> javaSound,
+                                               final SoundSource category, final String bedrockIdentifier,
+                                               final String javaIdentifier, final Position3f sourcePosition,
+                                               final float volume, final float pitch, final boolean global,
+                                               final boolean generatedCustomSound) {
+        final long seed = ThreadLocalRandom.current().nextLong();
+        final SoundPacketProjection.Result projection = SoundPacketProjection.project(wrapper.user(),
+                bedrockIdentifier, javaIdentifier, sourcePosition, volume, pitch, global,
+                generatedCustomSound, seed);
+        if (!projection.send()) {
+            wrapper.cancel();
+            return false;
+        }
+
+        wrapper.write(Types.SOUND_EVENT, javaSound); // sound event
+        wrapper.write(Types.VAR_INT, category.ordinal()); // category
+        wrapper.write(Types.INT, (int) (projection.position().x() * 8F)); // x
+        wrapper.write(Types.INT, (int) (projection.position().y() * 8F)); // y
+        wrapper.write(Types.INT, (int) (projection.position().z() * 8F)); // z
+        wrapper.write(Types.FLOAT, projection.volume()); // volume
+        wrapper.write(Types.FLOAT, projection.pitch()); // pitch
+        wrapper.write(Types.LONG, projection.seed()); // seed
+        return true;
+    }
+
     @SuppressWarnings("unchecked")
     private static Holder<SoundEvent> tryResolveCustomSound(final UserConnection user, final String bedrockSoundName) {
         final ResourcePackStorage resourcePackStorage = user.get(ResourcePackStorage.class);
@@ -773,7 +781,8 @@ public class WorldEffectPackets {
         return Holder.of(new SoundEvent("bedrock:" + bedrockSoundName, null));
     }
 
-    private static SoundSource getCustomSoundCategory(final UserConnection user, final String bedrockSoundName) {
+    private static SoundSource getSoundCategory(final UserConnection user, final String bedrockSoundName,
+                                                final SoundSource fallback) {
         final ResourcePackStorage resourcePackStorage = user.get(ResourcePackStorage.class);
         if (resourcePackStorage != null && resourcePackStorage.getSounds() != null) {
             final SoundDefinitions.SoundDefinition def = resourcePackStorage.getSounds().soundDefinitions().get(bedrockSoundName);
@@ -788,11 +797,11 @@ public class WorldEffectPackets {
                     case "record" -> SoundSource.RECORDS;
                     case "ui" -> SoundSource.UI;
                     case "weather" -> SoundSource.WEATHER;
-                    default -> SoundSource.MASTER;
+                    default -> fallback;
                 };
             }
         }
-        return SoundSource.MASTER;
+        return fallback;
     }
 
 }

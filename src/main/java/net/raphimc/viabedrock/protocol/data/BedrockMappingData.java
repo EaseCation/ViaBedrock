@@ -931,7 +931,8 @@ public class BedrockMappingData extends MappingDataBase {
                 if (!this.javaSounds.containsKey(javaIdentifier)) {
                     throw new IllegalStateException("Unknown java sound: " + javaIdentifier);
                 }
-                final JavaSound javaSoundMapping = new JavaSound(this.javaSounds.get(javaIdentifier), javaIdentifier, bedrockToJavaSoundCategories.get(bedrockSounds.get(bedrockIdentifier)));
+                final JavaSound javaSoundMapping = new JavaSound(this.javaSounds.get(javaIdentifier), javaIdentifier,
+                        bedrockToJavaSoundCategories.get(bedrockSounds.get(bedrockIdentifier)), bedrockIdentifier);
                 this.bedrockToJavaSounds.put(bedrockIdentifier, javaSoundMapping);
             }
             for (String bedrockIdentifier : bedrockSounds.keySet()) {
@@ -1544,7 +1545,8 @@ public class BedrockMappingData extends MappingDataBase {
     public sealed interface LevelEventMapping permits JavaSound, JavaParticle, JavaLevelEvent, JavaSoundLevelEvent {
     }
 
-    public record JavaSound(int id, String identifier, SoundSource category) implements LevelEventMapping {
+    public record JavaSound(int id, String identifier, SoundSource category,
+                            String bedrockIdentifier) implements LevelEventMapping {
     }
 
     public record JavaParticle(Particle particle, float offsetX, float offsetY, float offsetZ, float speed, int count) implements LevelEventMapping {

@@ -105,6 +105,11 @@ public class CameraInterface {
                 skipOptionalByte(wrapper); // control_scheme
             }
 
+            final CameraAudioTracker cameraAudio = wrapper.user().get(CameraAudioTracker.class);
+            if (cameraAudio != null) {
+                cameraAudio.setPresets(names, parents, posXs, posYs, posZs, audioListeners);
+            }
+
             if (!wrapper.user().get(ChannelStorage.class).hasChannel(CONFIRM_CHANNEL)) {
                 return;
             }
@@ -191,6 +196,11 @@ public class CameraInterface {
                     fadeG = wrapper.read(BedrockTypes.FLOAT_LE);
                     fadeB = wrapper.read(BedrockTypes.FLOAT_LE);
                 }
+            }
+
+            final CameraAudioTracker cameraAudio = wrapper.user().get(CameraAudioTracker.class);
+            if (cameraAudio != null) {
+                cameraAudio.applyInstruction(hasSet, presetRuntimeId, setPos, hasClear);
             }
 
             if (!wrapper.user().get(ChannelStorage.class).hasChannel(CONFIRM_CHANNEL)) {

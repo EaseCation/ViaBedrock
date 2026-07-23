@@ -31,6 +31,11 @@ public class CameraModule implements FeatureModule {
     }
 
     @Override
+    public void onStorageRegistration(final UserConnection user) {
+        user.put(new CameraAudioTracker(user));
+    }
+
+    @Override
     public void onChannelRegistered(final UserConnection user, final Set<String> channels) {
         if (channels.contains(CameraInterface.CONFIRM_CHANNEL)) {
             CameraInterface.confirmPresence(user);
