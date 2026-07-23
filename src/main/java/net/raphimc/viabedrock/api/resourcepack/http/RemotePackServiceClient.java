@@ -13,6 +13,7 @@ import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.resourcepack.cache.ArtifactKey;
 import net.raphimc.viabedrock.experimental.resourcepack.JavaPackCache;
 import net.raphimc.viabedrock.experimental.resourcepack.JavaPackCache.ArtifactLease;
+import net.raphimc.viabedrock.experimental.resourcepack.JavaPackCache.ArtifactRef;
 import net.raphimc.viabedrock.platform.ViaBedrockConfig;
 import net.raphimc.viabedrock.protocol.rewriter.ResourcePackRewriter;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
@@ -37,6 +38,8 @@ import java.util.function.Consumer;
 import java.util.logging.Level;
 
 public final class RemotePackServiceClient {
+
+    private static final int UPLOAD_ATTEMPTS = 2;
 
     static final String AUTHORIZATION = "Authorization";
     static final String STATUS = "X-Pack-Status";
@@ -149,32 +152,7 @@ public final class RemotePackServiceClient {
             this.logInfo("[remote-pack-service] upload=started artifact=" + artifact
                     + " bytes=" + lease.artifact().size());
             try (lease) {
-                final HttpURLConnection connection = this.open(
-                        "PUT", "internal/v1/pending/" + lookup.token());
-                try {
-                    connection.setDoOutput(true);
-                    connection.setFixedLengthStreamingMode(lease.artifact().size());
-                    connection.setRequestProperty(LOOKUP_KEY, lookup.lookupKey());
-                    connection.setRequestProperty(ARTIFACT_KEY, artifactKey.hex());
-                    connection.setRequestProperty(SHA1, lease.artifact().hash());
-                    connection.setRequestProperty(SIZE, Long.toString(lease.artifact().size()));
-                    connection.setRequestProperty("Content-Type", "application/zip");
-                    try (InputStream input = Files.newInputStream(lease.artifact().path());
-                         OutputStream output = connection.getOutputStream()) {
-                        input.transferTo(output);
-                    }
-                    final int status = connection.getResponseCode();
-                    drain(connection);
-                    if (status != HttpURLConnection.HTTP_OK && status != HttpURLConnection.HTTP_CREATED) {
-                        throw new IOException("Pack service upload failed with HTTP " + status);
-                    }
-                    this.logInfo("[remote-pack-service] upload=completed status=" + status
-                            + " artifact=" + artifact
-                            + " bytes=" + lease.artifact().size()
-                            + " duration_ms=" + elapsedMillis(startedNanos));
-                } finally {
-                    connection.disconnect();
-                }
+                this.uploadBlocking(lookup, artifactKey, lease.artifact());
             } catch (IOException | RuntimeException error) {
                 this.logWarning("[remote-pack-service] upload=failed artifact=" + artifact
                         + " bytes=" + lease.artifact().size()
@@ -183,6 +161,56 @@ public final class RemotePackServiceClient {
             }
             return null;
         });
+    }
+
+    void uploadBlocking(final Lookup lookup, final ArtifactKey artifactKey,
+                        final ArtifactRef artifact) throws IOException {
+        final long startedNanos = System.nanoTime();
+        for (int attempt = 1; attempt <= UPLOAD_ATTEMPTS; attempt++) {
+            final int status;
+            try {
+                status = this.uploadAttempt(lookup, artifactKey, artifact);
+            } catch (IOException error) {
+                if (attempt == UPLOAD_ATTEMPTS) throw error;
+                this.logWarning("[remote-pack-service] upload=retry artifact="
+                        + shortArtifact(artifact.hash())
+                        + " next_attempt=" + (attempt + 1), error);
+                continue;
+            }
+            if (status != HttpURLConnection.HTTP_OK && status != HttpURLConnection.HTTP_CREATED) {
+                throw new IOException("Pack service upload failed with HTTP " + status);
+            }
+            this.logInfo("[remote-pack-service] upload=completed status=" + status
+                    + " artifact=" + shortArtifact(artifact.hash())
+                    + " bytes=" + artifact.size()
+                    + " attempts=" + attempt
+                    + " duration_ms=" + elapsedMillis(startedNanos));
+            return;
+        }
+    }
+
+    private int uploadAttempt(final Lookup lookup, final ArtifactKey artifactKey,
+                              final ArtifactRef artifact) throws IOException {
+        final HttpURLConnection connection = this.open(
+                "PUT", "internal/v1/pending/" + lookup.token());
+        try {
+            connection.setDoOutput(true);
+            connection.setFixedLengthStreamingMode(artifact.size());
+            connection.setRequestProperty(LOOKUP_KEY, lookup.lookupKey());
+            connection.setRequestProperty(ARTIFACT_KEY, artifactKey.hex());
+            connection.setRequestProperty(SHA1, artifact.hash());
+            connection.setRequestProperty(SIZE, Long.toString(artifact.size()));
+            connection.setRequestProperty("Content-Type", "application/zip");
+            try (InputStream input = Files.newInputStream(artifact.path());
+                 OutputStream output = connection.getOutputStream()) {
+                input.transferTo(output);
+            }
+            final int status = connection.getResponseCode();
+            drain(connection);
+            return status;
+        } finally {
+            connection.disconnect();
+        }
     }
 
     Lookup lookupBlocking(final String lookupKey) throws IOException {
