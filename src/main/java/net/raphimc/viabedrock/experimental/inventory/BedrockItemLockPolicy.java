@@ -23,6 +23,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventorySourceType;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
 
+import java.util.Arrays;
 import java.util.List;
 
 public final class BedrockItemLockPolicy {
@@ -50,12 +51,63 @@ public final class BedrockItemLockPolicy {
             if (fromLockMode == LOCK_IN_SLOT || toLockMode == LOCK_IN_SLOT) {
                 return false;
             }
-            if ((fromLockMode == LOCK_IN_INVENTORY || toLockMode == LOCK_IN_INVENTORY)
-                    && !isPlayerInventoryLocation(action)) {
-                return false;
+            if (!isPlayerInventoryLocation(action)) {
+                if (fromLockMode == LOCK_IN_INVENTORY) {
+                    if (!isExternalContainerLocation(action)
+                            || !isCompleteExternalImport(action.fromItem(), actions)) {
+                        return false;
+                    }
+                } else if (toLockMode == LOCK_IN_INVENTORY) {
+                    return false;
+                }
             }
         }
         return true;
+    }
+
+    private static boolean isCompleteExternalImport(final BedrockItem lockedItem,
+                                                     final List<InventoryActionData> actions) {
+        int removedFromExternalContainers = 0;
+        int addedToPlayerInventory = 0;
+
+        for (final InventoryActionData action : actions) {
+            if (isNoOp(action)) {
+                continue;
+            }
+
+            final int delta = matchingAmount(action.toItem(), lockedItem)
+                    - matchingAmount(action.fromItem(), lockedItem);
+            if (delta == 0) {
+                continue;
+            }
+
+            if (isPlayerInventoryLocation(action)) {
+                addedToPlayerInventory += delta;
+            } else if (isExternalContainerLocation(action)) {
+                if (delta > 0) {
+                    return false;
+                }
+                removedFromExternalContainers -= delta;
+            } else {
+                return false;
+            }
+        }
+
+        return removedFromExternalContainers > 0
+                && addedToPlayerInventory == removedFromExternalContainers;
+    }
+
+    private static int matchingAmount(final BedrockItem candidate, final BedrockItem expected) {
+        return sameItem(candidate, expected) ? candidate.amount() : 0;
+    }
+
+    private static boolean sameItem(final BedrockItem first, final BedrockItem second) {
+        return first != null && second != null
+                && !first.isEmpty() && !second.isEmpty()
+                && !first.isDifferent(second)
+                && Arrays.equals(first.canPlace(), second.canPlace())
+                && Arrays.equals(first.canBreak(), second.canBreak())
+                && first.blockingTicks() == second.blockingTicks();
     }
 
     private static byte lockMode(final BedrockItem item) {
@@ -84,6 +136,18 @@ public final class BedrockItemLockPolicy {
                 || containerId == ContainerID.CONTAINER_ID_ARMOR.getValue()
                 || containerId == ContainerID.CONTAINER_ID_OFFHAND.getValue()
                 || containerId == ContainerID.CONTAINER_ID_PLAYER_ONLY_UI.getValue() && action.slot() == 0;
+    }
+
+    private static boolean isExternalContainerLocation(final InventoryActionData action) {
+        if (action.source().type() != InventorySourceType.ContainerInventory) {
+            return false;
+        }
+
+        final int containerId = action.source().containerId();
+        return containerId != ContainerID.CONTAINER_ID_INVENTORY.getValue()
+                && containerId != ContainerID.CONTAINER_ID_ARMOR.getValue()
+                && containerId != ContainerID.CONTAINER_ID_OFFHAND.getValue()
+                && containerId != ContainerID.CONTAINER_ID_PLAYER_ONLY_UI.getValue();
     }
 
 }

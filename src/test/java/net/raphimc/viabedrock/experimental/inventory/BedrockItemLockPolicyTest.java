@@ -80,6 +80,38 @@ class BedrockItemLockPolicyTest {
     }
 
     @Test
+    void lockInInventoryCanMoveFromExternalContainerIntoPlayerInventory() {
+        final BedrockItem locked = item(1, 2);
+
+        assertTrue(BedrockItemLockPolicy.allows(move(
+                externalContainerAction(0, locked, BedrockItem.empty()),
+                containerAction(ContainerID.CONTAINER_ID_INVENTORY, 0, BedrockItem.empty(), locked))));
+        assertTrue(BedrockItemLockPolicy.allows(move(
+                externalContainerAction(0, locked, BedrockItem.empty()),
+                containerAction(ContainerID.CONTAINER_ID_PLAYER_ONLY_UI, 0, BedrockItem.empty(), locked))));
+    }
+
+    @Test
+    void lockInInventoryCanBePartiallyImportedFromExternalContainer() {
+        final BedrockItem locked = item(3, 2);
+        final BedrockItem remaining = item(1, 2);
+        final BedrockItem imported = item(2, 2);
+
+        assertTrue(BedrockItemLockPolicy.allows(move(
+                externalContainerAction(0, locked, remaining),
+                containerAction(ContainerID.CONTAINER_ID_INVENTORY, 0, BedrockItem.empty(), imported))));
+    }
+
+    @Test
+    void externalImportMustConserveTheLockedItemCount() {
+        final BedrockItem locked = item(2, 2);
+
+        assertFalse(BedrockItemLockPolicy.allows(move(
+                externalContainerAction(0, locked, BedrockItem.empty()),
+                containerAction(ContainerID.CONTAINER_ID_INVENTORY, 0, BedrockItem.empty(), item(1, 2)))));
+    }
+
+    @Test
     void lockInInventoryRejectsWorldDrops() {
         final BedrockItem locked = item(1, 2);
 
@@ -90,7 +122,7 @@ class BedrockItemLockPolicyTest {
     }
 
     @Test
-    void lockInInventoryRejectsExternalContainersAndCraftingSlots() {
+    void lockInInventoryRejectsMovesFromPlayerInventoryToExternalContainersAndCraftingSlots() {
         final BedrockItem locked = item(1, 2);
 
         assertFalse(BedrockItemLockPolicy.allows(move(
@@ -99,6 +131,18 @@ class BedrockItemLockPolicyTest {
         assertFalse(BedrockItemLockPolicy.allows(move(
                 containerAction(ContainerID.CONTAINER_ID_INVENTORY, 0, locked, BedrockItem.empty()),
                 containerAction(ContainerID.CONTAINER_ID_PLAYER_ONLY_UI, 28, BedrockItem.empty(), locked))));
+        assertFalse(BedrockItemLockPolicy.allows(move(
+                containerAction(ContainerID.CONTAINER_ID_PLAYER_ONLY_UI, 28, locked, BedrockItem.empty()),
+                containerAction(ContainerID.CONTAINER_ID_INVENTORY, 0, BedrockItem.empty(), locked))));
+    }
+
+    @Test
+    void lockInInventoryRejectsMovesBetweenExternalContainers() {
+        final BedrockItem locked = item(1, 2);
+
+        assertFalse(BedrockItemLockPolicy.allows(move(
+                externalContainerAction(0, locked, BedrockItem.empty()),
+                externalContainerAction(1, BedrockItem.empty(), locked))));
     }
 
     @Test
@@ -119,6 +163,12 @@ class BedrockItemLockPolicyTest {
     private static InventoryActionData containerAction(final ContainerID containerId, final int slot,
                                                        final BedrockItem from, final BedrockItem to) {
         return action(InventorySourceType.ContainerInventory, containerId.getValue(), slot, from, to);
+    }
+
+    private static InventoryActionData externalContainerAction(final int slot,
+                                                               final BedrockItem from,
+                                                               final BedrockItem to) {
+        return action(InventorySourceType.ContainerInventory, 5, slot, from, to);
     }
 
     private static InventoryActionData action(final InventorySourceType sourceType, final int containerId,
