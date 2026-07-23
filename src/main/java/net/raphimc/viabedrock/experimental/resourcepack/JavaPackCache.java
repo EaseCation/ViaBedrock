@@ -119,6 +119,9 @@ public class JavaPackCache {
     private record DiskUsage(long bytes, long files) {
     }
 
+    private record KeylessFileStamp(long size, FileTime creationTime, FileTime modifiedTime) {
+    }
+
     private record CacheSnapshot(List<CacheEntry> entries, Map<String, Path> artifacts,
                                  DiskUsage usage, DiskUsage buildWorkspaceUsage) {
     }
@@ -1292,7 +1295,7 @@ public class JavaPackCache {
 
     private static DiskUsage diskUsage(final Set<Path> managedFiles) throws IOException {
         final Set<Object> physicalFileKeys = new HashSet<>();
-        final List<Path> keylessFiles = new ArrayList<>();
+        final Map<KeylessFileStamp, List<Path>> keylessFiles = new HashMap<>();
         long bytes = 0L;
         long files = 0L;
         for (Path path : managedFiles) {
@@ -1307,13 +1310,16 @@ public class JavaPackCache {
                 unique = physicalFileKeys.add(fileKey);
             } else {
                 unique = true;
-                for (Path existing : keylessFiles) {
+                final KeylessFileStamp stamp = new KeylessFileStamp(
+                        attributes.size(), attributes.creationTime(), attributes.lastModifiedTime());
+                final List<Path> candidates = keylessFiles.computeIfAbsent(stamp, ignored -> new ArrayList<>());
+                for (Path existing : candidates) {
                     if (Files.isSameFile(path, existing)) {
                         unique = false;
                         break;
                     }
                 }
-                if (unique) keylessFiles.add(path);
+                if (unique) candidates.add(path);
             }
             if (unique) {
                 bytes += attributes.size();
