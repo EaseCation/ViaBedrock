@@ -515,7 +515,7 @@ public class JoinPackets {
         );
     }
 
-    private static ByteBuf copyDeferredStartGamePayload(final PacketWrapper wrapper) {
+    static ByteBuf copyDeferredStartGamePayload(final PacketWrapper wrapper) {
         final Channel channel = wrapper.user().getChannel();
         if (channel == null) {
             throw new IllegalStateException("Cannot defer START_GAME without an active channel");
@@ -523,8 +523,15 @@ public class JoinPackets {
 
         final ByteBuf framedPacket = channel.alloc().buffer();
         try {
+            final int packetId = wrapper.getId();
             wrapper.writeToBuffer(framedPacket);
-            Types.VAR_INT.readPrimitive(framedPacket); // Replay restores the Bedrock packet id.
+            if (packetId != -1) {
+                final int serializedPacketId = Types.VAR_INT.readPrimitive(framedPacket);
+                if (serializedPacketId != packetId) {
+                    throw new IllegalStateException("Serialized START_GAME packet id changed from "
+                            + packetId + " to " + serializedPacketId);
+                }
+            }
             return framedPacket.readRetainedSlice(framedPacket.readableBytes());
         } finally {
             framedPacket.release();
