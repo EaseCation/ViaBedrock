@@ -29,6 +29,7 @@ import com.viaversion.viaversion.api.minecraft.item.data.Enchantments;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
 import net.raphimc.viabedrock.ViaBedrock;
+import net.raphimc.viabedrock.api.util.MathUtil;
 import net.raphimc.viabedrock.api.util.RegistryUtil;
 import net.raphimc.viabedrock.experimental.model.map.MapObject;
 import net.raphimc.viabedrock.experimental.storage.MapTracker;
@@ -144,7 +145,7 @@ public class ExperimentalItemRewriter {
                                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Enchantment entry is null for enchantment " + javaEnchantmentId);
                                 } else {
                                     int javaId = RegistryUtil.getRegistryIndex(enchantmentsRegistry, enchantmentEntry);
-                                    javaEnchantments.add(javaId, level);
+                                    javaEnchantments.add(javaId, javaEnchantmentLevel(level));
                                 }
                             } else {
                                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown enchantment with id " + bedrockId + " and level " + level);
@@ -177,6 +178,10 @@ public class ExperimentalItemRewriter {
 
     static boolean shouldApplySwordBlockingAnimation(final boolean enabled, final String identifier) {
         return enabled && identifier != null && VANILLA_SWORDS.contains(identifier);
+    }
+
+    static int javaEnchantmentLevel(final int bedrockLevel) {
+        return MathUtil.clamp(bedrockLevel, 0, 255);
     }
 
     private static void requestMapInfo(final UserConnection user, final long bedrockMapId) {
