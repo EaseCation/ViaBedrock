@@ -39,12 +39,15 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Consumer;
+import java.util.logging.Logger;
 import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
 final class PackServiceStore {
 
+    private static final Logger LOGGER = Logger.getLogger(PackServiceStore.class.getName());
     private static final Pattern SHA1 = Pattern.compile("[0-9a-f]{40}");
     private static final Pattern SHA256 = Pattern.compile("[0-9a-f]{64}");
     private static final int MAX_ZIP_ENTRIES = 100_000;
@@ -52,6 +55,7 @@ final class PackServiceStore {
 
     private final PackServiceConfig config;
     private final PackServiceMetrics metrics;
+    private final Consumer<String> eventLogger;
     private final Path artifactsDirectory;
     private final Path mappingsDirectory;
     private final Path pendingDirectory;
@@ -62,8 +66,14 @@ final class PackServiceStore {
     private final Map<String, ArtifactStamp> validatedArtifacts = new HashMap<>();
 
     PackServiceStore(final PackServiceConfig config, final PackServiceMetrics metrics) throws IOException {
+        this(config, metrics, message -> LOGGER.info(message));
+    }
+
+    PackServiceStore(final PackServiceConfig config, final PackServiceMetrics metrics,
+                     final Consumer<String> eventLogger) throws IOException {
         this.config = Objects.requireNonNull(config, "config");
         this.metrics = Objects.requireNonNull(metrics, "metrics");
+        this.eventLogger = Objects.requireNonNull(eventLogger, "eventLogger");
         this.artifactsDirectory = config.dataDirectory().resolve("artifacts");
         this.mappingsDirectory = config.dataDirectory().resolve("mappings");
         this.pendingDirectory = config.dataDirectory().resolve("pending");
@@ -85,6 +95,8 @@ final class PackServiceStore {
         final Artifact mapped = this.readMapping(lookupKey);
         if (mapped != null) {
             this.metrics.lookup(true);
+            this.logEvent("[pack-service-cache] result=hit artifact=" + shortArtifact(mapped.sha1)
+                    + " bytes=" + mapped.size);
             return LookupResult.ready(mapped);
         }
 
@@ -98,6 +110,10 @@ final class PackServiceStore {
                     existing.updatedAtMillis = System.currentTimeMillis();
                     this.writePending(existing);
                 }
+                this.logEvent(existing.artifact != null
+                        ? "[pack-service-cache] result=hit artifact=" + shortArtifact(existing.artifact.sha1)
+                        + " bytes=" + existing.artifact.size
+                        : "[pack-service-cache] result=pending_joined claims=" + existing.claims);
                 return existing.artifact != null
                         ? LookupResult.ready(existing.artifact)
                         : LookupResult.pending(existingToken);
@@ -111,6 +127,7 @@ final class PackServiceStore {
         this.pendingByToken.put(token, state);
         this.pendingByLookup.put(lookupKey, token);
         this.metrics.pendingResult("created");
+        this.logEvent("[pack-service-cache] result=miss pending=created");
         return LookupResult.pending(token);
     }
 
@@ -170,8 +187,11 @@ final class PackServiceStore {
                 state.uploading = true;
             }
             Path temp = null;
+            final long startedNanos = System.nanoTime();
+            this.logEvent("[pack-service-upload] result=started artifact=" + shortArtifact(expectedSha1)
+                    + " bytes=" + expectedSize);
             try {
-                temp = Files.createTempFile(this.tempDirectory, token + "-", ".zip.tmp");
+                temp = Files.createTempFile(this.tempDirectory, "upload-", ".zip.tmp");
                 final MessageDigest digest = sha1Digest();
                 long actualSize;
                 try (InputStream limited = new LimitedInputStream(input, this.config.maxUploadBytes());
@@ -192,6 +212,7 @@ final class PackServiceStore {
                 validateZip(temp);
 
                 final Artifact artifact;
+                final boolean deduplicated;
                 synchronized (this) {
                     if (state.artifact != null && (!state.artifact.sha1.equals(expectedSha1)
                             || !state.artifact.artifactKey.equals(artifactKey))) {
@@ -205,8 +226,10 @@ final class PackServiceStore {
                                     "conflict", "Existing SHA-1 artifact contains different bytes");
                         }
                         Files.delete(temp);
+                        deduplicated = true;
                     } else {
                         moveAtomically(temp, target);
+                        deduplicated = false;
                     }
                     this.touchArtifact(target);
                     artifact = new Artifact(artifactKey, expectedSha1, target, expectedSize);
@@ -219,9 +242,21 @@ final class PackServiceStore {
                 }
                 state.completion.complete(artifact);
                 this.metrics.pendingResult("completed", state.updatedAtMillis - state.createdAtMillis);
+                this.logEvent("[pack-service-upload] result="
+                        + (deduplicated ? "deduplicated" : "created")
+                        + " artifact=" + shortArtifact(expectedSha1)
+                        + " bytes=" + expectedSize
+                        + " duration_ms=" + elapsedMillis(startedNanos));
                 return artifact;
             } catch (IOException | RuntimeException | Error e) {
                 if (temp != null) Files.deleteIfExists(temp);
+                final String reason = e instanceof UploadValidationException validation
+                        ? validation.reason() : e.getClass().getSimpleName();
+                this.logEvent("[pack-service-upload] result=failed artifact="
+                        + shortArtifact(expectedSha1)
+                        + " bytes=" + expectedSize
+                        + " duration_ms=" + elapsedMillis(startedNanos)
+                        + " error=" + reason);
                 throw e;
             } finally {
                 state.uploading = false;
@@ -231,14 +266,22 @@ final class PackServiceStore {
 
     synchronized boolean cancel(final UUID token, final String lookupKey) throws IOException {
         final PendingState state = this.pendingByToken.get(token);
-        if (state == null) return false;
+        if (state == null) {
+            this.logEvent("[pack-service-pending] result=not_found");
+            return false;
+        }
         if (!state.lookupKey.equals(lookupKey)) {
             throw new UploadValidationException("lookup_key", "Pending token does not match lookup key");
         }
-        if (state.artifact != null || state.uploading) return false;
+        if (state.artifact != null || state.uploading) {
+            this.logEvent("[pack-service-pending] result=not_cancelled state="
+                    + (state.artifact != null ? "completed" : "uploading"));
+            return false;
+        }
         if (state.claims > 1) {
             state.claims--;
             this.writePending(state);
+            this.logEvent("[pack-service-pending] result=released remaining_claims=" + state.claims);
             return true;
         }
         this.removePending(token, "cancelled");
@@ -252,17 +295,25 @@ final class PackServiceStore {
                 this.removePending(state.token, "timeout");
             }
         }
+        int deletedTempFiles = 0;
         try (var files = Files.list(this.tempDirectory)) {
             for (Path file : files.toList()) {
                 if (Files.isRegularFile(file)
                         && Files.getLastModifiedTime(file).toMillis()
                         < now - this.config.pendingTimeout().toMillis()) {
-                    Files.deleteIfExists(file);
+                    if (Files.deleteIfExists(file)) deletedTempFiles++;
                 }
             }
         }
-        this.evictArtifacts(now);
-        this.removeBrokenMappings();
+        final EvictionSummary eviction = this.evictArtifacts(now);
+        final int brokenMappings = this.removeBrokenMappings();
+        if (deletedTempFiles > 0 || brokenMappings > 0 || eviction.count > 0L) {
+            this.logEvent("[pack-service-maintenance] temp_deleted=" + deletedTempFiles
+                    + " broken_mappings=" + brokenMappings
+                    + " evicted=" + eviction.count
+                    + " freed_bytes=" + eviction.freedBytes
+                    + " stored_bytes=" + eviction.storedBytes);
+        }
     }
 
     boolean isReady() {
@@ -387,13 +438,15 @@ final class PackServiceStore {
         }
     }
 
-    private void evictArtifacts(final long now) throws IOException {
+    private EvictionSummary evictArtifacts(final long now) throws IOException {
         final List<Path> artifacts;
         try (var files = Files.list(this.artifactsDirectory)) {
             artifacts = new ArrayList<>(files.filter(Files::isRegularFile).toList());
         }
         artifacts.sort(Comparator.comparingLong(PackServiceStore::lastModified));
         long totalBytes = 0L;
+        long evicted = 0L;
+        long freedBytes = 0L;
         for (Path artifact : artifacts) totalBytes += Files.size(artifact);
         final long idleCutoff = now - this.config.cacheIdleTime().toMillis();
         final Set<String> pendingArtifacts = new HashSet<>();
@@ -413,28 +466,33 @@ final class PackServiceStore {
                     || totalBytes > this.config.cacheBudgetBytes()) {
                 if (Files.deleteIfExists(artifact)) {
                     totalBytes -= size;
+                    evicted++;
+                    freedBytes += size;
                     this.validatedArtifacts.remove(sha1);
                     this.metrics.eviction(size);
                 }
             }
         }
+        return new EvictionSummary(evicted, freedBytes, totalBytes);
     }
 
-    private void removeBrokenMappings() throws IOException {
+    private int removeBrokenMappings() throws IOException {
+        int removed = 0;
         try (var files = Files.list(this.mappingsDirectory)) {
             for (Path mapping : files.toList()) {
                 if (!Files.isRegularFile(mapping)) continue;
                 final String fileName = mapping.getFileName().toString();
                 if (!fileName.endsWith(".properties")) {
-                    Files.deleteIfExists(mapping);
+                    if (Files.deleteIfExists(mapping)) removed++;
                     continue;
                 }
                 final String lookupKey = fileName.substring(0, fileName.length() - ".properties".length());
                 if (!SHA256.matcher(lookupKey).matches() || this.readMapping(lookupKey) == null) {
-                    Files.deleteIfExists(mapping);
+                    if (Files.deleteIfExists(mapping)) removed++;
                 }
             }
         }
+        return removed;
     }
 
     private void writeMapping(final String lookupKey, final Artifact artifact) throws IOException {
@@ -480,7 +538,25 @@ final class PackServiceStore {
         if (removed.artifact == null) {
             removed.completion.completeExceptionally(new TimeoutException("Pending resource pack " + result));
             this.metrics.pendingResult(result, System.currentTimeMillis() - removed.createdAtMillis);
+            this.logEvent("[pack-service-pending] result=" + result
+                    + " duration_ms=" + Math.max(0L, System.currentTimeMillis() - removed.createdAtMillis));
         }
+    }
+
+    private void logEvent(final String message) {
+        try {
+            this.eventLogger.accept(message);
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    private static long elapsedMillis(final long startedNanos) {
+        return java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(
+                Math.max(0L, System.nanoTime() - startedNanos));
+    }
+
+    private static String shortArtifact(final String sha1) {
+        return sha1.substring(0, 12);
     }
 
     private synchronized void release(final String sha1) {
@@ -691,6 +767,9 @@ final class PackServiceStore {
     }
 
     private record ArtifactStamp(long size, long modifiedMillis) {
+    }
+
+    private record EvictionSummary(long count, long freedBytes, long storedBytes) {
     }
 
     private static final class LimitedInputStream extends FilterInputStream {

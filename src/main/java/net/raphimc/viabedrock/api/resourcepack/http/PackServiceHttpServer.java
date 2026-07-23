@@ -19,6 +19,7 @@ import net.raphimc.viabedrock.api.resourcepack.http.PackServiceStore.UploadValid
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.RandomAccessFile;
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Locale;
@@ -34,11 +35,16 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 final class PackServiceHttpServer implements AutoCloseable {
 
+    private static final Logger LOGGER = Logger.getLogger(PackServiceHttpServer.class.getName());
+    private static final String ACCESS_CONTEXT_ATTRIBUTE = PackServiceHttpServer.class.getName() + ".access";
     private static final Pattern ARTIFACT_PATH = Pattern.compile("^/packs/([0-9a-f]{40})\\.zip$");
     private static final Pattern PENDING_PATH = Pattern.compile(
             "^/packs/pending/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$");
@@ -51,6 +57,7 @@ final class PackServiceHttpServer implements AutoCloseable {
     private final PackServiceStore store;
     private final PackServiceMetrics metrics;
     private final ArtifactFileOpener artifactFileOpener;
+    private final Consumer<String> accessLogger;
     private final byte[] expectedAuthorization;
     private final HttpServer publicServer;
     private final HttpServer internalServer;
@@ -69,10 +76,18 @@ final class PackServiceHttpServer implements AutoCloseable {
     PackServiceHttpServer(final PackServiceConfig config, final PackServiceStore store,
                           final PackServiceMetrics metrics,
                           final ArtifactFileOpener artifactFileOpener) throws IOException {
+        this(config, store, metrics, artifactFileOpener, message -> LOGGER.info(message));
+    }
+
+    PackServiceHttpServer(final PackServiceConfig config, final PackServiceStore store,
+                          final PackServiceMetrics metrics,
+                          final ArtifactFileOpener artifactFileOpener,
+                          final Consumer<String> accessLogger) throws IOException {
         this.config = Objects.requireNonNull(config, "config");
         this.store = Objects.requireNonNull(store, "store");
         this.metrics = Objects.requireNonNull(metrics, "metrics");
         this.artifactFileOpener = Objects.requireNonNull(artifactFileOpener, "artifactFileOpener");
+        this.accessLogger = Objects.requireNonNull(accessLogger, "accessLogger");
         this.expectedAuthorization = ("Bearer " + config.sharedSecret()).getBytes(StandardCharsets.UTF_8);
         this.publicExecutor = createExecutor(
                 config.workerThreads(), config.workerThreads() * 8, "Pack Service Public");
@@ -82,9 +97,12 @@ final class PackServiceHttpServer implements AutoCloseable {
         this.metricsExecutor = createExecutor(2, 16, "Pack Service Metrics");
         this.maintenanceExecutor = new ScheduledThreadPoolExecutor(
                 1, new NamedThreadFactory("Pack Service Maintenance"));
-        this.publicServer = this.create(config.publicAddress(), this::handlePublic, this.publicExecutor);
-        this.internalServer = this.create(config.internalAddress(), this::handleInternal, this.internalExecutor);
-        this.metricsServer = this.create(config.metricsAddress(), this::handleMetrics, this.metricsExecutor);
+        this.publicServer = this.create(
+                config.publicAddress(), "public", this::handlePublic, this.publicExecutor);
+        this.internalServer = this.create(
+                config.internalAddress(), "internal", this::handleInternal, this.internalExecutor);
+        this.metricsServer = this.create(
+                config.metricsAddress(), null, this::handleMetrics, this.metricsExecutor);
     }
 
     void start() {
@@ -94,17 +112,34 @@ final class PackServiceHttpServer implements AutoCloseable {
         this.maintenanceExecutor.scheduleWithFixedDelay(() -> {
             try {
                 this.store.maintain();
-            } catch (Throwable ignored) {
+            } catch (Throwable error) {
+                LOGGER.warning("[pack-service-maintenance] result=failed error="
+                        + error.getClass().getSimpleName());
             }
         }, this.config.maintenanceInterval().toSeconds(), this.config.maintenanceInterval().toSeconds(),
                 TimeUnit.SECONDS);
     }
 
     private HttpServer create(final java.net.InetSocketAddress address,
+                              final String listener,
                               final com.sun.net.httpserver.HttpHandler handler,
                               final ThreadPoolExecutor executor) throws IOException {
         final HttpServer server = HttpServer.create(address, 128);
-        server.createContext("/", handler);
+        server.createContext("/", exchange -> {
+            if (listener == null) {
+                handler.handle(exchange);
+                return;
+            }
+            final AccessContext context = new AccessContext(listener, System.nanoTime());
+            exchange.setAttribute(ACCESS_CONTEXT_ATTRIBUTE, context);
+            try {
+                handler.handle(exchange);
+            } finally {
+                if (!context.completed) {
+                    this.logAccess(exchange, "unhandled", exchange.getRequestMethod(), 500, 0L);
+                }
+            }
+        });
         server.setExecutor(executor);
         return server;
     }
@@ -228,6 +263,7 @@ final class PackServiceHttpServer implements AutoCloseable {
         } finally {
             this.metrics.finishDownload(started, result, transferred, partial);
             this.metrics.httpRequest(route, method, status);
+            this.logAccess(exchange, route, method, status, transferred);
             exchange.close();
         }
     }
@@ -362,7 +398,48 @@ final class PackServiceHttpServer implements AutoCloseable {
                          final int status) throws IOException {
         sendEmpty(exchange, status);
         this.metrics.httpRequest(route, method, status);
+        this.logAccess(exchange, route, method, status, 0L);
         exchange.close();
+    }
+
+    private void logAccess(final HttpExchange exchange, final String route, final String method,
+                           final int status, final long bytes) {
+        final Object value = exchange.getAttribute(ACCESS_CONTEXT_ATTRIBUTE);
+        if (!(value instanceof AccessContext context) || context.completed) return;
+        context.completed = true;
+        if ("health_live".equals(route) || "health_ready".equals(route)) return;
+
+        final long durationMillis = TimeUnit.NANOSECONDS.toMillis(
+                Math.max(0L, System.nanoTime() - context.startedNanos));
+        final String client = clientAddress(exchange, context.listener);
+        try {
+            this.accessLogger.accept("[pack-service-access] listener=" + context.listener
+                    + " client=" + client
+                    + " method=" + method.toUpperCase(Locale.ROOT)
+                    + " route=" + route
+                    + " status=" + status
+                    + " bytes=" + Math.max(0L, bytes)
+                    + " duration_ms=" + durationMillis);
+        } catch (RuntimeException error) {
+            LOGGER.log(Level.WARNING, "Failed to write resource pack access log", error);
+        }
+    }
+
+    private static String clientAddress(final HttpExchange exchange, final String listener) {
+        if ("public".equals(listener)) {
+            final String forwardedFor = exchange.getRequestHeaders().getFirst("X-Forwarded-For");
+            if (forwardedFor != null) {
+                final String first = forwardedFor.split(",", 2)[0].trim();
+                if (!first.isEmpty() && first.length() <= 64
+                        && first.chars().allMatch(character -> Character.digit(character, 16) >= 0
+                        || character == ':' || character == '.')) {
+                    return first;
+                }
+            }
+        }
+        final InetSocketAddress remote = exchange.getRemoteAddress();
+        if (remote == null) return "-";
+        return remote.getAddress() != null ? remote.getAddress().getHostAddress() : remote.getHostString();
     }
 
     private static void sendEmpty(final HttpExchange exchange, final int status) throws IOException {
@@ -412,6 +489,17 @@ final class PackServiceHttpServer implements AutoCloseable {
     @FunctionalInterface
     interface ArtifactFileOpener {
         RandomAccessFile open(java.nio.file.Path path) throws IOException;
+    }
+
+    private static final class AccessContext {
+        private final String listener;
+        private final long startedNanos;
+        private boolean completed;
+
+        private AccessContext(final String listener, final long startedNanos) {
+            this.listener = listener;
+            this.startedNanos = startedNanos;
+        }
     }
 
     @Override

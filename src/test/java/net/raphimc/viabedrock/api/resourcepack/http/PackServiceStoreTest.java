@@ -20,7 +20,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -146,6 +148,51 @@ class PackServiceStoreTest {
                 () -> store.publish(unsafeZip.token(), "2".repeat(64), ARTIFACT_KEY,
                         sha1(unsafe), unsafe.length, new ByteArrayInputStream(unsafe)));
         assertEquals("zip", unsafeZipError.reason());
+    }
+
+    @Test
+    void logsStateChangesWithoutSensitiveIdentifiers(@TempDir final Path dataDirectory) throws Exception {
+        final List<String> logs = new ArrayList<>();
+        final PackServiceStore store = new PackServiceStore(
+                config(dataDirectory, 18080, 18081, 19462), new PackServiceMetrics(), logs::add);
+        final byte[] zip = zip();
+        final String sha1 = sha1(zip);
+
+        final PackServiceStore.LookupResult first = store.lookupOrCreate(LOOKUP_KEY);
+        final PackServiceStore.LookupResult second = store.lookupOrCreate(LOOKUP_KEY);
+        assertTrue(store.cancel(first.token(), LOOKUP_KEY));
+        store.publish(second.token(), LOOKUP_KEY, ARTIFACT_KEY, sha1, zip.length,
+                new ByteArrayInputStream(zip));
+        assertTrue(store.lookupOrCreate(LOOKUP_KEY).ready());
+
+        assertTrue(logs.stream().anyMatch(line -> line.equals(
+                "[pack-service-cache] result=miss pending=created")));
+        assertTrue(logs.stream().anyMatch(line -> line.contains(
+                "[pack-service-cache] result=pending_joined claims=2")));
+        assertTrue(logs.stream().anyMatch(line -> line.contains(
+                "[pack-service-pending] result=released remaining_claims=1")));
+        assertTrue(logs.stream().anyMatch(line -> line.contains(
+                "[pack-service-upload] result=created artifact=" + sha1.substring(0, 12))));
+        assertTrue(logs.stream().anyMatch(line -> line.contains(
+                "[pack-service-cache] result=hit artifact=" + sha1.substring(0, 12))));
+        assertTrue(logs.stream().noneMatch(line -> line.contains(LOOKUP_KEY)));
+        assertTrue(logs.stream().noneMatch(line -> line.contains(ARTIFACT_KEY)));
+        assertTrue(logs.stream().noneMatch(line -> line.contains(first.token().toString())));
+        assertTrue(logs.stream().noneMatch(line -> line.contains(sha1)));
+    }
+
+    @Test
+    void logsMaintenanceOnlyWhenFilesAreRemoved(@TempDir final Path dataDirectory) throws Exception {
+        final Path mappings = dataDirectory.resolve("mappings");
+        Files.createDirectories(mappings);
+        Files.writeString(mappings.resolve("broken.tmp"), "broken");
+        final List<String> logs = new ArrayList<>();
+
+        new PackServiceStore(config(dataDirectory, 18080, 18081, 19462),
+                new PackServiceMetrics(), logs::add);
+
+        assertTrue(logs.stream().anyMatch(line -> line.contains(
+                "[pack-service-maintenance] temp_deleted=0 broken_mappings=1 evicted=0")));
     }
 
     static PackServiceConfig config(final Path dataDirectory, final int publicPort,
