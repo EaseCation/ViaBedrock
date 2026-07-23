@@ -894,6 +894,14 @@ public class ResourcePackPackets {
         return stage;
     }
 
+    static CompletableFuture<Path> publishDetachedArchive(
+            final ResourcePackArchiveStore archiveStore,
+            final ResourcePackArchiveStore.Claim claim, final Path archive) {
+        final CompletableFuture<Path> publication = archiveStore.publishAsync(claim, archive);
+        publication.whenComplete((ignored, error) -> claim.close());
+        return publication;
+    }
+
     static CompletableFuture<Void> attachClaimedPackWaiter(
             final WeakReference<UserConnection> userReference,
             final WeakReference<ResourcePackLoadStateTracker> loadTrackerReference,
@@ -959,9 +967,28 @@ public class ResourcePackPackets {
         if (download.archiveClaim() != null) {
             final ResourcePack.Key packKey = download.declaredKey();
             final ResourcePackLoadStateTracker loadStateTracker = user.get(ResourcePackLoadStateTracker.class);
+            if (loadStateTracker == null) {
+                try {
+                    final Path archive = downloadTracker.takeCompleted(key);
+                    publishDetachedArchive(
+                            ViaBedrock.getResourcePackArchiveStore(), download.archiveClaim(), archive)
+                            .exceptionally(publishError -> {
+                                ViaBedrock.getPlatform().getLogger().log(Level.WARNING,
+                                        "Failed to retain a completed server resource pack after negotiation ended",
+                                        publishError);
+                                return null;
+                            });
+                } catch (Throwable publishError) {
+                    downloadTracker.fail(key, publishError);
+                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING,
+                            "Failed to retain a completed server resource pack after negotiation ended",
+                            publishError);
+                }
+                return;
+            }
             final ResourcePackLoadStateTracker.Info info =
-                    loadStateTracker != null && packKey != null ? loadStateTracker.getRequest(packKey) : null;
-            if (loadStateTracker == null || packKey == null || info == null) {
+                    packKey != null ? loadStateTracker.getRequest(packKey) : null;
+            if (packKey == null || info == null) {
                 final IllegalStateException failure = new IllegalStateException(
                         "Shared resource pack download lost its announced identity: " + key);
                 downloadTracker.fail(key, failure);
