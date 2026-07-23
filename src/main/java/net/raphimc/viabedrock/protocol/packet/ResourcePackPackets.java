@@ -412,7 +412,7 @@ public class ResourcePackPackets {
                             .publish(loadStateTracker.remotePackLookup(), resourcePackStorage)
                             .whenComplete((ignored, uploadError) -> {
                                 if (uploadError != null) {
-                                    remotePackServiceClient.cancel(loadStateTracker.remotePackLookup());
+                                    cancelRemotePackDelivery(loadStateTracker);
                                     if (user.getChannel().isActive()) {
                                         BedrockProtocol.kickForIllegalState(
                                                 user, "Failed to publish the Java resource pack", uploadError);
@@ -543,14 +543,14 @@ public class ResourcePackPackets {
             ViaBedrock.getResourcePackServer().failConnection(loadStateTracker.httpToken(), error);
         } else if (ViaBedrock.getRemotePackServiceClient() != null
                 && loadStateTracker.remotePackLookup() != null) {
-            ViaBedrock.getRemotePackServiceClient().cancel(loadStateTracker.remotePackLookup());
+            cancelRemotePackDelivery(loadStateTracker);
         }
     }
 
     private static void cancelRemotePackDelivery(final ResourcePackLoadStateTracker loadStateTracker) {
-        if (loadStateTracker != null && ViaBedrock.getRemotePackServiceClient() != null) {
-            ViaBedrock.getRemotePackServiceClient().cancel(loadStateTracker.remotePackLookup());
-        }
+        if (loadStateTracker == null || ViaBedrock.getRemotePackServiceClient() == null) return;
+        final RemotePackServiceClient.Lookup lookup = loadStateTracker.claimRemotePackCancellation();
+        if (lookup != null) ViaBedrock.getRemotePackServiceClient().cancel(lookup);
     }
 
     static <T> CompletableFuture<T> awaitRemoteLookup(
@@ -585,11 +585,11 @@ public class ResourcePackPackets {
             return;
         }
         user.getChannel().closeFuture().addListener(ignored ->
-                lookupFuture.thenAccept(client::cancel));
+                lookupFuture.thenAccept(lookup -> cancelRemotePackDelivery(loadStateTracker)));
         lookupFuture.whenComplete((lookup, error) -> {
             final Runnable announce = () -> {
                 if (!user.getChannel().isActive()) {
-                    client.cancel(lookup);
+                    cancelRemotePackDelivery(loadStateTracker);
                     return;
                 }
                 if (error != null) {
@@ -604,13 +604,14 @@ public class ResourcePackPackets {
                             lookup.ready() ? lookup.sha1() : "");
                     resourcePack.send(BedrockProtocol.class);
                 } catch (Throwable sendError) {
-                    client.cancel(lookup);
+                    cancelRemotePackDelivery(loadStateTracker);
                     BedrockProtocol.kickForIllegalState(
                             user, "Failed to announce the Java resource pack", sendError);
                 }
             };
             final RejectedExecutionException rejection = executeOnEventLoop(
-                    user.getChannel().eventLoop(), announce, () -> client.cancel(lookup));
+                    user.getChannel().eventLoop(), announce,
+                    () -> cancelRemotePackDelivery(loadStateTracker));
             if (rejection != null && user.getChannel().isActive()) {
                 BedrockProtocol.kickForIllegalState(
                         user, "Failed to schedule the Java resource pack announcement", rejection);

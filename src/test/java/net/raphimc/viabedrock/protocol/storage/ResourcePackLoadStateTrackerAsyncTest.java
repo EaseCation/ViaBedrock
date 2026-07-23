@@ -12,6 +12,7 @@ package net.raphimc.viabedrock.protocol.storage;
 import com.viaversion.viaversion.connection.UserConnectionImpl;
 import io.netty.channel.embedded.EmbeddedChannel;
 import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
+import net.raphimc.viabedrock.api.resourcepack.http.RemotePackServiceClient;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -29,11 +30,38 @@ import java.io.IOException;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ResourcePackLoadStateTrackerAsyncTest {
+
+    @Test
+    void claimsEachRemoteLookupCancellationOnlyOnce() {
+        final EmbeddedChannel firstChannel = new EmbeddedChannel();
+        final EmbeddedChannel secondChannel = new EmbeddedChannel();
+        try {
+            final UUID token = UUID.randomUUID();
+            final RemotePackServiceClient.Lookup lookup = new RemotePackServiceClient.Lookup(
+                    "a".repeat(64), null, null, -1L, token, token,
+                    "https://packs.example.test/packs/pending/" + token);
+            final ResourcePackLoadStateTracker first = new ResourcePackLoadStateTracker(
+                    new UserConnectionImpl(firstChannel), new ResourcePackLoadStateTracker.Info[0]);
+            final ResourcePackLoadStateTracker second = new ResourcePackLoadStateTracker(
+                    new UserConnectionImpl(secondChannel), new ResourcePackLoadStateTracker.Info[0]);
+            first.setRemotePackLookupFuture(CompletableFuture.completedFuture(lookup));
+            second.setRemotePackLookupFuture(CompletableFuture.completedFuture(lookup));
+
+            assertSame(lookup, first.claimRemotePackCancellation());
+            assertNull(first.claimRemotePackCancellation());
+            assertSame(lookup, second.claimRemotePackCancellation());
+            assertNull(second.claimRemotePackCancellation());
+        } finally {
+            firstChannel.finishAndReleaseAll();
+            secondChannel.finishAndReleaseAll();
+        }
+    }
 
     @Test
     void resolvesVersionedAndVersionlessTransferNamesToTheAnnouncedIdentity() {

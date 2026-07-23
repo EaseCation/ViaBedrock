@@ -50,6 +50,7 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 
@@ -65,6 +66,7 @@ public class ResourcePackLoadStateTracker extends StoredObject {
     private UUID httpToken;
     private volatile RemotePackServiceClient.Lookup remotePackLookup;
     private CompletableFuture<RemotePackServiceClient.Lookup> remotePackLookupFuture;
+    private final AtomicBoolean remotePackCancellationClaimed = new AtomicBoolean();
     private boolean javaClientAccepted;
 
     public ResourcePackLoadStateTracker(final UserConnection user, final ResourcePackLoadStateTracker.Info[] infos) {
@@ -463,6 +465,15 @@ public class ResourcePackLoadStateTracker extends StoredObject {
 
     public CompletableFuture<RemotePackServiceClient.Lookup> remotePackLookupFuture() {
         return this.remotePackLookupFuture;
+    }
+
+    /** Claims this connection's single cancellation of its shared pending lookup. */
+    public RemotePackServiceClient.Lookup claimRemotePackCancellation() {
+        final RemotePackServiceClient.Lookup lookup = this.remotePackLookup;
+        if (lookup == null || !this.remotePackCancellationClaimed.compareAndSet(false, true)) {
+            return null;
+        }
+        return lookup;
     }
 
     public void setRemotePackLookupFuture(
