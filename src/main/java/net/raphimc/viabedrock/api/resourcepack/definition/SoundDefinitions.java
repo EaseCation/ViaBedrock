@@ -86,12 +86,15 @@ public class SoundDefinitions {
                             final List<SoundFile> soundFiles = SoundFile.fromSoundsArray(
                                     entry.getValue().getAsJsonArray());
                             definitions.soundDefinitions.put(entry.getKey(),
-                                    new SoundDefinition(entry.getKey(), null, soundFiles));
+                                    new SoundDefinition(entry.getKey(), null, 0F, null, soundFiles));
                         }
                         continue;
                     }
                     final JsonObject entryData = entry.getValue().getAsJsonObject();
                     final String category = entryData.has("category") ? entryData.get("category").getAsString() : null;
+                    final Float configuredMinDistance = nullableFloat(entryData, "min_distance");
+                    final float minDistance = configuredMinDistance != null ? configuredMinDistance : 0F;
+                    final Float maxDistance = nullableFloat(entryData, "max_distance");
                     final List<SoundFile> soundFiles;
                     if (entryData.has("sounds")) {
                         if (!entryData.get("sounds").isJsonArray()) {
@@ -101,7 +104,8 @@ public class SoundDefinitions {
                     } else {
                         soundFiles = Collections.emptyList();
                     }
-                    definitions.soundDefinitions.put(entry.getKey(), new SoundDefinition(entry.getKey(), category, soundFiles));
+                    definitions.soundDefinitions.put(entry.getKey(),
+                            new SoundDefinition(entry.getKey(), category, minDistance, maxDistance, soundFiles));
                 }
             } catch (Throwable e) {
                 DefinitionLogger.warning("Failed to parse sound_definitions.json in pack " + pack.key(), e);
@@ -153,6 +157,13 @@ public class SoundDefinitions {
                 DefinitionLogger.warning("Failed to parse sounds.json in pack " + pack.key(), e);
             }
         }
+    }
+
+    private static Float nullableFloat(final JsonObject object, final String key) {
+        if (!object.has(key) || object.get(key).isJsonNull()) {
+            return null;
+        }
+        return object.get(key).getAsFloat();
     }
 
     private static void parseEvents(final JsonObject sounds, final boolean namespace, final Map<String, EventSounds> soundMap) {
@@ -256,7 +267,8 @@ public class SoundDefinitions {
         return Collections.unmodifiableMap(this.blockSounds);
     }
 
-    public record SoundDefinition(String name, String category, List<SoundFile> soundFiles) {
+    public record SoundDefinition(String name, String category, float minDistance, Float maxDistance,
+                                  List<SoundFile> soundFiles) {
 
         public SoundDefinition {
             soundFiles = List.copyOf(soundFiles);
@@ -264,20 +276,22 @@ public class SoundDefinitions {
 
     }
 
-    public record SoundFile(String path, float volume, float pitch) {
+    public record SoundFile(String path, float volume, float pitch, int weight, boolean is3D) {
 
         public static List<SoundFile> fromSoundsArray(final JsonArray sounds) {
             final List<SoundFile> files = new ArrayList<>();
             for (JsonElement element : sounds) {
                 if (element.isJsonPrimitive()) {
-                    files.add(new SoundFile(element.getAsString(), 1F, 1F));
+                    files.add(new SoundFile(element.getAsString(), 1F, 1F, 1, true));
                 } else if (element.isJsonObject()) {
                     final JsonObject obj = element.getAsJsonObject();
                     final String name = obj.has("name") ? obj.get("name").getAsString() : null;
                     if (name == null) continue;
                     final float volume = obj.has("volume") ? obj.get("volume").getAsFloat() : 1F;
                     final float pitch = obj.has("pitch") ? obj.get("pitch").getAsFloat() : 1F;
-                    files.add(new SoundFile(name, volume, pitch));
+                    final int weight = obj.has("weight") ? Math.max(1, obj.get("weight").getAsInt()) : 1;
+                    final boolean is3D = !obj.has("is3D") || obj.get("is3D").getAsBoolean();
+                    files.add(new SoundFile(name, volume, pitch, weight, is3D));
                 }
             }
             return files;

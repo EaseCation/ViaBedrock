@@ -55,6 +55,11 @@ public class CustomSoundResourceRewriter implements ResourcePackRewriter.Rewrite
         return ResourcePackRewriter.RuntimeDataScope.SHARED;
     }
 
+    @Override
+    public String artifactFingerprint() {
+        return "2"; // Version 2 preserves Bedrock sound variant weights in Java sounds.json.
+    }
+
     private Set<String> collectCustomSoundNames(final ResourcePackStorage resourcePackStorage, final Content javaContent) {
         final SoundDefinitions sounds = resourcePackStorage.getSounds();
         final Set<String> customSoundNames = new HashSet<>();
@@ -109,6 +114,9 @@ public class CustomSoundResourceRewriter implements ResourcePackRewriter.Rewrite
                     }
                     if (soundFile.pitch() != 1F) {
                         soundEntry.addProperty("pitch", soundFile.pitch());
+                    }
+                    if (soundFile.weight() != 1) {
+                        soundEntry.addProperty("weight", soundFile.weight());
                     }
                     javaSoundEntries.add(soundEntry);
                 }
