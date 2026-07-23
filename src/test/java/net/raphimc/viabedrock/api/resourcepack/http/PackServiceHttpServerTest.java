@@ -19,10 +19,13 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -43,8 +46,10 @@ class PackServiceHttpServerTest {
         final PackServiceMetrics metrics = new PackServiceMetrics();
         final PackServiceStore store = new PackServiceStore(config, metrics);
         final HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
+        final List<String> accessLogs = new CopyOnWriteArrayList<>();
 
-        try (PackServiceHttpServer server = new PackServiceHttpServer(config, store, metrics)) {
+        try (PackServiceHttpServer server = new PackServiceHttpServer(
+                config, store, metrics, path -> new RandomAccessFile(path.toFile(), "r"), accessLogs::add)) {
             server.start();
             final URI internal = URI.create("http://127.0.0.1:" + internalPort);
             final URI publicBase = URI.create("http://127.0.0.1:" + publicPort);
@@ -84,6 +89,7 @@ class PackServiceHttpServerTest {
 
             final URI artifact = publicBase.resolve("/packs/" + sha1 + ".zip");
             final HttpResponse<byte[]> range = client.send(HttpRequest.newBuilder(artifact)
+                            .header("X-Forwarded-For", "203.0.113.9, 10.0.0.1")
                             .header("Range", "bytes=0-7").GET().build(),
                     HttpResponse.BodyHandlers.ofByteArray());
             assertEquals(206, range.statusCode());
@@ -123,6 +129,17 @@ class PackServiceHttpServerTest {
             assertTrue(renderedMetrics.body().contains("viabedrock_pack_service_downloads_total{result=\"success\"}"));
             assertFalse(renderedMetrics.body().contains(sha1));
             assertFalse(renderedMetrics.body().contains(token.toString()));
+
+            assertTrue(accessLogs.stream().anyMatch(line -> line.contains(
+                    "listener=public client=203.0.113.9 method=GET route=artifact status=206 bytes=8")));
+            assertTrue(accessLogs.stream().anyMatch(line -> line.contains(
+                    "listener=internal") && line.contains("method=POST route=lookup status=202 bytes=0")));
+            assertTrue(accessLogs.stream().noneMatch(line -> line.contains("route=health_")));
+            assertTrue(accessLogs.stream().noneMatch(line -> line.contains("listener=metrics")));
+            assertTrue(accessLogs.stream().noneMatch(line -> line.contains("test-secret")));
+            assertTrue(accessLogs.stream().noneMatch(line -> line.contains(LOOKUP_KEY)));
+            assertTrue(accessLogs.stream().noneMatch(line -> line.contains(token.toString())));
+            assertTrue(accessLogs.stream().noneMatch(line -> line.contains(sha1)));
         }
     }
 

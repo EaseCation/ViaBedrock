@@ -22,6 +22,8 @@ import java.net.URI;
 import java.net.ServerSocket;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -81,7 +83,10 @@ class RemotePackServiceClientTest {
                 new net.raphimc.viabedrock.ViaBedrockConfig(
                         configFile.toFile(), Logger.getAnonymousLogger());
         config.reload();
-        final RemotePackServiceClient client = new RemotePackServiceClient(config);
+        final List<String> logs = new ArrayList<>();
+        final RemotePackServiceClient client = new RemotePackServiceClient(
+                config, url -> (HttpURLConnection) url.openConnection(), logs::add,
+                (message, error) -> logs.add(message + " error=" + error.getClass().getSimpleName()));
 
         try (PackServiceHttpServer server = new PackServiceHttpServer(serviceConfig, store, metrics)) {
             server.start();
@@ -98,6 +103,14 @@ class RemotePackServiceClientTest {
             assertTrue(ready.ready());
             assertEquals(sha1, ready.sha1());
             assertEquals("https://packs.example.test/packs/" + sha1 + ".zip", ready.publicUrl());
+            assertTrue(logs.stream().anyMatch(line -> line.contains(
+                    "[remote-pack-service] lookup=pending duration_ms=")));
+            assertTrue(logs.stream().anyMatch(line -> line.contains(
+                    "[remote-pack-service] lookup=ready artifact=" + sha1.substring(0, 12))));
+            assertTrue(logs.stream().noneMatch(line -> line.contains("test-secret")));
+            assertTrue(logs.stream().noneMatch(line -> line.contains(lookupKey)));
+            assertTrue(logs.stream().noneMatch(line -> line.contains(pending.token().toString())));
+            assertTrue(logs.stream().noneMatch(line -> line.contains(sha1)));
         }
     }
 

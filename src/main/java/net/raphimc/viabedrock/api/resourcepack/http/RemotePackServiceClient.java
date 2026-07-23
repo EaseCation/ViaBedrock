@@ -31,6 +31,10 @@ import java.util.HexFormat;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
+import java.util.logging.Level;
 
 public final class RemotePackServiceClient {
 
@@ -50,13 +54,27 @@ public final class RemotePackServiceClient {
     private final int connectTimeoutMillis;
     private final int requestTimeoutMillis;
     private final ConnectionFactory connectionFactory;
+    private final Consumer<String> infoLogger;
+    private final BiConsumer<String, Throwable> warningLogger;
 
     public RemotePackServiceClient(final ViaBedrockConfig config) {
-        this(config, url -> (HttpURLConnection) url.openConnection());
+        this(config, url -> (HttpURLConnection) url.openConnection(),
+                message -> ViaBedrock.getPlatform().getLogger().info(message),
+                (message, error) -> ViaBedrock.getPlatform().getLogger().log(
+                        Level.WARNING, message + " error=" + error.getClass().getSimpleName()));
     }
 
     RemotePackServiceClient(final ViaBedrockConfig config,
                             final ConnectionFactory connectionFactory) {
+        this(config, connectionFactory, ignored -> {
+        }, (ignored, error) -> {
+        });
+    }
+
+    RemotePackServiceClient(final ViaBedrockConfig config,
+                            final ConnectionFactory connectionFactory,
+                            final Consumer<String> infoLogger,
+                            final BiConsumer<String, Throwable> warningLogger) {
         Objects.requireNonNull(config, "config");
         this.internalBaseUrl = normalizeBaseUrl(config.getRemotePackServiceInternalUrl(), "internal-url");
         this.publicBaseUrl = normalizeBaseUrl(config.getRemotePackServicePublicUrl(), "public-url");
@@ -68,6 +86,8 @@ public final class RemotePackServiceClient {
         this.connectTimeoutMillis = config.getRemotePackServiceConnectTimeoutMillis();
         this.requestTimeoutMillis = config.getRemotePackServiceRequestTimeoutMillis();
         this.connectionFactory = Objects.requireNonNull(connectionFactory, "connectionFactory");
+        this.infoLogger = Objects.requireNonNull(infoLogger, "infoLogger");
+        this.warningLogger = Objects.requireNonNull(warningLogger, "warningLogger");
     }
 
     public CompletableFuture<Lookup> lookup(final String lookupKey) {
@@ -98,17 +118,24 @@ public final class RemotePackServiceClient {
     public void cancel(final Lookup lookup) {
         if (lookup == null || lookup.ready()) return;
         ViaBedrock.getResourcePackWorkScheduler().submitIo(() -> {
-            final HttpURLConnection connection = this.open(
-                    "DELETE", "internal/v1/pending/" + lookup.token());
+            final long startedNanos = System.nanoTime();
+            HttpURLConnection connection = null;
             try {
+                connection = this.open("DELETE", "internal/v1/pending/" + lookup.token());
                 connection.setRequestProperty(LOOKUP_KEY, lookup.lookupKey());
                 final int status = connection.getResponseCode();
                 drain(connection);
                 if (status != HttpURLConnection.HTTP_NO_CONTENT && status != HttpURLConnection.HTTP_NOT_FOUND) {
                     throw new IOException("Pack service cancellation failed with HTTP " + status);
                 }
+                this.logInfo("[remote-pack-service] cancel status=" + status
+                        + " duration_ms=" + elapsedMillis(startedNanos));
+            } catch (IOException | RuntimeException error) {
+                this.logWarning("[remote-pack-service] cancel=failed duration_ms="
+                        + elapsedMillis(startedNanos), error);
+                throw error;
             } finally {
-                connection.disconnect();
+                if (connection != null) connection.disconnect();
             }
             return null;
         });
@@ -117,6 +144,10 @@ public final class RemotePackServiceClient {
     private CompletableFuture<Void> upload(final Lookup lookup, final ArtifactKey artifactKey,
                                            final ArtifactLease lease) {
         return ViaBedrock.getResourcePackWorkScheduler().submitIo(() -> {
+            final long startedNanos = System.nanoTime();
+            final String artifact = shortArtifact(lease.artifact().hash());
+            this.logInfo("[remote-pack-service] upload=started artifact=" + artifact
+                    + " bytes=" + lease.artifact().size());
             try (lease) {
                 final HttpURLConnection connection = this.open(
                         "PUT", "internal/v1/pending/" + lookup.token());
@@ -137,17 +168,28 @@ public final class RemotePackServiceClient {
                     if (status != HttpURLConnection.HTTP_OK && status != HttpURLConnection.HTTP_CREATED) {
                         throw new IOException("Pack service upload failed with HTTP " + status);
                     }
+                    this.logInfo("[remote-pack-service] upload=completed status=" + status
+                            + " artifact=" + artifact
+                            + " bytes=" + lease.artifact().size()
+                            + " duration_ms=" + elapsedMillis(startedNanos));
                 } finally {
                     connection.disconnect();
                 }
+            } catch (IOException | RuntimeException error) {
+                this.logWarning("[remote-pack-service] upload=failed artifact=" + artifact
+                        + " bytes=" + lease.artifact().size()
+                        + " duration_ms=" + elapsedMillis(startedNanos), error);
+                throw error;
             }
             return null;
         });
     }
 
     Lookup lookupBlocking(final String lookupKey) throws IOException {
-        final HttpURLConnection connection = this.open("POST", "internal/v1/lookups/" + lookupKey);
+        final long startedNanos = System.nanoTime();
+        HttpURLConnection connection = null;
         try {
+            connection = this.open("POST", "internal/v1/lookups/" + lookupKey);
             connection.setDoOutput(true);
             connection.setFixedLengthStreamingMode(0);
             connection.getOutputStream().close();
@@ -163,6 +205,9 @@ public final class RemotePackServiceClient {
                 final Lookup lookup = new Lookup(lookupKey, artifactKey, sha1, size, null, id,
                         this.publicBaseUrl + "packs/" + sha1 + ".zip");
                 drain(connection);
+                this.logInfo("[remote-pack-service] lookup=ready artifact=" + shortArtifact(sha1)
+                        + " bytes=" + size
+                        + " duration_ms=" + elapsedMillis(startedNanos));
                 return lookup;
             }
             if (responseCode == HttpURLConnection.HTTP_ACCEPTED) {
@@ -175,12 +220,18 @@ public final class RemotePackServiceClient {
                 final Lookup lookup = new Lookup(lookupKey, null, null, -1L, token, token,
                         this.publicBaseUrl + "packs/pending/" + token);
                 drain(connection);
+                this.logInfo("[remote-pack-service] lookup=pending duration_ms="
+                        + elapsedMillis(startedNanos));
                 return lookup;
             }
             drain(connection);
             throw new IOException("Pack service lookup failed with HTTP " + responseCode);
+        } catch (IOException | RuntimeException error) {
+            this.logWarning("[remote-pack-service] lookup=failed duration_ms="
+                    + elapsedMillis(startedNanos), error);
+            throw error;
         } finally {
-            connection.disconnect();
+            if (connection != null) connection.disconnect();
         }
     }
 
@@ -274,6 +325,28 @@ public final class RemotePackServiceClient {
         if (value == null || !value.matches("[0-9a-f]{40}")) {
             throw new IllegalArgumentException("Invalid SHA-1: " + value);
         }
+    }
+
+    private void logInfo(final String message) {
+        try {
+            this.infoLogger.accept(message);
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    private void logWarning(final String message, final Throwable error) {
+        try {
+            this.warningLogger.accept(message, error);
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    private static long elapsedMillis(final long startedNanos) {
+        return TimeUnit.NANOSECONDS.toMillis(Math.max(0L, System.nanoTime() - startedNanos));
+    }
+
+    private static String shortArtifact(final String sha1) {
+        return sha1.substring(0, 12);
     }
 
     public record Lookup(String lookupKey, String artifactKey, String sha1, long size,
