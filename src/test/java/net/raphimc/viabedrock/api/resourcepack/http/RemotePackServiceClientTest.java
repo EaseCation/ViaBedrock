@@ -14,18 +14,15 @@ import net.raphimc.viabedrock.experimental.resourcepack.JavaPackCache.ArtifactRe
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URI;
 import java.net.ServerSocket;
+import java.net.http.HttpHeaders;
+import java.net.http.HttpRequest;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
@@ -46,7 +43,7 @@ class RemotePackServiceClientTest {
     }
 
     @Test
-    void lookupDisconnectsWhenResponseMetadataIsInvalid(@TempDir final Path tempDir) throws Exception {
+    void lookupRejectsResponseWithMissingMetadata(@TempDir final Path tempDir) throws Exception {
         final Path configFile = tempDir.resolve("viabedrock.yml");
         Files.writeString(configFile, """
                 resource-pack-delivery:
@@ -59,11 +56,10 @@ class RemotePackServiceClientTest {
                 new net.raphimc.viabedrock.ViaBedrockConfig(
                         configFile.toFile(), Logger.getAnonymousLogger());
         config.reload();
-        final StubConnection connection = new StubConnection();
-        final RemotePackServiceClient client = new RemotePackServiceClient(config, ignored -> connection);
+        final RemotePackServiceClient client = new RemotePackServiceClient(
+                config, ignored -> response(200));
 
         assertThrows(IOException.class, () -> client.lookupBlocking("a".repeat(64)));
-        assertTrue(connection.disconnected);
     }
 
     @Test
@@ -89,7 +85,7 @@ class RemotePackServiceClientTest {
         config.reload();
         final List<String> logs = new ArrayList<>();
         final RemotePackServiceClient client = new RemotePackServiceClient(
-                config, url -> (HttpURLConnection) url.openConnection(), logs::add,
+                config, logs::add,
                 (message, error) -> logs.add(message + " error=" + error.getClass().getSimpleName()));
 
         try (PackServiceHttpServer server = new PackServiceHttpServer(serviceConfig, store, metrics)) {
@@ -101,8 +97,10 @@ class RemotePackServiceClientTest {
 
             final byte[] zip = PackServiceStoreTest.zip();
             final String sha1 = PackServiceStoreTest.sha1(zip);
-            store.publish(pending.token(), lookupKey, "d".repeat(64), sha1, zip.length,
-                    new ByteArrayInputStream(zip));
+            final Path artifactPath = tempDir.resolve(sha1 + ".zip");
+            Files.write(artifactPath, zip);
+            client.uploadBlocking(pending, new ArtifactKey("d".repeat(64)),
+                    new ArtifactRef("d".repeat(64), sha1, artifactPath, zip.length));
             final RemotePackServiceClient.Lookup ready = client.lookupBlocking(lookupKey);
             assertTrue(ready.ready());
             assertEquals(sha1, ready.sha1());
@@ -137,12 +135,17 @@ class RemotePackServiceClientTest {
         final String sha1 = PackServiceStoreTest.sha1(zip);
         final Path artifactPath = tempDir.resolve(sha1 + ".zip");
         Files.write(artifactPath, zip);
-        final FailingOutputConnection first = new FailingOutputConnection();
-        final RecordingUploadConnection second = new RecordingUploadConnection();
         final AtomicInteger opened = new AtomicInteger();
+        final List<HttpRequest> requests = new ArrayList<>();
         final List<String> logs = new ArrayList<>();
         final RemotePackServiceClient client = new RemotePackServiceClient(
-                config, ignored -> opened.getAndIncrement() == 0 ? first : second, logs::add,
+                config, request -> {
+                    requests.add(request);
+                    if (opened.getAndIncrement() == 0) {
+                        throw new IOException("stale pooled connection");
+                    }
+                    return response(201);
+                }, logs::add,
                 (message, error) -> logs.add(message + " error=" + error.getClass().getSimpleName()));
         final UUID token = UUID.randomUUID();
         final RemotePackServiceClient.Lookup lookup = new RemotePackServiceClient.Lookup(
@@ -154,9 +157,14 @@ class RemotePackServiceClientTest {
         client.uploadBlocking(lookup, new ArtifactKey("b".repeat(64)), artifact);
 
         assertEquals(2, opened.get());
-        assertTrue(first.disconnected);
-        assertTrue(second.disconnected);
-        assertArrayEquals(zip, second.output.toByteArray());
+        assertEquals(2, requests.size());
+        assertNotSame(requests.get(0), requests.get(1));
+        final HttpRequest retried = requests.get(1);
+        assertEquals("PUT", retried.method());
+        assertEquals(zip.length, retried.bodyPublisher().orElseThrow().contentLength());
+        assertEquals("a".repeat(64), retried.headers().firstValue(
+                RemotePackServiceClient.LOOKUP_KEY).orElseThrow());
+        assertEquals(sha1, retried.headers().firstValue(RemotePackServiceClient.SHA1).orElseThrow());
         assertTrue(logs.stream().anyMatch(line -> line.contains(
                 "[remote-pack-service] upload=retry artifact=" + sha1.substring(0, 12)
                         + " next_attempt=2 error=IOException")));
@@ -168,126 +176,52 @@ class RemotePackServiceClientTest {
         assertTrue(logs.stream().noneMatch(line -> line.contains(sha1)));
     }
 
+    @Test
+    void doesNotRetryUploadAfterHttpFailure(@TempDir final Path tempDir) throws Exception {
+        final Path configFile = tempDir.resolve("viabedrock.yml");
+        Files.writeString(configFile, """
+                resource-pack-delivery:
+                  mode: remote
+                  internal-url: http://pack-service.internal:8081/
+                  public-url: https://packs.example.test/
+                  shared-secret: test-secret
+                """);
+        final net.raphimc.viabedrock.ViaBedrockConfig config =
+                new net.raphimc.viabedrock.ViaBedrockConfig(
+                        configFile.toFile(), Logger.getAnonymousLogger());
+        config.reload();
+
+        final byte[] zip = PackServiceStoreTest.zip();
+        final String sha1 = PackServiceStoreTest.sha1(zip);
+        final Path artifactPath = tempDir.resolve(sha1 + ".zip");
+        Files.write(artifactPath, zip);
+        final AtomicInteger attempts = new AtomicInteger();
+        final RemotePackServiceClient client = new RemotePackServiceClient(
+                config, ignored -> {
+                    attempts.incrementAndGet();
+                    return response(503);
+                });
+        final UUID token = UUID.randomUUID();
+        final RemotePackServiceClient.Lookup lookup = new RemotePackServiceClient.Lookup(
+                "a".repeat(64), null, null, -1L, token, token,
+                "https://packs.example.test/packs/pending/" + token);
+
+        final IOException error = assertThrows(IOException.class, () -> client.uploadBlocking(
+                lookup, new ArtifactKey("b".repeat(64)),
+                new ArtifactRef("a".repeat(64), sha1, artifactPath, zip.length)));
+
+        assertEquals("Pack service upload failed with HTTP 503", error.getMessage());
+        assertEquals(1, attempts.get());
+    }
+
     private static int freePort() throws Exception {
         try (ServerSocket socket = new ServerSocket(0)) {
             return socket.getLocalPort();
         }
     }
 
-    private static final class StubConnection extends HttpURLConnection {
-        private boolean disconnected;
-
-        private StubConnection() throws Exception {
-            super(URI.create("http://pack-service.internal:8081/").toURL());
-        }
-
-        @Override
-        public int getResponseCode() {
-            return HTTP_OK;
-        }
-
-        @Override
-        public String getHeaderField(final String name) {
-            return null;
-        }
-
-        @Override
-        public OutputStream getOutputStream() {
-            return new ByteArrayOutputStream();
-        }
-
-        @Override
-        public InputStream getInputStream() {
-            return new ByteArrayInputStream(new byte[0]);
-        }
-
-        @Override
-        public void disconnect() {
-            this.disconnected = true;
-        }
-
-        @Override
-        public boolean usingProxy() {
-            return false;
-        }
-
-        @Override
-        public void connect() {
-        }
-    }
-
-    private static final class FailingOutputConnection extends HttpURLConnection {
-        private boolean disconnected;
-
-        private FailingOutputConnection() throws Exception {
-            super(URI.create("http://pack-service.internal:8081/failed").toURL());
-        }
-
-        @Override
-        public OutputStream getOutputStream() {
-            return new OutputStream() {
-                @Override
-                public void write(final int value) throws IOException {
-                    throw new IOException("stale pooled connection");
-                }
-
-                @Override
-                public void write(final byte[] values, final int offset, final int length) throws IOException {
-                    throw new IOException("stale pooled connection");
-                }
-            };
-        }
-
-        @Override
-        public void disconnect() {
-            this.disconnected = true;
-        }
-
-        @Override
-        public boolean usingProxy() {
-            return false;
-        }
-
-        @Override
-        public void connect() {
-        }
-    }
-
-    private static final class RecordingUploadConnection extends HttpURLConnection {
-        private final ByteArrayOutputStream output = new ByteArrayOutputStream();
-        private boolean disconnected;
-
-        private RecordingUploadConnection() throws Exception {
-            super(URI.create("http://pack-service.internal:8081/success").toURL());
-        }
-
-        @Override
-        public int getResponseCode() {
-            return HTTP_CREATED;
-        }
-
-        @Override
-        public OutputStream getOutputStream() {
-            return this.output;
-        }
-
-        @Override
-        public InputStream getInputStream() {
-            return new ByteArrayInputStream(new byte[0]);
-        }
-
-        @Override
-        public void disconnect() {
-            this.disconnected = true;
-        }
-
-        @Override
-        public boolean usingProxy() {
-            return false;
-        }
-
-        @Override
-        public void connect() {
-        }
+    private static RemotePackServiceClient.TransportResponse response(final int status) {
+        return new RemotePackServiceClient.TransportResponse(
+                status, HttpHeaders.of(Map.of(), (name, value) -> true));
     }
 }

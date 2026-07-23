@@ -19,15 +19,16 @@ import net.raphimc.viabedrock.protocol.rewriter.ResourcePackRewriter;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
+import java.io.InterruptedIOException;
 import java.net.URI;
-import java.net.URL;
+import java.net.http.HttpClient;
+import java.net.http.HttpHeaders;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.util.HexFormat;
 import java.util.Objects;
 import java.util.UUID;
@@ -54,28 +55,33 @@ public final class RemotePackServiceClient {
     private final String internalBaseUrl;
     private final String publicBaseUrl;
     private final String authorization;
-    private final int connectTimeoutMillis;
-    private final int requestTimeoutMillis;
-    private final ConnectionFactory connectionFactory;
+    private final Duration requestTimeout;
+    private final Transport transport;
     private final Consumer<String> infoLogger;
     private final BiConsumer<String, Throwable> warningLogger;
 
     public RemotePackServiceClient(final ViaBedrockConfig config) {
-        this(config, url -> (HttpURLConnection) url.openConnection(),
+        this(config, createTransport(config),
                 message -> ViaBedrock.getPlatform().getLogger().info(message),
                 (message, error) -> ViaBedrock.getPlatform().getLogger().log(
                         Level.WARNING, message + " error=" + error.getClass().getSimpleName()));
     }
 
     RemotePackServiceClient(final ViaBedrockConfig config,
-                            final ConnectionFactory connectionFactory) {
-        this(config, connectionFactory, ignored -> {
+                            final Transport transport) {
+        this(config, transport, ignored -> {
         }, (ignored, error) -> {
         });
     }
 
     RemotePackServiceClient(final ViaBedrockConfig config,
-                            final ConnectionFactory connectionFactory,
+                            final Consumer<String> infoLogger,
+                            final BiConsumer<String, Throwable> warningLogger) {
+        this(config, createTransport(config), infoLogger, warningLogger);
+    }
+
+    RemotePackServiceClient(final ViaBedrockConfig config,
+                            final Transport transport,
                             final Consumer<String> infoLogger,
                             final BiConsumer<String, Throwable> warningLogger) {
         Objects.requireNonNull(config, "config");
@@ -86,9 +92,8 @@ public final class RemotePackServiceClient {
             throw new IllegalArgumentException("Remote resource pack delivery requires a non-empty shared-secret");
         }
         this.authorization = "Bearer " + secret;
-        this.connectTimeoutMillis = config.getRemotePackServiceConnectTimeoutMillis();
-        this.requestTimeoutMillis = config.getRemotePackServiceRequestTimeoutMillis();
-        this.connectionFactory = Objects.requireNonNull(connectionFactory, "connectionFactory");
+        this.requestTimeout = Duration.ofMillis(config.getRemotePackServiceRequestTimeoutMillis());
+        this.transport = Objects.requireNonNull(transport, "transport");
         this.infoLogger = Objects.requireNonNull(infoLogger, "infoLogger");
         this.warningLogger = Objects.requireNonNull(warningLogger, "warningLogger");
     }
@@ -122,13 +127,13 @@ public final class RemotePackServiceClient {
         if (lookup == null || lookup.ready()) return;
         ViaBedrock.getResourcePackWorkScheduler().submitIo(() -> {
             final long startedNanos = System.nanoTime();
-            HttpURLConnection connection = null;
             try {
-                connection = this.open("DELETE", "internal/v1/pending/" + lookup.token());
-                connection.setRequestProperty(LOOKUP_KEY, lookup.lookupKey());
-                final int status = connection.getResponseCode();
-                drain(connection);
-                if (status != HttpURLConnection.HTTP_NO_CONTENT && status != HttpURLConnection.HTTP_NOT_FOUND) {
+                final HttpRequest request = this.request("internal/v1/pending/" + lookup.token())
+                        .header(LOOKUP_KEY, lookup.lookupKey())
+                        .DELETE()
+                        .build();
+                final int status = this.send(request).statusCode();
+                if (status != 204 && status != 404) {
                     throw new IOException("Pack service cancellation failed with HTTP " + status);
                 }
                 this.logInfo("[remote-pack-service] cancel status=" + status
@@ -137,8 +142,6 @@ public final class RemotePackServiceClient {
                 this.logWarning("[remote-pack-service] cancel=failed duration_ms="
                         + elapsedMillis(startedNanos), error);
                 throw error;
-            } finally {
-                if (connection != null) connection.disconnect();
             }
             return null;
         });
@@ -171,13 +174,13 @@ public final class RemotePackServiceClient {
             try {
                 status = this.uploadAttempt(lookup, artifactKey, artifact);
             } catch (IOException error) {
-                if (attempt == UPLOAD_ATTEMPTS) throw error;
+                if (error instanceof InterruptedIOException || attempt == UPLOAD_ATTEMPTS) throw error;
                 this.logWarning("[remote-pack-service] upload=retry artifact="
                         + shortArtifact(artifact.hash())
                         + " next_attempt=" + (attempt + 1), error);
                 continue;
             }
-            if (status != HttpURLConnection.HTTP_OK && status != HttpURLConnection.HTTP_CREATED) {
+            if (status != 200 && status != 201) {
                 throw new IOException("Pack service upload failed with HTTP " + status);
             }
             this.logInfo("[remote-pack-service] upload=completed status=" + status
@@ -191,109 +194,96 @@ public final class RemotePackServiceClient {
 
     private int uploadAttempt(final Lookup lookup, final ArtifactKey artifactKey,
                               final ArtifactRef artifact) throws IOException {
-        final HttpURLConnection connection = this.open(
-                "PUT", "internal/v1/pending/" + lookup.token());
-        try {
-            connection.setDoOutput(true);
-            connection.setFixedLengthStreamingMode(artifact.size());
-            connection.setRequestProperty(LOOKUP_KEY, lookup.lookupKey());
-            connection.setRequestProperty(ARTIFACT_KEY, artifactKey.hex());
-            connection.setRequestProperty(SHA1, artifact.hash());
-            connection.setRequestProperty(SIZE, Long.toString(artifact.size()));
-            connection.setRequestProperty("Content-Type", "application/zip");
-            try (InputStream input = Files.newInputStream(artifact.path());
-                 OutputStream output = connection.getOutputStream()) {
-                input.transferTo(output);
-            }
-            final int status = connection.getResponseCode();
-            drain(connection);
-            return status;
-        } finally {
-            connection.disconnect();
-        }
+        final HttpRequest request = this.request("internal/v1/pending/" + lookup.token())
+                .header(LOOKUP_KEY, lookup.lookupKey())
+                .header(ARTIFACT_KEY, artifactKey.hex())
+                .header(SHA1, artifact.hash())
+                .header(SIZE, Long.toString(artifact.size()))
+                .header("Content-Type", "application/zip")
+                .PUT(HttpRequest.BodyPublishers.ofFile(artifact.path()))
+                .build();
+        return this.send(request).statusCode();
     }
 
     Lookup lookupBlocking(final String lookupKey) throws IOException {
         final long startedNanos = System.nanoTime();
-        HttpURLConnection connection = null;
         try {
-            connection = this.open("POST", "internal/v1/lookups/" + lookupKey);
-            connection.setDoOutput(true);
-            connection.setFixedLengthStreamingMode(0);
-            connection.getOutputStream().close();
-            final int responseCode = connection.getResponseCode();
-            if (responseCode == HttpURLConnection.HTTP_OK) {
-                final String artifactKey = requireHeader(connection, ARTIFACT_KEY);
-                final String sha1 = requireHeader(connection, SHA1);
+            final TransportResponse response = this.send(this.request("internal/v1/lookups/" + lookupKey)
+                    .POST(HttpRequest.BodyPublishers.noBody())
+                    .build());
+            if (response.statusCode() == 200) {
+                final String artifactKey = requireHeader(response, ARTIFACT_KEY);
+                final String sha1 = requireHeader(response, SHA1);
                 requireSha256(artifactKey, "artifact key");
                 requireSha1(sha1);
-                final long size = parsePositiveLong(requireHeader(connection, SIZE), "artifact size");
+                final long size = parsePositiveLong(requireHeader(response, SIZE), "artifact size");
                 final UUID id = UUID.nameUUIDFromBytes(
                         ("ViaBedrock-Pack-Service:" + artifactKey).getBytes(StandardCharsets.UTF_8));
                 final Lookup lookup = new Lookup(lookupKey, artifactKey, sha1, size, null, id,
                         this.publicBaseUrl + "packs/" + sha1 + ".zip");
-                drain(connection);
                 this.logInfo("[remote-pack-service] lookup=ready artifact=" + shortArtifact(sha1)
                         + " bytes=" + size
                         + " duration_ms=" + elapsedMillis(startedNanos));
                 return lookup;
             }
-            if (responseCode == HttpURLConnection.HTTP_ACCEPTED) {
+            if (response.statusCode() == 202) {
                 final UUID token;
                 try {
-                    token = UUID.fromString(requireHeader(connection, TOKEN));
+                    token = UUID.fromString(requireHeader(response, TOKEN));
                 } catch (IllegalArgumentException e) {
                     throw new IOException("Pack service returned an invalid pending token", e);
                 }
                 final Lookup lookup = new Lookup(lookupKey, null, null, -1L, token, token,
                         this.publicBaseUrl + "packs/pending/" + token);
-                drain(connection);
                 this.logInfo("[remote-pack-service] lookup=pending duration_ms="
                         + elapsedMillis(startedNanos));
                 return lookup;
             }
-            drain(connection);
-            throw new IOException("Pack service lookup failed with HTTP " + responseCode);
+            throw new IOException("Pack service lookup failed with HTTP " + response.statusCode());
         } catch (IOException | RuntimeException error) {
             this.logWarning("[remote-pack-service] lookup=failed duration_ms="
                     + elapsedMillis(startedNanos), error);
             throw error;
-        } finally {
-            if (connection != null) connection.disconnect();
         }
     }
 
-    private HttpURLConnection open(final String method, final String relativePath) throws IOException {
-        final URL url = URI.create(this.internalBaseUrl + relativePath).toURL();
-        final HttpURLConnection connection = this.connectionFactory.open(url);
-        connection.setRequestMethod(method);
-        connection.setConnectTimeout(this.connectTimeoutMillis);
-        connection.setReadTimeout(this.requestTimeoutMillis);
-        connection.setUseCaches(false);
-        connection.setRequestProperty(AUTHORIZATION, this.authorization);
-        connection.setRequestProperty("Connection", "close");
-        return connection;
+    private HttpRequest.Builder request(final String relativePath) {
+        return HttpRequest.newBuilder(URI.create(this.internalBaseUrl + relativePath))
+                .timeout(this.requestTimeout)
+                .header(AUTHORIZATION, this.authorization);
     }
 
-    private static void drain(final HttpURLConnection connection) {
+    private TransportResponse send(final HttpRequest request) throws IOException {
         try {
-            final InputStream stream = connection.getErrorStream() != null
-                    ? connection.getErrorStream() : connection.getInputStream();
-            if (stream != null) {
-                try (stream) {
-                    stream.transferTo(OutputStream.nullOutputStream());
-                }
-            }
-        } catch (IOException ignored) {
+            return this.transport.send(request);
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            final InterruptedIOException interrupted = new InterruptedIOException(
+                    "Interrupted while waiting for the pack service response");
+            interrupted.initCause(error);
+            throw interrupted;
         }
     }
 
-    private static String requireHeader(final HttpURLConnection connection, final String name) throws IOException {
-        final String value = connection.getHeaderField(name);
+    private static String requireHeader(final TransportResponse response, final String name) throws IOException {
+        final String value = response.headers().firstValue(name).orElse(null);
         if (value == null || value.isBlank()) {
             throw new IOException("Pack service response is missing " + name);
         }
         return value;
+    }
+
+    private static Transport createTransport(final ViaBedrockConfig config) {
+        Objects.requireNonNull(config, "config");
+        final HttpClient client = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofMillis(config.getRemotePackServiceConnectTimeoutMillis()))
+                .version(HttpClient.Version.HTTP_1_1)
+                .build();
+        return request -> {
+            final HttpResponse<Void> response = client.send(
+                    request, HttpResponse.BodyHandlers.discarding());
+            return new TransportResponse(response.statusCode(), response.headers());
+        };
     }
 
     private static long parsePositiveLong(final String value, final String name) throws IOException {
@@ -404,7 +394,14 @@ public final class RemotePackServiceClient {
     }
 
     @FunctionalInterface
-    interface ConnectionFactory {
-        HttpURLConnection open(URL url) throws IOException;
+    interface Transport {
+        TransportResponse send(HttpRequest request) throws IOException, InterruptedException;
+    }
+
+    record TransportResponse(int statusCode, HttpHeaders headers) {
+
+        TransportResponse {
+            Objects.requireNonNull(headers, "headers");
+        }
     }
 }
