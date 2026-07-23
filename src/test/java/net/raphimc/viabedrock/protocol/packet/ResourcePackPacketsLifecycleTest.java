@@ -13,11 +13,20 @@ import com.viaversion.viaversion.api.connection.UserConnection;
 import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 import net.raphimc.viabedrock.api.resourcepack.cache.ArchiveDigest;
 import net.raphimc.viabedrock.api.resourcepack.http.RemotePackServiceClient;
+import net.raphimc.viabedrock.experimental.resourcepack.cache.ResourcePackArchiveStore;
+import net.raphimc.viabedrock.experimental.resourcepack.cache.ResourcePackCacheMetrics;
+import net.raphimc.viabedrock.experimental.resourcepack.cache.ResourcePackWorkScheduler;
+import net.raphimc.viabedrock.platform.ViaBedrockConfig;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackLoadStateTracker;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.lang.ref.WeakReference;
+import java.lang.reflect.Proxy;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -203,10 +212,47 @@ class ResourcePackPacketsLifecycleTest {
         assertDoesNotThrow(waiter::join);
     }
 
+    @Test
+    void clearedLoadTrackerStillPublishesArchiveForSharedWaiters(@TempDir final Path tempDir) throws Exception {
+        final byte[] archive = "completed-after-stack".getBytes(StandardCharsets.UTF_8);
+        final byte[] digest = MessageDigest.getInstance("SHA-256").digest(archive);
+        final ResourcePackWorkScheduler scheduler = resourcePackScheduler();
+        try {
+            final ResourcePackCacheMetrics metrics = new ResourcePackCacheMetrics();
+            final ResourcePackArchiveStore store = new ResourcePackArchiveStore(tempDir, scheduler, metrics);
+            final ResourcePackArchiveStore.Claim leader = store.claim(digest);
+            final ResourcePackArchiveStore.Claim waiter = store.claim(digest);
+            final Path completed = store.createRawTemp(leader);
+            Files.write(completed, archive);
+
+            final Path published = ResourcePackPackets.publishDetachedArchive(store, leader, completed)
+                    .get(10L, TimeUnit.SECONDS);
+
+            assertEquals(published, waiter.path().get(10L, TimeUnit.SECONDS));
+            assertEquals(0L, metrics.getArchiveFailures());
+            waiter.close();
+        } finally {
+            scheduler.shutdown();
+        }
+    }
+
     private static ScheduledThreadPoolExecutor timeoutScheduler() {
         final ScheduledThreadPoolExecutor scheduler = new ScheduledThreadPoolExecutor(1);
         scheduler.setRemoveOnCancelPolicy(true);
         return scheduler;
+    }
+
+    private static ResourcePackWorkScheduler resourcePackScheduler() {
+        final ResourcePackCacheMetrics metrics = new ResourcePackCacheMetrics();
+        final ViaBedrockConfig config = (ViaBedrockConfig) Proxy.newProxyInstance(
+                ViaBedrockConfig.class.getClassLoader(), new Class<?>[]{ViaBedrockConfig.class},
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "getResourcePackCacheCpuWorkers" -> 1;
+                    case "getResourcePackCacheIoWorkers" -> 1;
+                    case "getResourcePackCacheQueueCapacity" -> 8;
+                    default -> throw new UnsupportedOperationException(method.toString());
+                });
+        return new ResourcePackWorkScheduler(config, metrics);
     }
 
 }
