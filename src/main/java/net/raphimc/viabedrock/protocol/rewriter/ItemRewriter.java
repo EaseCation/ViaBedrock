@@ -45,6 +45,7 @@ import net.raphimc.viabedrock.api.util.TextUtil;
 import net.raphimc.viabedrock.experimental.custommapping.CustomMappingAccess;
 import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
 import net.raphimc.viabedrock.experimental.rewriter.ExperimentalItemRewriter;
+import net.raphimc.viabedrock.experimental.storage.JavaBlockUseTrace;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.data.BedrockMappingData;
 import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
@@ -284,6 +285,11 @@ public class ItemRewriter extends StoredObject {
         final String tag = BedrockProtocol.MAPPINGS.getBedrockCustomItemTags().get(identifier);
         if (ITEM_NBT_REWRITERS.containsKey(tag)) {
             ITEM_NBT_REWRITERS.get(tag).toJava(this.user(), bedrockItem, javaItem);
+        }
+
+        final JavaBlockUseTrace trace = this.user().get(JavaBlockUseTrace.class);
+        if (trace != null) {
+            trace.traceJavaItem(identifier, javaItem);
         }
 
         return javaItem;

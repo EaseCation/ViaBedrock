@@ -20,6 +20,8 @@ package net.raphimc.viabedrock.experimental.storage;
 import com.viaversion.viaversion.api.connection.StoredObject;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.minecraft.BlockPosition;
+import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
+import com.viaversion.viaversion.api.minecraft.item.Item;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
 import net.raphimc.viabedrock.experimental.inventory.ItemUseHandContext;
@@ -44,13 +46,27 @@ public final class JavaBlockUseTrace extends StoredObject {
 
     public void traceUse(final String phase, final ItemUseHandContext context, final ItemRewriter itemRewriter,
                          final boolean continuous, final int sequence, final BlockPosition position) {
-        if (!this.enabled() || context.item().blockRuntimeId() == 0) {
+        if (!this.enabled()) {
             return;
         }
-        this.lastBlockUseNanos = System.nanoTime();
+        if (context.item().blockRuntimeId() != 0) {
+            this.lastBlockUseNanos = System.nanoTime();
+        }
         this.log("phase={0} hand={1} item={2} count={3} blockRuntimeId={4} continuous={5} sequence={6} position={7}",
                 phase, context.hand(), itemRewriter.bedrockIdentifier(context.item()), context.item().amount(),
                 context.item().blockRuntimeId(), continuous, sequence, position);
+    }
+
+    public void traceJavaItem(final String identifier, final Item item) {
+        if (!this.enabled() || !"minecraft:white_wool".equals(identifier)) {
+            return;
+        }
+        this.log("phase=java-item identifier={0} javaId={1} amount={2} consumable={3} food={4} cooldown={5} maxStack={6}",
+                identifier, item.identifier(), item.amount(),
+                item.dataContainer().get(StructuredDataKey.CONSUMABLE1_21_2),
+                item.dataContainer().get(StructuredDataKey.FOOD1_21_2),
+                item.dataContainer().get(StructuredDataKey.USE_COOLDOWN),
+                item.dataContainer().get(StructuredDataKey.MAX_STACK_SIZE));
     }
 
     public void traceAck(final String phase, final BlockPosition position, final int sequence) {
@@ -82,9 +98,8 @@ public final class JavaBlockUseTrace extends StoredObject {
             return;
         }
         this.emitted++;
-        final Object[] values = new Object[arguments.length + 1];
-        values[0] = this.user().getProtocolInfo().getUsername();
-        System.arraycopy(arguments, 0, values, 1, arguments.length);
-        ViaBedrock.getPlatform().getLogger().log(Level.INFO, "[JavaBlockUseTrace] player={0} " + message, values);
+        ViaBedrock.getPlatform().getLogger().log(Level.INFO,
+                "[JavaBlockUseTrace] player=" + this.user().getProtocolInfo().getUsername() + " " + message,
+                arguments);
     }
 }
