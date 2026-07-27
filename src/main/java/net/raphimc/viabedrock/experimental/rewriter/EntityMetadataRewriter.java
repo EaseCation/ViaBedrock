@@ -37,6 +37,7 @@ import net.raphimc.viabedrock.protocol.data.generated.java.Attributes;
 import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
 import net.raphimc.viabedrock.api.util.TextUtil;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
+import net.raphimc.viabedrock.experimental.storage.JavaBlockUseTrace;
 import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
 
 import com.viaversion.nbt.tag.Tag;
@@ -58,6 +59,12 @@ public class EntityMetadataRewriter {
         switch (id) {
             case RESERVED_0, RESERVED_092 -> { // Entity flags mask
                 Set<ActorFlags> bedrockFlags = entity.entityFlags();
+                if (entity == entityTracker.getClientPlayer()) {
+                    final JavaBlockUseTrace trace = user.get(JavaBlockUseTrace.class);
+                    if (trace != null) {
+                        trace.traceActorFlags(bedrockFlags, entityTracker.getClientPlayer());
+                    }
+                }
                 byte javaBitMask = sharedFlags(entity, false);
                 final EntityData scaleData = entity.entityData().get(ActorDataIDs.RESERVED_038);
                 if (entity instanceof LivingEntity && scaleData != null && readNumber(scaleData).floatValue() == 0F) {

@@ -62,6 +62,7 @@ import net.raphimc.viabedrock.experimental.rewriter.InventoryTransactionRewriter
 import net.raphimc.viabedrock.experimental.riding.RidingModule;
 import net.raphimc.viabedrock.experimental.tablist.TabListLatencyModule;
 import net.raphimc.viabedrock.experimental.storage.BlockPlacementAckTracker;
+import net.raphimc.viabedrock.experimental.storage.JavaBlockUseTrace;
 import net.raphimc.viabedrock.experimental.storage.MapTracker;
 import net.raphimc.viabedrock.experimental.storage.MultilineNametagTracker;
 import net.raphimc.viabedrock.experimental.storage.ScriptDebugTextTracker;
@@ -567,6 +568,7 @@ public class ExperimentalFeatures {
         // a pending ack for it would leave a phantom sequence-0 ack that flushExpired emits after the timeout.
         if (sequence > 0) {
             user.get(BlockPlacementAckTracker.class).addPendingAck(expectedPos, sequence);
+            user.get(JavaBlockUseTrace.class).traceAck("ack-add", expectedPos, sequence);
         }
 
         // The bedrock client will send a start item use on action to the server first.
@@ -952,7 +954,10 @@ public class ExperimentalFeatures {
             final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
             final ItemUseHandContext handContext = ItemUseHandContext.resolve(inventoryTracker, hand);
             final BedrockItem selectedItem = handContext.item();
-            if (isContinuousUseItem(itemRewriter, selectedItem)) {
+            final boolean continuous = isContinuousUseItem(itemRewriter, selectedItem);
+            wrapper.user().get(JavaBlockUseTrace.class).traceUse(
+                    "java-use-item", handContext, itemRewriter, continuous, sequence, null);
+            if (continuous) {
                 clientPlayer.startUsingItem(handContext.hand(), handContext.containerId(), handContext.containerSlot(), handContext.transactionHotbarSlot(), selectedItem);
                 clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StartUsingItem);
                 clientPlayer.setAuthInputItemInteraction(createUseItemTransaction(handContext, clientPlayer));
@@ -1033,7 +1038,10 @@ public class ExperimentalFeatures {
             final ItemUseHandContext handContext = ItemUseHandContext.resolve(inventoryTracker, hand);
             final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
             final BedrockItem selectedItem = handContext.item();
-            if (isContinuousUseItem(itemRewriter, selectedItem)) {
+            final boolean continuous = isContinuousUseItem(itemRewriter, selectedItem);
+            wrapper.user().get(JavaBlockUseTrace.class).traceUse(
+                    "java-use-item-on", handContext, itemRewriter, continuous, sequence, position);
+            if (continuous) {
                 clientPlayer.startUsingItem(handContext.hand(), handContext.containerId(), handContext.containerSlot(), handContext.transactionHotbarSlot(), selectedItem);
                 clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StartUsingItem);
                 clientPlayer.setAuthInputItemInteraction(createUseItemTransaction(handContext, clientPlayer));
@@ -1350,6 +1358,7 @@ public class ExperimentalFeatures {
         user.put(new MultilineNametagTracker(user));
         user.put(new ScriptDebugTextTracker(user));
         user.put(new BlockPlacementAckTracker(user));
+        user.put(new JavaBlockUseTrace(user));
 
         // Dispatch to feature modules
         for (final FeatureModule module : MODULES) {

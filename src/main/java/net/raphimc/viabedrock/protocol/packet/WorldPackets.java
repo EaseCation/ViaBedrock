@@ -48,6 +48,7 @@ import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.experimental.storage.BlockPlacementAckTracker;
+import net.raphimc.viabedrock.experimental.storage.JavaBlockUseTrace;
 import net.raphimc.viabedrock.protocol.data.enums.Dimension;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ServerboundLoadingScreenPacketType;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.SpawnPositionType;
@@ -124,9 +125,11 @@ public class WorldPackets {
         if (tracker != null) {
             final Integer seq = tracker.consumeAck(position);
             if (seq != null) {
+                wrapper.user().get(JavaBlockUseTrace.class).traceAck("ack-consume", position, seq);
                 PacketFactory.sendJavaBlockChangedAck(wrapper.user(), seq);
             }
             for (final int expiredSeq : tracker.flushExpired()) {
+                wrapper.user().get(JavaBlockUseTrace.class).traceAck("ack-expire", position, expiredSeq);
                 PacketFactory.sendJavaBlockChangedAck(wrapper.user(), expiredSeq);
             }
         }
