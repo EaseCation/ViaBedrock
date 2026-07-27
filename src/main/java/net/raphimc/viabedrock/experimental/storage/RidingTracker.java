@@ -263,7 +263,7 @@ public class RidingTracker extends StoredObject {
             return;
         }
 
-        final boolean usesVanillaRiding = usesVanillaRiding(vehicle);
+        final boolean usesVanillaRiding = usesVanillaRiding(vehicle.javaType());
         final IntArrayList directPassengerJavaIds = new IntArrayList(passengerUids.size());
         for (int i = 0; i < passengerUids.size(); i++) {
             final long passengerUniqueId = passengerUids.getLong(i);
@@ -423,14 +423,17 @@ public class RidingTracker extends StoredObject {
     }
 
     private LocalRidingMode localRidingMode(final Entity vehicle, final ClientPlayerEntity clientPlayer) {
-        if (!this.isControllingPassenger(vehicle.uniqueId(), clientPlayer.uniqueId())) {
+        return localRidingMode(vehicle.javaType(), this.isControllingPassenger(vehicle.uniqueId(), clientPlayer.uniqueId()));
+    }
+
+    static LocalRidingMode localRidingMode(final EntityTypes1_21_11 type, final boolean controllingPassenger) {
+        if (!controllingPassenger) {
             return LocalRidingMode.PASSENGER_ONLY;
         }
-
-        if (usesBoatRiding(vehicle)) {
+        if (usesBoatRiding(type)) {
             return LocalRidingMode.BOAT_PREDICTED;
         }
-        if (!usesVanillaRiding(vehicle)) {
+        if (type.isOrHasParent(EntityTypes1_21_11.ABSTRACT_MINECART) || !usesVanillaRiding(type)) {
             return LocalRidingMode.VIRTUAL_INPUT_ONLY;
         }
         return LocalRidingMode.PASSENGER_ONLY;
@@ -551,17 +554,16 @@ public class RidingTracker extends StoredObject {
         return clientPlayer != null && clientPlayer == entity;
     }
 
-    private static boolean usesVanillaRiding(final Entity vehicle) {
-        final EntityTypes1_21_11 type = vehicle.javaType();
-        return usesBoatRiding(vehicle)
+    private static boolean usesVanillaRiding(final EntityTypes1_21_11 type) {
+        return usesBoatRiding(type)
                 || type.isOrHasParent(EntityTypes1_21_11.ABSTRACT_HORSE)
                 || type.isOrHasParent(EntityTypes1_21_11.ABSTRACT_MINECART)
                 || type == EntityTypes1_21_11.PIG
                 || type == EntityTypes1_21_11.STRIDER;
     }
 
-    private static boolean usesBoatRiding(final Entity vehicle) {
-        return vehicle.javaType().isOrHasParent(EntityTypes1_21_11.ABSTRACT_BOAT);
+    private static boolean usesBoatRiding(final EntityTypes1_21_11 type) {
+        return type.isOrHasParent(EntityTypes1_21_11.ABSTRACT_BOAT);
     }
 
     private static boolean contains(final LongList list, final long value) {
@@ -589,7 +591,7 @@ public class RidingTracker extends StoredObject {
     private record MoveVehicleInput(Position3f position, float yaw, float pitch, boolean onGround) {
     }
 
-    private enum LocalRidingMode {
+    enum LocalRidingMode {
         BOAT_PREDICTED,
         VIRTUAL_INPUT_ONLY,
         PASSENGER_ONLY
