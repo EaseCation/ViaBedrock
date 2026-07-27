@@ -56,6 +56,7 @@ class ItemUseSemanticsTest {
         assertTrue(ItemUseSemantics.isContinuousUseItem("minecraft:potion", null, null, false));
         assertTrue(ItemUseSemantics.isContinuousUseItem("minecraft:apple", Set.of("minecraft:is_food"), null, false));
         assertTrue(ItemUseSemantics.isContinuousUseItem("minecraft:bow", null, null, false));
+        assertTrue(ItemUseSemantics.isContinuousUseItem("minecraft:shield", null, null, false));
         assertFalse(ItemUseSemantics.isContinuousUseItem("minecraft:crossbow", null, null, true));
         assertFalse(ItemUseSemantics.isContinuousUseItem("minecraft:paper", null, null, false));
     }

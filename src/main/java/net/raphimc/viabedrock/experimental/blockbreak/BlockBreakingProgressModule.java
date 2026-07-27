@@ -216,7 +216,6 @@ public final class BlockBreakingProgressModule implements FeatureModule {
             return;
         }
 
-        this.sendBedrockSwing(user, clientPlayer);
         final BlockBreakingProgressTracker tracker = user.get(BlockBreakingProgressTracker.class);
         final MiningTarget target = tracker.miningTarget();
         if (target != null && tracker.miningPhase() == MiningPhase.SUSPENDED) {
@@ -231,9 +230,12 @@ public final class BlockBreakingProgressModule implements FeatureModule {
             }
             return;
         }
-        if (!tracker.shouldSuppressMissedSwing()) {
-            clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.MissedSwing);
+        if (!tracker.shouldForwardStandaloneSwing()) {
+            return;
         }
+
+        this.sendBedrockSwing(user, clientPlayer);
+        clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.MissedSwing);
     }
 
     private void handleClientTickEnd(final PacketWrapper wrapper) {

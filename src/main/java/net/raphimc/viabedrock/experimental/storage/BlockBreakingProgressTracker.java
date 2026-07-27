@@ -68,6 +68,10 @@ public final class BlockBreakingProgressTracker extends StoredObject {
         return this.postFinishCooldownTicks > 0 || this.miningPhase == MiningPhase.ACTIVE || this.miningPhase == MiningPhase.SUSPENDED;
     }
 
+    public boolean shouldForwardStandaloneSwing() {
+        return this.miningTarget == null && !this.shouldSuppressMissedSwing();
+    }
+
     public void startMining(final BlockPosition position, final Direction direction) {
         this.miningTarget = new MiningTarget(position, direction);
         this.miningPhase = MiningPhase.ACTIVE;
