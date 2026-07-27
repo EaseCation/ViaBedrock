@@ -28,6 +28,7 @@ import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.model.entity.CustomEntity;
+import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
 import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.api.model.entity.LivingEntity;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
@@ -37,6 +38,7 @@ import net.raphimc.viabedrock.protocol.data.generated.java.Attributes;
 import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
 import net.raphimc.viabedrock.api.util.TextUtil;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
+import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand;
 import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
 
 import com.viaversion.nbt.tag.Tag;
@@ -79,7 +81,10 @@ public class EntityMetadataRewriter {
                 upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.NO_GRAVITY), VersionedTypes.V26_1.entityDataTypes().booleanType, noGravity(entity.javaType(), bedrockFlags)));
 
                 if (entity instanceof LivingEntity) {
-                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.LIVING_ENTITY_FLAGS), VersionedTypes.V26_1.entityDataTypes().byteType, livingFlags(bedrockFlags)));
+                    final byte livingFlags = entity == entityTracker.getClientPlayer()
+                            ? localPlayerLivingFlags(bedrockFlags, entityTracker.getClientPlayer())
+                            : livingFlags(bedrockFlags);
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.LIVING_ENTITY_FLAGS), VersionedTypes.V26_1.entityDataTypes().byteType, livingFlags));
                 }
 
                 if (entity.javaType().isOrHasParent(EntityTypes1_21_11.MOB)) {
@@ -844,6 +849,21 @@ public class EntityMetadataRewriter {
         }
         if (bedrockFlags.contains(ActorFlags.DAMAGENEARBYMOBS)) {
             flags |= 0x04;
+        }
+        return flags;
+    }
+
+    static byte localPlayerLivingFlags(final Set<ActorFlags> bedrockFlags, final ClientPlayerEntity clientPlayer) {
+        return localPlayerLivingFlags(bedrockFlags, clientPlayer.isUsingItem(), clientPlayer.usingItemHand());
+    }
+
+    static byte localPlayerLivingFlags(final Set<ActorFlags> bedrockFlags, final boolean usingItem, final InteractionHand hand) {
+        byte flags = (byte) (bedrockFlags.contains(ActorFlags.DAMAGENEARBYMOBS) ? 0x04 : 0);
+        if (usingItem && hand != null) {
+            flags |= 0x01;
+            if (hand == InteractionHand.OFF_HAND) {
+                flags |= 0x02;
+            }
         }
         return flags;
     }

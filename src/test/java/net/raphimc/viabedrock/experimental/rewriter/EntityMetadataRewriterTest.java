@@ -11,6 +11,7 @@ package net.raphimc.viabedrock.experimental.rewriter;
 
 import com.viaversion.viaversion.api.minecraft.entities.EntityTypes1_21_11;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorFlags;
+import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand;
 import org.junit.jupiter.api.Test;
 
 import java.util.EnumSet;
@@ -58,6 +59,22 @@ class EntityMetadataRewriterTest {
         assertEquals(0, EntityMetadataRewriter.livingFlags(EnumSet.of(ActorFlags.EMERGING)));
         assertEquals(0x07, EntityMetadataRewriter.tamableFlags(EnumSet.of(
                 ActorFlags.SITTING, ActorFlags.ANGRY, ActorFlags.TAMED)));
+    }
+
+    @Test
+    void localPlayerIgnoresBedrockBlockingWithoutTrackedItemUse() {
+        assertEquals(0, EntityMetadataRewriter.localPlayerLivingFlags(
+                EnumSet.of(ActorFlags.BLOCKING), false, null));
+        assertEquals(0x04, EntityMetadataRewriter.localPlayerLivingFlags(
+                EnumSet.of(ActorFlags.BLOCKING, ActorFlags.DAMAGENEARBYMOBS), false, null));
+    }
+
+    @Test
+    void localPlayerUsesTheTrackedJavaHand() {
+        assertEquals(0x01, EntityMetadataRewriter.localPlayerLivingFlags(
+                EnumSet.noneOf(ActorFlags.class), true, InteractionHand.MAIN_HAND));
+        assertEquals(0x03, EntityMetadataRewriter.localPlayerLivingFlags(
+                EnumSet.of(ActorFlags.BLOCKING), true, InteractionHand.OFF_HAND));
     }
 
     @Test
