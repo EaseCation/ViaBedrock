@@ -385,23 +385,23 @@ public class HudPackets {
                 wrapper.cancel();
                 return;
             }
+            if (!shouldForwardBossEvent(entity.hasBossBar(), updateType)) {
+                wrapper.cancel();
+                return;
+            }
             wrapper.write(Types.UUID, entity.javaUuid()); // uuid
             switch (updateType) {
                 case Add -> {
-                    if (!entity.hasBossBar()) {
-                        entity.setHasBossBar(true);
-                        wrapper.write(Types.VAR_INT, BossEventOperationType.ADD.ordinal()); // operation
-                        wrapper.write(Types.TAG, TextUtil.stringToNbt(wrapper.user().get(ResourcePackStorage.class).getTexts().translate(wrapper.read(BedrockTypes.STRING)))); // name
-                        wrapper.read(BedrockTypes.STRING); // filtered name
-                        wrapper.write(Types.FLOAT, wrapper.read(BedrockTypes.FLOAT_LE)); // progress
-                        wrapper.read(BedrockTypes.UNSIGNED_SHORT_LE); // darken screen | Does nothing in Bedrock Edition
-                        wrapper.write(Types.VAR_INT, MathUtil.getOrFallback(wrapper.read(BedrockTypes.UNSIGNED_VAR_INT), 0, 5, 0)); // color
-                        wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // overlay | Does nothing in Bedrock Edition
-                        wrapper.write(Types.VAR_INT, 0); // overlay
-                        wrapper.write(Types.UNSIGNED_BYTE, (short) 0); // flags
-                    } else {
-                        wrapper.cancel();
-                    }
+                    entity.setHasBossBar(true);
+                    wrapper.write(Types.VAR_INT, BossEventOperationType.ADD.ordinal()); // operation
+                    wrapper.write(Types.TAG, TextUtil.stringToNbt(wrapper.user().get(ResourcePackStorage.class).getTexts().translate(wrapper.read(BedrockTypes.STRING)))); // name
+                    wrapper.read(BedrockTypes.STRING); // filtered name
+                    wrapper.write(Types.FLOAT, wrapper.read(BedrockTypes.FLOAT_LE)); // progress
+                    wrapper.read(BedrockTypes.UNSIGNED_SHORT_LE); // darken screen | Does nothing in Bedrock Edition
+                    wrapper.write(Types.VAR_INT, MathUtil.getOrFallback(wrapper.read(BedrockTypes.UNSIGNED_VAR_INT), 0, 5, 0)); // color
+                    wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // overlay | Does nothing in Bedrock Edition
+                    wrapper.write(Types.VAR_INT, 0); // overlay
+                    wrapper.write(Types.UNSIGNED_BYTE, (short) 0); // flags
                 }
                 case Remove -> {
                     entity.setHasBossBar(false);
@@ -461,6 +461,14 @@ public class HudPackets {
             }
             wrapper.write(Types.BOOLEAN, true); // overlay
         });
+    }
+
+    static boolean shouldForwardBossEvent(final boolean hasBossBar, final BossEventUpdateType updateType) {
+        return switch (updateType) {
+            case Add -> !hasBossBar;
+            case Remove, Update_Percent, Update_Name, Update_Properties, Update_Style -> hasBossBar;
+            case PlayerAdded, PlayerRemoved, Query -> false;
+        };
     }
 
 }
