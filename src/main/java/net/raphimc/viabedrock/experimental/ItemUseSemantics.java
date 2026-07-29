@@ -35,7 +35,8 @@ final class ItemUseSemantics {
             "minecraft:crossbow",
             "minecraft:trident",
             "minecraft:brush",
-            "minecraft:spyglass"
+            "minecraft:spyglass",
+            "minecraft:shield"
     );
 
     static boolean isContinuousUseItem(final String identifier, final Set<String> itemTags, final ItemUseDefinition itemUse, final boolean chargedCrossbow) {
