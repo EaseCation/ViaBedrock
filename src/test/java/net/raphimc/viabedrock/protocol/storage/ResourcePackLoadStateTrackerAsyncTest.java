@@ -24,6 +24,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.io.IOException;
 
@@ -50,16 +51,296 @@ class ResourcePackLoadStateTrackerAsyncTest {
                     new UserConnectionImpl(firstChannel), new ResourcePackLoadStateTracker.Info[0]);
             final ResourcePackLoadStateTracker second = new ResourcePackLoadStateTracker(
                     new UserConnectionImpl(secondChannel), new ResourcePackLoadStateTracker.Info[0]);
-            first.setRemotePackLookupFuture(CompletableFuture.completedFuture(lookup));
-            second.setRemotePackLookupFuture(CompletableFuture.completedFuture(lookup));
+            first.startRemotePackLookup(() -> CompletableFuture.completedFuture(lookup));
+            second.startRemotePackLookup(() -> CompletableFuture.completedFuture(lookup));
 
-            assertSame(lookup, first.claimRemotePackCancellation());
-            assertNull(first.claimRemotePackCancellation());
-            assertSame(lookup, second.claimRemotePackCancellation());
-            assertNull(second.claimRemotePackCancellation());
+            assertSame(lookup, first.claimRemotePackCancellationFuture().join());
+            assertNull(first.claimRemotePackCancellationFuture());
+            assertSame(lookup, second.claimRemotePackCancellationFuture().join());
+            assertNull(second.claimRemotePackCancellationFuture());
         } finally {
             firstChannel.finishAndReleaseAll();
             secondChannel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void startsRemoteLookupOnceAndSharesItsCanonicalFuture() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final ResourcePackLoadStateTracker tracker = new ResourcePackLoadStateTracker(
+                    new UserConnectionImpl(channel), new ResourcePackLoadStateTracker.Info[0]);
+            final CompletableFuture<RemotePackServiceClient.Lookup> source = new CompletableFuture<>();
+            final AtomicInteger starts = new AtomicInteger();
+
+            final CompletableFuture<RemotePackServiceClient.Lookup> first =
+                    tracker.startRemotePackLookup(() -> {
+                        starts.incrementAndGet();
+                        return source;
+                    });
+            final CompletableFuture<RemotePackServiceClient.Lookup> duplicate =
+                    tracker.startRemotePackLookup(() -> {
+                        throw new AssertionError("Duplicate lookup must not be started");
+                    });
+
+            assertSame(first, duplicate);
+            assertEquals(1, starts.get());
+            assertFalse(first.isDone());
+            final RemotePackServiceClient.Lookup lookup = lookup();
+            source.complete(lookup);
+            assertSame(lookup, first.join());
+            assertEquals(ResourcePackLoadStateTracker.RemoteDeliveryOutcome.LOOKUP_READY,
+                    tracker.remoteDeliveryFuture().join());
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void synchronousRemoteLookupFailureTerminatesBothLookupAndDelivery() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final ResourcePackLoadStateTracker tracker = new ResourcePackLoadStateTracker(
+                    new UserConnectionImpl(channel), new ResourcePackLoadStateTracker.Info[0]);
+            final IllegalStateException expected = new IllegalStateException("lookup start failed");
+
+            final CompletableFuture<RemotePackServiceClient.Lookup> lookup =
+                    tracker.startRemotePackLookup(() -> {
+                        throw expected;
+                    });
+
+            assertSame(expected, assertThrows(java.util.concurrent.CompletionException.class,
+                    lookup::join).getCause());
+            assertSame(expected, assertThrows(java.util.concurrent.CompletionException.class,
+                    tracker.remoteDeliveryFuture()::join).getCause());
+            assertEquals(ResourcePackLoadStateTracker.RemoteDeliveryPhase.FAILED,
+                    tracker.remoteDeliveryPhase());
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void cancellationBeforeLookupCompletionStillExposesTheLateLookupOnce() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final ResourcePackLoadStateTracker tracker = new ResourcePackLoadStateTracker(
+                    new UserConnectionImpl(channel), new ResourcePackLoadStateTracker.Info[0]);
+            final CompletableFuture<RemotePackServiceClient.Lookup> source = new CompletableFuture<>();
+            tracker.startRemotePackLookup(() -> source);
+
+            final CompletableFuture<RemotePackServiceClient.Lookup> cancellation =
+                    tracker.claimRemotePackCancellationFuture();
+            assertNull(tracker.claimRemotePackCancellationFuture());
+            assertEquals(ResourcePackLoadStateTracker.RemoteDeliveryOutcome.CANCELLED,
+                    tracker.remoteDeliveryFuture().join());
+            assertFalse(cancellation.isDone());
+
+            final RemotePackServiceClient.Lookup lookup = lookup();
+            source.complete(lookup);
+            assertSame(lookup, cancellation.join());
+            assertFalse(tracker.shouldPublishRemotePack());
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void cancelledLookupFailureTerminatesTheCancellationWaiter() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final ResourcePackLoadStateTracker tracker = new ResourcePackLoadStateTracker(
+                    new UserConnectionImpl(channel), new ResourcePackLoadStateTracker.Info[0]);
+            final CompletableFuture<RemotePackServiceClient.Lookup> source = new CompletableFuture<>();
+            tracker.startRemotePackLookup(() -> source);
+            final CompletableFuture<RemotePackServiceClient.Lookup> cancellation =
+                    tracker.claimRemotePackCancellationFuture();
+
+            final IOException expected = new IOException("lookup failed after cancellation");
+            source.completeExceptionally(expected);
+
+            assertSame(expected, assertThrows(java.util.concurrent.CompletionException.class,
+                    cancellation::join).getCause());
+            assertEquals(ResourcePackLoadStateTracker.RemoteDeliveryOutcome.CANCELLED,
+                    tracker.remoteDeliveryFuture().join());
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void remoteDeliveryNotApplicableIsAnExplicitTerminalState() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final ResourcePackLoadStateTracker tracker = new ResourcePackLoadStateTracker(
+                    new UserConnectionImpl(channel), new ResourcePackLoadStateTracker.Info[0]);
+
+            tracker.markRemoteDeliveryNotApplicable();
+            tracker.markRemoteDeliveryNotApplicable();
+
+            assertEquals(ResourcePackLoadStateTracker.RemoteDeliveryOutcome.NOT_APPLICABLE,
+                    tracker.remoteDeliveryFuture().join());
+            assertThrows(IllegalStateException.class,
+                    () -> tracker.startRemotePackLookup(
+                            () -> CompletableFuture.completedFuture(lookup())));
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void stackBarrierFailsCanonicallyWhenInfoDidNotInitializeRemoteDelivery() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final ResourcePackLoadStateTracker tracker = new ResourcePackLoadStateTracker(
+                    new UserConnectionImpl(channel), new ResourcePackLoadStateTracker.Info[0]);
+
+            final CompletableFuture<ResourcePackLoadStateTracker.RemoteDeliveryOutcome> first =
+                    tracker.requireRemoteDeliveryDecision();
+            final CompletableFuture<ResourcePackLoadStateTracker.RemoteDeliveryOutcome> duplicate =
+                    tracker.requireRemoteDeliveryDecision();
+
+            assertSame(first, duplicate);
+            final Throwable failure = assertThrows(
+                    java.util.concurrent.CompletionException.class, first::join).getCause();
+            assertTrue(failure.getMessage().contains("not initialized"));
+            assertEquals(ResourcePackLoadStateTracker.RemoteDeliveryPhase.FAILED,
+                    tracker.remoteDeliveryPhase());
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void sourceLoadStartsOnceAndSharesItsFailure() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final ResourcePackLoadStateTracker tracker = new ResourcePackLoadStateTracker(
+                    new UserConnectionImpl(channel), new ResourcePackLoadStateTracker.Info[0]);
+
+            final CompletableFuture<Void> first = tracker.loadRequestedResourcePacks();
+            final CompletableFuture<Void> duplicate = tracker.loadRequestedResourcePacks();
+
+            assertSame(first, duplicate);
+            final Throwable failure = assertThrows(
+                    java.util.concurrent.CompletionException.class, first::join).getCause();
+            assertTrue(failure.getMessage().contains("download tracker is unavailable"));
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void negotiationBecomesReadyOnlyAfterStackPublicationAndJavaTerminalState() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final ResourcePackLoadStateTracker tracker = new ResourcePackLoadStateTracker(
+                    new UserConnectionImpl(channel), new ResourcePackLoadStateTracker.Info[0]);
+            final ResourcePackStorage storage = ResourcePackStorage.createUnshared(List.of());
+
+            assertEquals(ResourcePackLoadStateTracker.StackStart.STARTED,
+                    tracker.beginResourcePackStack(new ResourcePack.Key[0], new String[0]));
+            tracker.markJavaClientAccepted();
+            tracker.completeResourcePackStack(storage);
+            assertFalse(tracker.negotiationReadyFuture().isDone());
+
+            tracker.markJavaClientLoaded();
+            assertSame(storage, tracker.negotiationReadyFuture().join());
+            assertTrue(tracker.claimResourcePackStackFinished());
+            assertFalse(tracker.claimResourcePackStackFinished());
+            storage.onRemove();
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void earlyJavaLoadedAndDeclinedOutcomesStillWaitForStackPublication() {
+        final EmbeddedChannel loadedChannel = new EmbeddedChannel();
+        final EmbeddedChannel declinedChannel = new EmbeddedChannel();
+        final ResourcePackStorage loadedStorage = ResourcePackStorage.createUnshared(List.of());
+        final ResourcePackStorage declinedStorage = ResourcePackStorage.createUnshared(List.of());
+        try {
+            final ResourcePackLoadStateTracker loaded = new ResourcePackLoadStateTracker(
+                    new UserConnectionImpl(loadedChannel), new ResourcePackLoadStateTracker.Info[0]);
+            loaded.beginResourcePackStack(new ResourcePack.Key[0], new String[0]);
+            loaded.markJavaClientAccepted();
+            loaded.markJavaClientLoaded();
+            assertFalse(loaded.negotiationReadyFuture().isDone());
+            loaded.completeResourcePackStack(loadedStorage);
+            assertSame(loadedStorage, loaded.negotiationReadyFuture().join());
+
+            final ResourcePackLoadStateTracker declined = new ResourcePackLoadStateTracker(
+                    new UserConnectionImpl(declinedChannel), new ResourcePackLoadStateTracker.Info[0]);
+            declined.beginResourcePackStack(new ResourcePack.Key[0], new String[0]);
+            declined.markJavaClientDeclined();
+            assertFalse(declined.negotiationReadyFuture().isDone());
+            declined.completeResourcePackStack(declinedStorage);
+            assertSame(declinedStorage, declined.negotiationReadyFuture().join());
+        } finally {
+            loadedStorage.onRemove();
+            declinedStorage.onRemove();
+            loadedChannel.finishAndReleaseAll();
+            declinedChannel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void duplicateStackIsIdempotentButConflictingStackFails() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final ResourcePackLoadStateTracker tracker = new ResourcePackLoadStateTracker(
+                    new UserConnectionImpl(channel), new ResourcePackLoadStateTracker.Info[0]);
+            final ResourcePack.Key key = new ResourcePack.Key(UUID.randomUUID(), "1.0.0");
+
+            assertEquals(ResourcePackLoadStateTracker.StackStart.STARTED,
+                    tracker.beginResourcePackStack(new ResourcePack.Key[]{key}, new String[]{"hd"}));
+            assertEquals(ResourcePackLoadStateTracker.StackStart.DUPLICATE,
+                    tracker.beginResourcePackStack(new ResourcePack.Key[]{key}, new String[]{"hd"}));
+            assertThrows(IllegalStateException.class,
+                    () -> tracker.beginResourcePackStack(
+                            new ResourcePack.Key[]{key}, new String[]{"low"}));
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void deferredStartGameAllowsOnlyItsMarkedReplay() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final ResourcePackLoadStateTracker tracker = new ResourcePackLoadStateTracker(
+                    new UserConnectionImpl(channel), new ResourcePackLoadStateTracker.Info[0]);
+
+            assertTrue(tracker.deferStartGame());
+            assertFalse(tracker.deferStartGame());
+            assertFalse(tracker.claimStartGameProcessing());
+            tracker.markDeferredStartGameReady();
+            assertTrue(tracker.claimStartGameProcessing());
+            assertFalse(tracker.claimStartGameProcessing());
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void sessionRemovalClosesEveryPendingBarrierAndRejectsLatePublication() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final ResourcePackLoadStateTracker tracker = new ResourcePackLoadStateTracker(
+                    new UserConnectionImpl(channel), new ResourcePackLoadStateTracker.Info[0]);
+            tracker.startRemotePackLookup(CompletableFuture::new);
+            tracker.beginResourcePackStack(new ResourcePack.Key[0], new String[0]);
+
+            tracker.onRemove();
+
+            assertThrows(CancellationException.class, tracker.javaPackTerminalFuture()::join);
+            assertThrows(CancellationException.class, tracker.remoteDeliveryFuture()::join);
+            assertThrows(CancellationException.class, tracker.resourcePackStackFuture()::join);
+            assertTrue(assertThrows(java.util.concurrent.CompletionException.class,
+                    tracker.negotiationReadyFuture()::join).getCause() instanceof CancellationException);
+        } finally {
+            channel.finishAndReleaseAll();
         }
     }
 
@@ -109,6 +390,32 @@ class ResourcePackLoadStateTrackerAsyncTest {
             final IllegalArgumentException failure = assertThrows(
                     IllegalArgumentException.class, () -> tracker.resolveTransferRequest(id.toString()));
             assertTrue(failure.getMessage().contains("matches 2 announced versions"));
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void missingStackDiagnosticDistinguishesDeclaredAndDifferentVersion() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final UUID id = UUID.randomUUID();
+            final ResourcePack.Key declared = new ResourcePack.Key(id, "1.0.0");
+            final ResourcePack.Key differentVersion = new ResourcePack.Key(id, "2.0.0");
+            final ResourcePackLoadStateTracker tracker = new ResourcePackLoadStateTracker(
+                    new UserConnectionImpl(channel), new ResourcePackLoadStateTracker.Info[]{
+                            new ResourcePackLoadStateTracker.Info(
+                                    declared, 128L, new byte[0], "content", "", null)
+                    });
+
+            final String declaredMessage =
+                    tracker.missingResourcePackException(declared, true).getMessage();
+            final String versionMessage =
+                    tracker.missingResourcePackException(differentVersion, true).getMessage();
+
+            assertTrue(declaredMessage.contains("declaredInInfo=true"));
+            assertTrue(versionMessage.contains("declaredInInfo=false"));
+            assertTrue(versionMessage.contains("announcedVersionsForUuid=[1.0.0]"));
         } finally {
             channel.finishAndReleaseAll();
         }
@@ -281,6 +588,13 @@ class ResourcePackLoadStateTrackerAsyncTest {
         } finally {
             channel.finishAndReleaseAll();
         }
+    }
+
+    private static RemotePackServiceClient.Lookup lookup() {
+        final UUID token = UUID.randomUUID();
+        return new RemotePackServiceClient.Lookup(
+                "a".repeat(64), null, null, -1L, token, token,
+                "https://packs.example.test/packs/pending/" + token);
     }
 
 }

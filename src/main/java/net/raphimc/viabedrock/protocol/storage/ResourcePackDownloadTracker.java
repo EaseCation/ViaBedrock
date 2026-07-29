@@ -53,6 +53,7 @@ public class ResourcePackDownloadTracker implements StorableObject {
     public static final int MAX_CHUNK_COUNT = 1_000_000;
 
     private final Map<String, Download> downloads = new HashMap<>();
+    private final Map<String, TransferMetadata> transferMetadata = new HashMap<>();
     private final Object lifecycleLock = new Object();
     private final Set<CompletableFuture<?>> connectionStages = ConcurrentHashMap.newKeySet();
     private final Set<ResourcePackArchiveStore.Claim> pendingArchiveClaims = ConcurrentHashMap.newKeySet();
@@ -144,6 +145,24 @@ public class ResourcePackDownloadTracker implements StorableObject {
         }
     }
 
+    public TransferRegistration registerTransfer(
+            final String key, final ResourcePack.Key declaredKey,
+            final long size, final long chunkSize, final byte[] hash,
+            final boolean premium, final PackType type) {
+        final TransferMetadata metadata = new TransferMetadata(
+                declaredKey, size, chunkSize, hash, premium, type);
+        synchronized (this.lifecycleLock) {
+            if (this.closed.get()) {
+                throw new CancellationException("Resource pack download connection is closed");
+            }
+            final TransferMetadata previous = this.transferMetadata.putIfAbsent(key, metadata);
+            if (previous == null) return TransferRegistration.NEW;
+            if (previous.matches(metadata)) return TransferRegistration.DUPLICATE;
+            throw new IllegalStateException(
+                    "Conflicting RESOURCE_PACK_DATA_INFO received for " + key);
+        }
+    }
+
     public static int validateMetadata(final long size, final long chunkSize, final byte[] hash) {
         final int maxArchiveMiB = ViaBedrock.getConfig() != null
                 ? ViaBedrock.getConfig().getResourcePackMaxArchiveMiB() : 2_048;
@@ -231,6 +250,7 @@ public class ResourcePackDownloadTracker implements StorableObject {
         synchronized (this.lifecycleLock) {
             abandonedDownloads = new ArrayList<>(this.downloads.values());
             this.downloads.clear();
+            this.transferMetadata.clear();
         }
         for (Download download : abandonedDownloads) {
             this.abort(download, error);
@@ -334,19 +354,18 @@ public class ResourcePackDownloadTracker implements StorableObject {
          */
         public synchronized Path processDataChunk(final long chunk, final long byteOffset, final byte[] data)
                 throws IOException {
+            return this.processDataChunkResult(chunk, byteOffset, data).completedFile();
+        }
+
+        private synchronized ChunkResult processDataChunkResult(
+                final long chunk, final long byteOffset, final byte[] data) throws IOException {
             if (this.cancelled) {
                 throw new CancellationException("Resource pack download was cancelled");
-            }
-            if (this.completed) {
-                throw new IllegalStateException("Resource pack download is already complete");
             }
             if (chunk < 0L || chunk >= this.chunkCount) {
                 throw new IllegalStateException("Received out of bounds resource pack chunk: " + chunk);
             }
             final int chunkIndex = Math.toIntExact(chunk);
-            if (this.receivedChunks.get(chunkIndex)) {
-                throw new IllegalStateException("Received duplicate resource pack chunk: " + chunk);
-            }
 
             final long expectedOffset;
             try {
@@ -370,6 +389,16 @@ public class ResourcePackDownloadTracker implements StorableObject {
             if (byteOffset + data.length > this.size) {
                 throw new IllegalStateException("Resource pack chunk extends beyond the archive");
             }
+            if (this.receivedChunks.get(chunkIndex)) {
+                if (!this.matchesStoredChunk(byteOffset, data)) {
+                    throw new IllegalStateException(
+                            "Received conflicting duplicate resource pack chunk: " + chunk);
+                }
+                return new ChunkResult(this.completed ? this.tempFile : null, false);
+            }
+            if (this.completed) {
+                throw new IllegalStateException("Resource pack download is already complete");
+            }
 
             final ByteBuffer buffer = ByteBuffer.wrap(data);
             long writeOffset = byteOffset;
@@ -384,21 +413,44 @@ public class ResourcePackDownloadTracker implements StorableObject {
             this.receivedChunkCount++;
 
             if (this.receivedChunkCount != this.chunkCount) {
-                return null;
+                return new ChunkResult(null, true);
             }
             this.channel.close();
             this.channel = null;
             this.completed = true;
-            return this.tempFile;
+            return new ChunkResult(this.tempFile, true);
+        }
+
+        private boolean matchesStoredChunk(final long byteOffset, final byte[] data) throws IOException {
+            try (FileChannel stored = FileChannel.open(this.tempFile, StandardOpenOption.READ)) {
+                final ByteBuffer comparison = ByteBuffer.allocate(Math.min(data.length, 64 * 1024));
+                int compared = 0;
+                while (compared < data.length) {
+                    comparison.clear();
+                    comparison.limit(Math.min(comparison.capacity(), data.length - compared));
+                    int read = 0;
+                    while (comparison.hasRemaining()) {
+                        final int count = stored.read(comparison, byteOffset + compared + read);
+                        if (count < 0) return false;
+                        if (count == 0) continue;
+                        read += count;
+                    }
+                    comparison.flip();
+                    while (comparison.hasRemaining()) {
+                        if (comparison.get() != data[compared++]) return false;
+                    }
+                }
+                return true;
+            }
         }
 
         /** Serializes file writes on the bounded shared IO executor. */
-        public CompletableFuture<Path> processDataChunkAsync(final ResourcePackWorkScheduler scheduler,
-                                                             final long chunk, final long byteOffset,
-                                                             final byte[] data) {
+        public CompletableFuture<ChunkResult> processDataChunkAsync(final ResourcePackWorkScheduler scheduler,
+                                                                   final long chunk, final long byteOffset,
+                                                                   final byte[] data) {
             synchronized (this.ioChainLock) {
-                final CompletableFuture<Path> write = this.ioTail.thenCompose(
-                        ignored -> scheduler.submitIo(() -> this.processDataChunk(chunk, byteOffset, data)));
+                final CompletableFuture<ChunkResult> write = this.ioTail.thenCompose(
+                        ignored -> scheduler.submitIo(() -> this.processDataChunkResult(chunk, byteOffset, data)));
                 this.ioTail = write.thenApply(ignored -> null);
                 return write;
             }
@@ -558,6 +610,33 @@ public class ResourcePackDownloadTracker implements StorableObject {
             return this.archiveClaim;
         }
 
+        public record ChunkResult(Path completedFile, boolean acceptedNewChunk) {
+        }
+
+    }
+
+    public enum TransferRegistration {
+        NEW,
+        DUPLICATE
+    }
+
+    private record TransferMetadata(ResourcePack.Key declaredKey, long size, long chunkSize,
+                                    byte[] hash, boolean premium, PackType type) {
+
+        private TransferMetadata {
+            Objects.requireNonNull(hash, "hash");
+            Objects.requireNonNull(type, "type");
+            hash = hash.clone();
+        }
+
+        private boolean matches(final TransferMetadata other) {
+            return Objects.equals(this.declaredKey, other.declaredKey)
+                    && this.size == other.size
+                    && this.chunkSize == other.chunkSize
+                    && Arrays.equals(this.hash, other.hash)
+                    && this.premium == other.premium
+                    && this.type == other.type;
+        }
     }
 
 }

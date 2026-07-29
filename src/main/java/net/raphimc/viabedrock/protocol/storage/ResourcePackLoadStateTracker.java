@@ -31,6 +31,7 @@ import net.raphimc.viabedrock.api.resourcepack.http.RemotePackServiceClient;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ResourcePackResponse;
+import net.raphimc.viabedrock.protocol.model.Experiment;
 import net.raphimc.viabedrock.protocol.provider.ResourcePackProvider;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
@@ -52,6 +53,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 import java.util.logging.Level;
 
 public class ResourcePackLoadStateTracker extends StoredObject {
@@ -61,13 +63,25 @@ public class ResourcePackLoadStateTracker extends StoredObject {
     private final Map<ResourcePack.Key, PackAlias> aliases = new HashMap<>();
     private final Map<ResourcePack.Key, ResourcePack> resourcePacks = new ConcurrentHashMap<>();
     private final AtomicInteger remainingResourcePackCount = new AtomicInteger();
+    private final AtomicBoolean sourceLoadStarted = new AtomicBoolean();
+    private final AtomicBoolean bedrockDownloadsFinishedClaimed = new AtomicBoolean();
     private final CompletableFuture<Void> loadFuture = new CompletableFuture<>();
+    private final CompletableFuture<JavaPackOutcome> javaPackTerminalFuture = new CompletableFuture<>();
+    private final CompletableFuture<RemoteDeliveryOutcome> remoteDeliveryFuture = new CompletableFuture<>();
+    private final CompletableFuture<RemotePackServiceClient.Lookup> remotePackLookupFuture = new CompletableFuture<>();
+    private final CompletableFuture<ResourcePackStorage> resourcePackStackFuture = new CompletableFuture<>();
+    private final CompletableFuture<ResourcePackStorage> negotiationReadyFuture = this.resourcePackStackFuture
+            .thenCombine(this.javaPackTerminalFuture, (resourcePackStorage, ignored) -> resourcePackStorage);
     private final String announcementSequenceFingerprint;
     private UUID httpToken;
     private volatile RemotePackServiceClient.Lookup remotePackLookup;
-    private CompletableFuture<RemotePackServiceClient.Lookup> remotePackLookupFuture;
     private final AtomicBoolean remotePackCancellationClaimed = new AtomicBoolean();
-    private boolean javaClientAccepted;
+    private final AtomicBoolean resourcePackStackFinishedClaimed = new AtomicBoolean();
+    private JavaPackPhase javaPackPhase = JavaPackPhase.PENDING;
+    private RemoteDeliveryPhase remoteDeliveryPhase = RemoteDeliveryPhase.UNDECIDED;
+    private StackPhase stackPhase = StackPhase.NOT_RECEIVED;
+    private StartGamePhase startGamePhase = StartGamePhase.NOT_SEEN;
+    private StackAnnouncement stackAnnouncement;
 
     public ResourcePackLoadStateTracker(final UserConnection user, final ResourcePackLoadStateTracker.Info[] infos) {
         this(user, infos, AnnouncementHeader.compatibility(), backendScope(user));
@@ -142,6 +156,10 @@ public class ResourcePackLoadStateTracker extends StoredObject {
         return this.announcementSequenceFingerprint;
     }
 
+    public boolean hasSameAnnouncementSequence(final AnnouncementHeader header, final Info[] infos) {
+        return this.announcementSequenceFingerprint.equals(fingerprintAnnouncementSequence(header, infos));
+    }
+
     public void addRemoteResourcePack(final ResourcePack resourcePack) {
         try {
             Via.getManager().getProviders().get(ResourcePackProvider.class).save(resourcePack);
@@ -152,6 +170,10 @@ public class ResourcePackLoadStateTracker extends StoredObject {
     }
 
     public void addLocalResourcePack(final ResourcePack resourcePack) {
+        if (!this.requests.containsKey(resourcePack.key())) {
+            throw new IllegalArgumentException(
+                    "Loaded resource pack was not declared by RESOURCE_PACKS_INFO: " + resourcePack.key());
+        }
         if (this.resourcePacks.putIfAbsent(resourcePack.key(), resourcePack) != null) {
             return;
         }
@@ -166,10 +188,14 @@ public class ResourcePackLoadStateTracker extends StoredObject {
     }
 
     public CompletableFuture<Void> loadRequestedResourcePacks() {
+        if (!this.sourceLoadStarted.compareAndSet(false, true)) {
+            return this.loadFuture;
+        }
         final ResourcePackDownloadTracker connectionTracker = this.user().get(ResourcePackDownloadTracker.class);
         if (connectionTracker == null) {
-            return CompletableFuture.failedFuture(
+            this.loadFuture.completeExceptionally(
                     new IllegalStateException("Resource pack download tracker is unavailable"));
+            return this.loadFuture;
         }
         final CompletableFuture<Void> sessionLoadFuture = this.loadFuture;
         connectionTracker.trackConnectionStage(sessionLoadFuture);
@@ -292,7 +318,8 @@ public class ResourcePackLoadStateTracker extends StoredObject {
     }
 
     private static boolean isConnectionActive(final ResourcePackLoadStateTracker tracker) {
-        return tracker != null && tracker.user().getChannel().isActive();
+        return tracker != null && tracker.user().getChannel().isActive()
+                && tracker.user().get(ResourcePackLoadStateTracker.class) == tracker;
     }
 
     private static Throwable unwrap(final Throwable error) {
@@ -383,11 +410,7 @@ public class ResourcePackLoadStateTracker extends StoredObject {
             final ResourcePack.Key key = keys[i];
             final ResourcePack resourcePack = this.getResourcePack(key);
             if (resourcePack == null) {
-                if (sharedCache) {
-                    throw new IllegalStateException("Missing resource pack required by stack: " + key);
-                }
-                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing resource pack: " + key);
-                continue;
+                throw this.missingResourcePackException(key, sharedCache);
             }
             if (sharedCache && !this.requests.containsKey(key)
                     && !BedrockProtocol.MAPPINGS.getBedrockResourcePacks().containsKey(key)) {
@@ -424,6 +447,18 @@ public class ResourcePackLoadStateTracker extends StoredObject {
         return new PreparedStack(resourcePacks, resolvedSubpacks);
     }
 
+    IllegalStateException missingResourcePackException(final ResourcePack.Key key,
+                                                       final boolean sharedCache) {
+        return new IllegalStateException("Missing resource pack required by stack: " + key
+                + " (declaredInInfo=" + this.requests.containsKey(key)
+                + ", loaded=" + this.resourcePacks.size()
+                + ", announced=" + this.requests.size()
+                + ", sharedCache=" + sharedCache
+                + ", announcedVersionsForUuid="
+                + this.requestsById.getOrDefault(key.id(), List.of()).stream()
+                .map(info -> info.key().version()).toList() + ')');
+    }
+
     private static <T> CompletableFuture<T> submitViaWorker(final Callable<T> task) {
         final CompletableFuture<T> future = new CompletableFuture<>();
         try {
@@ -440,12 +475,55 @@ public class ResourcePackLoadStateTracker extends StoredObject {
         return future;
     }
 
-    public boolean hasJavaClientAccepted() {
-        return this.javaClientAccepted;
+    public synchronized JavaPackPhase javaPackPhase() {
+        return this.javaPackPhase;
     }
 
-    public void setJavaClientAccepted() {
-        this.javaClientAccepted = true;
+    public synchronized void markJavaClientAccepted() {
+        if (this.javaPackPhase == JavaPackPhase.ACCEPTED || this.javaPackPhase == JavaPackPhase.LOADED) return;
+        if (this.javaPackPhase != JavaPackPhase.PENDING) {
+            throw new IllegalStateException(
+                    "Java resource pack cannot be accepted from state " + this.javaPackPhase);
+        }
+        this.javaPackPhase = JavaPackPhase.ACCEPTED;
+    }
+
+    public synchronized void markJavaClientLoaded() {
+        if (this.javaPackPhase == JavaPackPhase.LOADED) return;
+        if (this.javaPackPhase != JavaPackPhase.ACCEPTED) {
+            throw new IllegalStateException(
+                    "Java resource pack cannot finish loading from state " + this.javaPackPhase);
+        }
+        this.javaPackPhase = JavaPackPhase.LOADED;
+        this.javaPackTerminalFuture.complete(JavaPackOutcome.LOADED);
+    }
+
+    public synchronized void markJavaClientDeclined() {
+        if (this.javaPackPhase == JavaPackPhase.DECLINED) return;
+        if (this.javaPackPhase != JavaPackPhase.PENDING) {
+            throw new IllegalStateException(
+                    "Java resource pack cannot be declined from state " + this.javaPackPhase);
+        }
+        this.javaPackPhase = JavaPackPhase.DECLINED;
+        this.javaPackTerminalFuture.complete(JavaPackOutcome.DECLINED);
+    }
+
+    public synchronized void markJavaClientFailed() {
+        if (this.javaPackPhase == JavaPackPhase.FAILED) return;
+        if (this.javaPackPhase == JavaPackPhase.LOADED || this.javaPackPhase == JavaPackPhase.DECLINED) {
+            throw new IllegalStateException(
+                    "Java resource pack cannot fail from state " + this.javaPackPhase);
+        }
+        this.javaPackPhase = JavaPackPhase.FAILED;
+        this.javaPackTerminalFuture.complete(JavaPackOutcome.FAILED);
+    }
+
+    public CompletableFuture<JavaPackOutcome> javaPackTerminalFuture() {
+        return this.javaPackTerminalFuture;
+    }
+
+    public boolean claimBedrockDownloadsFinished() {
+        return this.bedrockDownloadsFinishedClaimed.compareAndSet(false, true);
     }
 
     public UUID httpToken() {
@@ -467,25 +545,292 @@ public class ResourcePackLoadStateTracker extends StoredObject {
         return this.remotePackLookupFuture;
     }
 
-    /** Claims this connection's single cancellation of its shared pending lookup. */
-    public RemotePackServiceClient.Lookup claimRemotePackCancellation() {
-        final RemotePackServiceClient.Lookup lookup = this.remotePackLookup;
-        if (lookup == null || !this.remotePackCancellationClaimed.compareAndSet(false, true)) {
-            return null;
-        }
-        return lookup;
+    public CompletableFuture<RemoteDeliveryOutcome> remoteDeliveryFuture() {
+        return this.remoteDeliveryFuture;
     }
 
-    public void setRemotePackLookupFuture(
-            final CompletableFuture<RemotePackServiceClient.Lookup> remotePackLookupFuture) {
-        if (this.remotePackLookupFuture != null) {
-            throw new IllegalStateException("Remote resource pack lookup future was already assigned");
+    public synchronized CompletableFuture<RemoteDeliveryOutcome> requireRemoteDeliveryDecision() {
+        if (this.remoteDeliveryPhase == RemoteDeliveryPhase.UNDECIDED) {
+            final IllegalStateException error = new IllegalStateException(
+                    "Remote resource pack delivery was not initialized by RESOURCE_PACKS_INFO");
+            this.remoteDeliveryPhase = RemoteDeliveryPhase.FAILED;
+            this.remotePackLookupFuture.completeExceptionally(error);
+            this.remoteDeliveryFuture.completeExceptionally(error);
         }
-        this.remotePackLookupFuture = Objects.requireNonNull(remotePackLookupFuture, "remotePackLookupFuture")
-                .thenApply(lookup -> {
-                    this.remotePackLookup = Objects.requireNonNull(lookup, "remotePackLookup");
-                    return lookup;
-                });
+        return this.remoteDeliveryFuture;
+    }
+
+    public synchronized RemoteDeliveryPhase remoteDeliveryPhase() {
+        return this.remoteDeliveryPhase;
+    }
+
+    public synchronized void markRemoteDeliveryNotApplicable() {
+        if (this.remoteDeliveryPhase == RemoteDeliveryPhase.NOT_APPLICABLE) return;
+        if (this.remoteDeliveryPhase != RemoteDeliveryPhase.UNDECIDED) {
+            throw new IllegalStateException(
+                    "Remote resource pack delivery cannot become inapplicable from state "
+                            + this.remoteDeliveryPhase);
+        }
+        this.remoteDeliveryPhase = RemoteDeliveryPhase.NOT_APPLICABLE;
+        this.remoteDeliveryFuture.complete(RemoteDeliveryOutcome.NOT_APPLICABLE);
+    }
+
+    public CompletableFuture<RemotePackServiceClient.Lookup> startRemotePackLookup(
+            final Supplier<? extends CompletionStage<RemotePackServiceClient.Lookup>> lookupStarter) {
+        Objects.requireNonNull(lookupStarter, "lookupStarter");
+        synchronized (this) {
+            if (this.remoteDeliveryPhase != RemoteDeliveryPhase.UNDECIDED) {
+                if (this.remoteDeliveryPhase == RemoteDeliveryPhase.LOOKUP_PENDING
+                        || this.remoteDeliveryPhase == RemoteDeliveryPhase.LOOKUP_READY
+                        || this.remoteDeliveryPhase == RemoteDeliveryPhase.CANCELLED
+                        || this.remoteDeliveryPhase == RemoteDeliveryPhase.FAILED) {
+                    return this.remotePackLookupFuture;
+                }
+                throw new IllegalStateException(
+                        "Remote resource pack lookup cannot start from state " + this.remoteDeliveryPhase);
+            }
+            this.remoteDeliveryPhase = RemoteDeliveryPhase.LOOKUP_PENDING;
+        }
+
+        final CompletionStage<RemotePackServiceClient.Lookup> lookupStage;
+        try {
+            lookupStage = Objects.requireNonNull(lookupStarter.get(), "remotePackLookupStage");
+        } catch (Throwable error) {
+            this.completeRemotePackLookup(null, error);
+            return this.remotePackLookupFuture;
+        }
+        try {
+            lookupStage.whenComplete(this::completeRemotePackLookup);
+        } catch (Throwable error) {
+            this.failRemoteDelivery(error);
+        }
+        return this.remotePackLookupFuture;
+    }
+
+    public synchronized void failRemoteDelivery(final Throwable error) {
+        Objects.requireNonNull(error, "error");
+        if (this.remoteDeliveryPhase == RemoteDeliveryPhase.FAILED) return;
+        if (this.remoteDeliveryPhase == RemoteDeliveryPhase.CANCELLED) {
+            this.remotePackLookupFuture.completeExceptionally(error);
+            return;
+        }
+        if (this.remoteDeliveryPhase != RemoteDeliveryPhase.UNDECIDED
+                && this.remoteDeliveryPhase != RemoteDeliveryPhase.LOOKUP_PENDING) {
+            return;
+        }
+        this.remoteDeliveryPhase = RemoteDeliveryPhase.FAILED;
+        this.remotePackLookupFuture.completeExceptionally(error);
+        this.remoteDeliveryFuture.completeExceptionally(error);
+    }
+
+    private void completeRemotePackLookup(final RemotePackServiceClient.Lookup lookup, final Throwable error) {
+        if (error != null) {
+            this.failRemoteDelivery(error);
+            return;
+        }
+        if (lookup == null) {
+            this.failRemoteDelivery(
+                    new NullPointerException("Remote resource pack lookup completed without a result"));
+            return;
+        }
+        final RemotePackServiceClient.Lookup presentLookup = lookup;
+        synchronized (this) {
+            this.remotePackLookup = presentLookup;
+            this.remotePackLookupFuture.complete(presentLookup);
+            if (this.remoteDeliveryPhase == RemoteDeliveryPhase.LOOKUP_PENDING) {
+                this.remoteDeliveryPhase = RemoteDeliveryPhase.LOOKUP_READY;
+                this.remoteDeliveryFuture.complete(RemoteDeliveryOutcome.LOOKUP_READY);
+            }
+        }
+    }
+
+    /** Claims the single cancellation task, including a lookup which completes after the claim. */
+    public synchronized CompletableFuture<RemotePackServiceClient.Lookup> claimRemotePackCancellationFuture() {
+        if (this.remoteDeliveryPhase == RemoteDeliveryPhase.NOT_APPLICABLE
+                || this.remoteDeliveryPhase == RemoteDeliveryPhase.UNDECIDED
+                || this.remoteDeliveryPhase == RemoteDeliveryPhase.FAILED) {
+            return null;
+        }
+        this.remoteDeliveryPhase = RemoteDeliveryPhase.CANCELLED;
+        this.remoteDeliveryFuture.complete(RemoteDeliveryOutcome.CANCELLED);
+        if (!this.remotePackCancellationClaimed.compareAndSet(false, true)) return null;
+        return this.remotePackLookupFuture;
+    }
+
+    public synchronized boolean shouldPublishRemotePack() {
+        return this.remoteDeliveryPhase == RemoteDeliveryPhase.LOOKUP_READY;
+    }
+
+    public synchronized StackStart beginResourcePackStack(final ResourcePack.Key[] keys,
+                                                          final String[] selectedSubpacks) {
+        return this.beginResourcePackStack(
+                keys, selectedSubpacks, false, "", new Experiment[0], false, false);
+    }
+
+    public synchronized StackStart beginResourcePackStack(
+            final ResourcePack.Key[] keys, final String[] selectedSubpacks,
+            final boolean resourcePackRequired, final String baseGameVersion,
+            final Experiment[] experiments, final boolean experimentsPreviouslyToggled,
+            final boolean includeEditorPacks) {
+        final StackAnnouncement announcement = new StackAnnouncement(
+                keys, selectedSubpacks, resourcePackRequired, baseGameVersion,
+                experiments, experimentsPreviouslyToggled, includeEditorPacks);
+        if (this.stackPhase == StackPhase.NOT_RECEIVED) {
+            this.stackPhase = StackPhase.BUILDING;
+            this.stackAnnouncement = announcement;
+            return StackStart.STARTED;
+        }
+        if (this.stackAnnouncement != null && this.stackAnnouncement.matches(announcement)) {
+            return StackStart.DUPLICATE;
+        }
+        throw new IllegalStateException("Conflicting RESOURCE_PACK_STACK received in state " + this.stackPhase);
+    }
+
+    public synchronized StackPhase stackPhase() {
+        return this.stackPhase;
+    }
+
+    public synchronized boolean hasResourcePackStackStarted() {
+        return this.stackPhase != StackPhase.NOT_RECEIVED;
+    }
+
+    public CompletableFuture<ResourcePackStorage> resourcePackStackFuture() {
+        return this.resourcePackStackFuture;
+    }
+
+    public synchronized void completeResourcePackStack(final ResourcePackStorage resourcePackStorage) {
+        if (this.stackPhase == StackPhase.PUBLISHED) return;
+        if (this.stackPhase != StackPhase.BUILDING) {
+            throw new IllegalStateException(
+                    "Resource pack stack cannot be published from state " + this.stackPhase);
+        }
+        this.stackPhase = StackPhase.PUBLISHED;
+        this.resourcePackStackFuture.complete(
+                Objects.requireNonNull(resourcePackStorage, "resourcePackStorage"));
+    }
+
+    public synchronized void failResourcePackStack(final Throwable error) {
+        Objects.requireNonNull(error, "error");
+        if (this.stackPhase == StackPhase.FAILED) return;
+        if (this.stackPhase != StackPhase.BUILDING) return;
+        this.stackPhase = StackPhase.FAILED;
+        this.resourcePackStackFuture.completeExceptionally(error);
+    }
+
+    public CompletableFuture<ResourcePackStorage> negotiationReadyFuture() {
+        return this.negotiationReadyFuture;
+    }
+
+    public boolean claimResourcePackStackFinished() {
+        return this.resourcePackStackFinishedClaimed.compareAndSet(false, true);
+    }
+
+    public synchronized boolean deferStartGame() {
+        if (this.startGamePhase != StartGamePhase.NOT_SEEN) return false;
+        this.startGamePhase = StartGamePhase.DEFERRED;
+        return true;
+    }
+
+    public synchronized void markDeferredStartGameReady() {
+        if (this.startGamePhase != StartGamePhase.DEFERRED) {
+            throw new IllegalStateException(
+                    "Deferred START_GAME cannot become ready from state " + this.startGamePhase);
+        }
+        this.startGamePhase = StartGamePhase.REPLAY_READY;
+    }
+
+    public synchronized boolean claimStartGameProcessing() {
+        if (this.startGamePhase == StartGamePhase.NOT_SEEN
+                || this.startGamePhase == StartGamePhase.REPLAY_READY) {
+            this.startGamePhase = StartGamePhase.CONSUMED;
+            return true;
+        }
+        return false;
+    }
+
+    public boolean hasAnnouncedResourcePacks() {
+        return !this.requests.isEmpty();
+    }
+
+    @Override
+    public void onRemove() {
+        final CancellationException cancellation = new CancellationException("Resource pack session closed");
+        this.loadFuture.completeExceptionally(cancellation);
+        this.javaPackTerminalFuture.completeExceptionally(cancellation);
+        this.remoteDeliveryFuture.completeExceptionally(cancellation);
+        this.remotePackLookupFuture.completeExceptionally(cancellation);
+        this.resourcePackStackFuture.completeExceptionally(cancellation);
+    }
+
+    public enum JavaPackPhase {
+        PENDING,
+        ACCEPTED,
+        LOADED,
+        DECLINED,
+        FAILED
+    }
+
+    public enum JavaPackOutcome {
+        LOADED,
+        DECLINED,
+        FAILED
+    }
+
+    public enum RemoteDeliveryPhase {
+        UNDECIDED,
+        NOT_APPLICABLE,
+        LOOKUP_PENDING,
+        LOOKUP_READY,
+        CANCELLED,
+        FAILED
+    }
+
+    public enum RemoteDeliveryOutcome {
+        NOT_APPLICABLE,
+        LOOKUP_READY,
+        CANCELLED
+    }
+
+    public enum StackPhase {
+        NOT_RECEIVED,
+        BUILDING,
+        PUBLISHED,
+        FAILED
+    }
+
+    public enum StackStart {
+        STARTED,
+        DUPLICATE
+    }
+
+    public enum StartGamePhase {
+        NOT_SEEN,
+        DEFERRED,
+        REPLAY_READY,
+        CONSUMED
+    }
+
+    private record StackAnnouncement(ResourcePack.Key[] keys, String[] selectedSubpacks,
+                                     boolean resourcePackRequired, String baseGameVersion,
+                                     Experiment[] experiments, boolean experimentsPreviouslyToggled,
+                                     boolean includeEditorPacks) {
+
+        private StackAnnouncement {
+            keys = keys.clone();
+            selectedSubpacks = selectedSubpacks.clone();
+            Objects.requireNonNull(baseGameVersion, "baseGameVersion");
+            experiments = experiments.clone();
+        }
+
+        private boolean matches(final StackAnnouncement other) {
+            return Arrays.equals(this.keys, other.keys)
+                    && Arrays.equals(this.selectedSubpacks, other.selectedSubpacks)
+                    && this.resourcePackRequired == other.resourcePackRequired
+                    && this.baseGameVersion.equals(other.baseGameVersion)
+                    && Arrays.equals(this.experiments, other.experiments)
+                    && this.experimentsPreviouslyToggled == other.experimentsPreviouslyToggled
+                    && this.includeEditorPacks == other.includeEditorPacks;
+        }
     }
 
     public record Info(ResourcePack.Key key, long announcedSize, byte[] contentKey, String contentId,

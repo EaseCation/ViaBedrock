@@ -12,7 +12,6 @@ package net.raphimc.viabedrock.protocol.packet;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 import net.raphimc.viabedrock.api.resourcepack.cache.ArchiveDigest;
-import net.raphimc.viabedrock.api.resourcepack.http.RemotePackServiceClient;
 import net.raphimc.viabedrock.experimental.resourcepack.cache.ResourcePackArchiveStore;
 import net.raphimc.viabedrock.experimental.resourcepack.cache.ResourcePackCacheMetrics;
 import net.raphimc.viabedrock.experimental.resourcepack.cache.ResourcePackWorkScheduler;
@@ -72,32 +71,6 @@ class ResourcePackPacketsLifecycleTest {
         assertNull(rejection);
         assertEquals(1, taskCalls.get());
         assertEquals(0, cleanupCalls.get());
-    }
-
-    @Test
-    void completedBuildWaitsForRemoteLookupBeforePublication() throws Exception {
-        final CompletableFuture<RemotePackServiceClient.Lookup> lookup = new CompletableFuture<>();
-        final CompletableFuture<String> ready = ResourcePackPackets.awaitRemoteLookup(
-                CompletableFuture.completedFuture("built"), lookup);
-
-        assertFalse(ready.isDone());
-        final UUID token = UUID.randomUUID();
-        lookup.complete(new RemotePackServiceClient.Lookup(
-                "a".repeat(64), null, null, -1L, token, token,
-                "https://packs.example.test/packs/pending/" + token));
-
-        assertEquals("built", ready.get(5, TimeUnit.SECONDS));
-    }
-
-    @Test
-    void remoteLookupFailurePreventsPublication() {
-        final CompletableFuture<RemotePackServiceClient.Lookup> lookup = new CompletableFuture<>();
-        final CompletableFuture<String> ready = ResourcePackPackets.awaitRemoteLookup(
-                CompletableFuture.completedFuture("built"), lookup);
-
-        lookup.completeExceptionally(new java.io.IOException("lookup failed"));
-
-        assertThrows(java.util.concurrent.CompletionException.class, ready::join);
     }
 
     @Test
