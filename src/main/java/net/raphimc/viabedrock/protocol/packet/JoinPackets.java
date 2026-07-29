@@ -230,24 +230,52 @@ public class JoinPackets {
                 State.CONFIGURATION, (PacketHandler) wrapper -> {
                     wrapper.cancel();
                     final UserConnection user = wrapper.user();
+                    final ResourcePackLoadStateTracker loadStateTracker =
+                            user.get(ResourcePackLoadStateTracker.class);
                     final ResourcePackStorage resourcePackStorage = user.get(ResourcePackStorage.class);
-                    if (resourcePackStorage == null) {
-                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Skipping resource pack negotiation");
-                        user.remove(ResourcePackLoadStateTracker.class);
+                    final boolean negotiationPending = loadStateTracker != null
+                            && loadStateTracker.hasResourcePackStackStarted()
+                            && !loadStateTracker.negotiationReadyFuture().isDone();
+                    if (resourcePackStorage == null || negotiationPending) {
+                        if (loadStateTracker != null && !loadStateTracker.deferStartGame()) {
+                            ViaBedrock.getPlatform().getLogger().log(
+                                    Level.WARNING, "Ignoring duplicate deferred START_GAME packet");
+                            return;
+                        }
                         final ByteBuf payload = copyDeferredStartGamePayload(wrapper);
                         final CompletableFuture<ResourcePackStorage> preparation;
+                        final boolean sessionOwnedPreparation;
                         try {
-                            final int buildTimeoutSeconds =
-                                    ViaBedrock.getConfig().getResourcePackCacheBuildTimeoutSeconds();
-                            final CompletableFuture<ResourcePackStorage> initialized =
-                                    initializePreparedResourcePackStorage(
-                                            ResourcePackStorage.createAsync(List.of(), List.of()),
-                                            ResourcePackModule::ensureRuntimeData);
-                            preparation = ResourcePackPackets.detachedTimeout(
-                                    initialized, buildTimeoutSeconds,
-                                    TimeUnit.SECONDS, () -> {
-                                    }, JoinPackets::cleanupDeferredStorage,
-                                    user.getChannel().eventLoop());
+                            if (loadStateTracker != null
+                                    && loadStateTracker.hasResourcePackStackStarted()) {
+                                sessionOwnedPreparation = true;
+                                preparation = loadStateTracker.negotiationReadyFuture();
+                                ViaBedrock.getPlatform().getLogger().log(
+                                        Level.INFO, "Deferring START_GAME until resource pack negotiation is ready");
+                            } else {
+                                if (loadStateTracker != null
+                                        && loadStateTracker.hasAnnouncedResourcePacks()) {
+                                    throw new IllegalStateException(
+                                            "START_GAME arrived before RESOURCE_PACK_STACK for announced resource packs");
+                                }
+                                sessionOwnedPreparation = false;
+                                ViaBedrock.getPlatform().getLogger().log(
+                                        Level.WARNING, "Resource pack negotiation was skipped without announced packs");
+                                if (loadStateTracker != null) {
+                                    ResourcePackPackets.cancelRemotePackDelivery(loadStateTracker);
+                                }
+                                final int buildTimeoutSeconds =
+                                        ViaBedrock.getConfig().getResourcePackCacheBuildTimeoutSeconds();
+                                final CompletableFuture<ResourcePackStorage> initialized =
+                                        initializePreparedResourcePackStorage(
+                                                ResourcePackStorage.createAsync(List.of(), List.of()),
+                                                ResourcePackModule::ensureRuntimeData);
+                                preparation = ResourcePackPackets.detachedTimeout(
+                                        initialized, buildTimeoutSeconds,
+                                        TimeUnit.SECONDS, () -> {
+                                        }, JoinPackets::cleanupDeferredStorage,
+                                        user.getChannel().eventLoop());
+                            }
                         } catch (Throwable error) {
                             ReferenceCountUtil.safeRelease(payload);
                             BedrockProtocol.kickForIllegalState(
@@ -255,14 +283,41 @@ public class JoinPackets {
                             return;
                         }
                         resumeStartGameAfterResourcePackPreparation(
-                                user, payload, preparation,
-                                (liveUser, deferredPayload) -> PacketWrapper.create(
-                                        ClientboundBedrockPackets.START_GAME,
-                                        deferredPayload.duplicate(), liveUser)
-                                        .send(BedrockProtocol.class, false),
+                                user, payload, preparation, sessionOwnedPreparation,
+                                (liveUser, deferredPayload) -> {
+                                    if (loadStateTracker != null) {
+                                        if (liveUser.get(ResourcePackLoadStateTracker.class)
+                                                != loadStateTracker) {
+                                            throw new IllegalStateException(
+                                                    "Resource pack session changed before START_GAME replay");
+                                        }
+                                        loadStateTracker.markDeferredStartGameReady();
+                                    }
+                                    PacketWrapper.create(
+                                            ClientboundBedrockPackets.START_GAME,
+                                            deferredPayload.duplicate(), liveUser)
+                                            .send(BedrockProtocol.class, false);
+                                },
                                 (liveUser, error) -> BedrockProtocol.kickForIllegalState(
                                         liveUser, "Failed to prepare resource packs before START_GAME", error));
                         return;
+                    }
+                    if (loadStateTracker != null) {
+                        if (!loadStateTracker.claimStartGameProcessing()) {
+                            ViaBedrock.getPlatform().getLogger().log(
+                                    Level.WARNING, "Ignoring duplicate START_GAME packet during resource pack replay");
+                            return;
+                        }
+                        if (loadStateTracker.hasAnnouncedResourcePacks()
+                                && loadStateTracker.stackPhase()
+                                != ResourcePackLoadStateTracker.StackPhase.PUBLISHED) {
+                            BedrockProtocol.kickForIllegalState(user,
+                                    "START_GAME observed an unpublished resource pack runtime",
+                                    new IllegalStateException(
+                                            "Resource pack stack state is " + loadStateTracker.stackPhase()));
+                            return;
+                        }
+                        user.remove(ResourcePackLoadStateTracker.class);
                     }
                     final GameSessionStorage gameSession = user.get(GameSessionStorage.class);
 
@@ -585,6 +640,16 @@ public class JoinPackets {
             final CompletableFuture<ResourcePackStorage> preparation,
             final DeferredStartGameReplayer replayer,
             final BiConsumer<UserConnection, Throwable> failureHandler) {
+        resumeStartGameAfterResourcePackPreparation(
+                user, payload, preparation, false, replayer, failureHandler);
+    }
+
+    static void resumeStartGameAfterResourcePackPreparation(
+            final UserConnection user, final ByteBuf payload,
+            final CompletableFuture<ResourcePackStorage> preparation,
+            final boolean sessionOwnedPreparation,
+            final DeferredStartGameReplayer replayer,
+            final BiConsumer<UserConnection, Throwable> failureHandler) {
         Objects.requireNonNull(user, "user");
         Objects.requireNonNull(payload, "payload");
         Objects.requireNonNull(preparation, "preparation");
@@ -594,19 +659,19 @@ public class JoinPackets {
         final Channel channel = user.getChannel();
         if (channel == null) {
             ReferenceCountUtil.safeRelease(payload);
-            preparation.cancel(false);
+            if (!sessionOwnedPreparation) preparation.cancel(false);
             return;
         }
 
         final AtomicReference<ByteBuf> pendingPayload = new AtomicReference<>(payload);
         channel.closeFuture().addListener(ignored -> {
             ReferenceCountUtil.safeRelease(pendingPayload.getAndSet(null));
-            preparation.cancel(false);
+            if (!sessionOwnedPreparation) preparation.cancel(false);
         });
         preparation.whenComplete((storage, buildError) -> {
             final ByteBuf ownedPayload = pendingPayload.getAndSet(null);
             if (ownedPayload == null) {
-                cleanupDeferredStorage(storage);
+                if (!sessionOwnedPreparation) cleanupDeferredStorage(storage);
                 return;
             }
 
@@ -626,28 +691,31 @@ public class JoinPackets {
                 boolean storageAccountedFor = false;
                 try {
                     if (!channel.isActive()) {
-                        cleanupDeferredStorage(storage);
+                        if (!sessionOwnedPreparation) cleanupDeferredStorage(storage);
                         storageAccountedFor = true;
                         return;
                     }
 
                     final ResourcePackStorage existing = user.get(ResourcePackStorage.class);
-                    if (existing == null) {
+                    if (sessionOwnedPreparation && existing != storage) {
+                        throw new IllegalStateException(
+                                "Resource pack session completed without publishing its runtime");
+                    } else if (existing == null) {
                         user.put(storage);
-                    } else if (existing != storage) {
+                    } else if (existing != storage && !sessionOwnedPreparation) {
                         cleanupDeferredStorage(storage);
                     }
                     storageAccountedFor = true;
                     replayer.replay(user, ownedPayload);
                 } catch (Throwable error) {
-                    if (!storageAccountedFor) cleanupDeferredStorage(storage);
+                    if (!storageAccountedFor && !sessionOwnedPreparation) cleanupDeferredStorage(storage);
                     if (channel.isActive()) failureHandler.accept(user, error);
                 } finally {
                     ReferenceCountUtil.safeRelease(ownedPayload);
                 }
             })) {
                 ReferenceCountUtil.safeRelease(ownedPayload);
-                cleanupDeferredStorage(storage);
+                if (!sessionOwnedPreparation) cleanupDeferredStorage(storage);
                 channel.close();
             }
         });

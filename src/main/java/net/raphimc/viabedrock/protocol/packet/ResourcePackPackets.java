@@ -80,11 +80,6 @@ public class ResourcePackPackets {
     public static void register(final BedrockProtocol protocol) {
         protocol.registerClientboundTransition(ClientboundBedrockPackets.RESOURCE_PACKS_INFO,
                 ClientboundConfigurationPackets1_21_9.RESOURCE_PACK_PUSH, (PacketHandler) wrapper -> {
-                    if (wrapper.user().has(ResourcePackLoadStateTracker.class) || wrapper.user().has(ResourcePackStorage.class)) {
-                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received RESOURCE_PACKS_INFO after resource pack negotiation was already started/finished");
-                        wrapper.cancel();
-                        return;
-                    }
                     final boolean resourcePackRequired = wrapper.read(Types.BOOLEAN);
                     final boolean hasAddonPacks = wrapper.read(Types.BOOLEAN);
                     final boolean hasScripts = wrapper.read(Types.BOOLEAN);
@@ -118,8 +113,34 @@ public class ResourcePackPackets {
                             new ResourcePackLoadStateTracker.AnnouncementHeader(
                                     resourcePackRequired, hasAddonPacks, hasScripts, forceDisableVibrantVisuals,
                                     worldTemplateId, worldTemplateVersion);
-                    final ResourcePackLoadStateTracker loadStateTracker =
-                            new ResourcePackLoadStateTracker(wrapper.user(), infos, announcementHeader);
+                    final ResourcePackLoadStateTracker existingTracker =
+                            wrapper.user().get(ResourcePackLoadStateTracker.class);
+                    if (existingTracker != null) {
+                        wrapper.cancel();
+                        if (!existingTracker.hasSameAnnouncementSequence(announcementHeader, infos)) {
+                            BedrockProtocol.kickForIllegalState(wrapper.user(),
+                                    "Conflicting RESOURCE_PACKS_INFO received during resource pack negotiation",
+                                    new IllegalStateException("Resource pack announcement sequence changed"));
+                        }
+                        return;
+                    }
+                    if (wrapper.user().has(ResourcePackStorage.class)) {
+                        wrapper.cancel();
+                        BedrockProtocol.kickForIllegalState(wrapper.user(),
+                                "Received RESOURCE_PACKS_INFO after resource pack negotiation finished",
+                                new IllegalStateException("Resource pack runtime was already published"));
+                        return;
+                    }
+                    final ResourcePackLoadStateTracker loadStateTracker;
+                    try {
+                        loadStateTracker = new ResourcePackLoadStateTracker(
+                                wrapper.user(), infos, announcementHeader);
+                    } catch (Throwable error) {
+                        wrapper.cancel();
+                        BedrockProtocol.kickForIllegalState(
+                                wrapper.user(), "Invalid RESOURCE_PACKS_INFO announcement", error);
+                        return;
+                    }
                     wrapper.user().put(loadStateTracker);
 
                     if (ViaBedrock.getConfig().shouldTranslateResourcePacks() && wrapper.user().getProtocolInfo().protocolVersion().newerThanOrEqualTo(ProtocolVersion.v1_21_7)) {
@@ -128,6 +149,7 @@ public class ResourcePackPackets {
                             wrapper.cancel();
                             announceRemotePack(wrapper.user(), loadStateTracker);
                         } else {
+                            loadStateTracker.markRemoteDeliveryNotApplicable();
                             final UUID httpToken = UUID.randomUUID();
                             loadStateTracker.setHttpToken(httpToken);
                             ViaBedrock.getResourcePackServer().addConnection(
@@ -138,93 +160,102 @@ public class ResourcePackPackets {
                         }
                     } else {
                         wrapper.cancel();
-                        final PacketWrapper resourcePack = PacketWrapper.create(ServerboundConfigurationPackets1_21_9.RESOURCE_PACK, wrapper.user());
-                        resourcePack.write(Types.UUID, UUID.randomUUID()); // id
-                        resourcePack.write(Types.VAR_INT, ResourcePackAction.DECLINED.ordinal()); // action
-                        resourcePack.sendToServer(BedrockProtocol.class, false);
+                        loadStateTracker.markRemoteDeliveryNotApplicable();
+                        loadStateTracker.markJavaClientDeclined();
+                        finishBedrockPackDownloadsWhenReady(wrapper.user(), loadStateTracker);
                     }
                 }, State.PLAY, (PacketHandler) PacketWrapper::cancel // Bedrock client ignores resource packs after the initial info packet
         );
         protocol.registerClientbound(ClientboundBedrockPackets.RESOURCE_PACK_STACK, null, wrapper -> {
             wrapper.cancel();
             final UserConnection user = wrapper.user();
-            final ResourcePackLoadStateTracker loadStateTracker = wrapper.user().remove(ResourcePackLoadStateTracker.class);
-            if (loadStateTracker != null) {
-                wrapper.read(Types.BOOLEAN); // resource pack required
-                final ResourcePack.Key[] keys = new ResourcePack.Key[wrapper.read(BedrockTypes.UNSIGNED_VAR_INT)]; // resource packs size
-                final String[] subpacks = new String[keys.length];
-                for (int i = 0; i < keys.length; i++) {
-                    final UUID id = UUID.fromString(wrapper.read(BedrockTypes.STRING)); // id
-                    final String version = wrapper.read(BedrockTypes.STRING); // version
-                    subpacks[i] = wrapper.read(BedrockTypes.STRING); // subpack name
-                    keys[i] = new ResourcePack.Key(id, version);
-                }
-                wrapper.read(BedrockTypes.STRING); // base game version
-                final Experiment[] experiments = wrapper.read(BedrockTypes.EXPERIMENT_ARRAY); // experiments
-                wrapper.read(Types.BOOLEAN); // experiments previously toggled
-                wrapper.read(Types.BOOLEAN); // include editor packs
-                for (Experiment experiment : experiments) {
-                    if (experiment.enabled()) {
-                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "This server uses an experimental resource pack: " + experiment.name());
-                    }
-                }
-
-                final boolean delayAfterBuild = !loadStateTracker.hasJavaClientAccepted();
-                final AtomicReference<ResourcePackStorage> acquiredStorage = new AtomicReference<>();
-                final AtomicReference<Throwable> buildAbortReason = new AtomicReference<>();
-                final CompletableFuture<Void> connectionClosed = new CompletableFuture<>();
-                user.getChannel().closeFuture().addListener(ignored -> {
-                    final CancellationException cancellation = new CancellationException(
-                            "Resource pack connection closed during runtime build");
-                    buildAbortReason.compareAndSet(null, cancellation);
-                    cleanupStorage(acquiredStorage.getAndSet(null));
-                    connectionClosed.completeExceptionally(cancellation);
-                });
-                final CompletableFuture<ResourcePackStorage> build = loadStateTracker
-                        .prepareResourcePackStackAsync(keys, subpacks)
-                        .thenCompose(preparedStack -> ResourcePackStorage.createAsync(
-                                preparedStack.resourcePacksTopToBottom(),
-                                preparedStack.selectedSubpacksTopToBottom()))
-                        .thenCompose(resourcePackStorage -> {
-                            acquiredStorage.set(resourcePackStorage);
-                            final Throwable abortReason = buildAbortReason.get();
-                            if (abortReason != null) {
-                                cleanupStorage(acquiredStorage.getAndSet(null));
-                                return CompletableFuture.failedFuture(abortReason);
-                            }
-                            return ResourcePackModule.ensureRuntimeData(resourcePackStorage)
-                                    .thenApply(ignored -> resourcePackStorage);
-                        }).whenComplete((resourcePackStorage, error) -> {
-                            if (error != null) cleanupStorage(acquiredStorage.getAndSet(null));
-                        });
-                final CompletableFuture<ResourcePackStorage> connectedBuild = detachedCancellation(
-                        build, connectionClosed, ResourcePackPackets::cleanupStorage);
-                final CompletableFuture<ResourcePackStorage> deliveryReadyBuild;
-                if (ViaBedrock.getConfig().getResourcePackDeliveryMode() == ResourcePackDeliveryMode.REMOTE) {
-                    deliveryReadyBuild = awaitRemoteLookup(
-                            connectedBuild, loadStateTracker.remotePackLookupFuture());
-                    deliveryReadyBuild.whenComplete((ignored, error) -> {
-                        if (error != null) cleanupStorage(acquiredStorage.getAndSet(null));
-                    });
-                } else {
-                    deliveryReadyBuild = connectedBuild;
-                }
-                detachedTimeout(deliveryReadyBuild,
-                        ViaBedrock.getConfig().getResourcePackCacheBuildTimeoutSeconds(), TimeUnit.SECONDS,
-                        () -> {
-                            buildAbortReason.compareAndSet(null,
-                                    new TimeoutException("Resource pack runtime build timed out"));
-                            cleanupStorage(acquiredStorage.getAndSet(null));
-                        }, ResourcePackPackets::cleanupStorage, user.getChannel().eventLoop())
-                        .whenComplete((resourcePackStorage, error) -> {
-                            if (error == null) acquiredStorage.compareAndSet(resourcePackStorage, null);
-                            finishResourcePackStackBuild(
-                                    user, loadStateTracker, resourcePackStorage, error, delayAfterBuild);
-                        });
+            final ResourcePackLoadStateTracker loadStateTracker =
+                    user.get(ResourcePackLoadStateTracker.class);
+            if (loadStateTracker == null) {
+                BedrockProtocol.kickForIllegalState(user,
+                        "RESOURCE_PACK_STACK has no active resource pack session",
+                        new IllegalStateException("RESOURCE_PACKS_INFO was not received"));
                 return;
             }
 
-            delayResourcePackStackFinished(user);
+            final boolean resourcePackRequired = wrapper.read(Types.BOOLEAN);
+            final ResourcePack.Key[] keys = new ResourcePack.Key[wrapper.read(BedrockTypes.UNSIGNED_VAR_INT)]; // resource packs size
+            final String[] subpacks = new String[keys.length];
+            for (int i = 0; i < keys.length; i++) {
+                final UUID id = UUID.fromString(wrapper.read(BedrockTypes.STRING)); // id
+                final String version = wrapper.read(BedrockTypes.STRING); // version
+                subpacks[i] = wrapper.read(BedrockTypes.STRING); // subpack name
+                keys[i] = new ResourcePack.Key(id, version);
+            }
+            final String baseGameVersion = wrapper.read(BedrockTypes.STRING);
+            final Experiment[] experiments = wrapper.read(BedrockTypes.EXPERIMENT_ARRAY); // experiments
+            final boolean experimentsPreviouslyToggled = wrapper.read(Types.BOOLEAN);
+            final boolean includeEditorPacks = wrapper.read(Types.BOOLEAN);
+            for (Experiment experiment : experiments) {
+                if (experiment.enabled()) {
+                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "This server uses an experimental resource pack: " + experiment.name());
+                }
+            }
+
+            try {
+                if (loadStateTracker.beginResourcePackStack(
+                        keys, subpacks, resourcePackRequired, baseGameVersion, experiments,
+                        experimentsPreviouslyToggled, includeEditorPacks)
+                        == ResourcePackLoadStateTracker.StackStart.DUPLICATE) {
+                    return;
+                }
+            } catch (Throwable error) {
+                BedrockProtocol.kickForIllegalState(
+                        user, "Invalid RESOURCE_PACK_STACK transition", error);
+                return;
+            }
+            armResourcePackNegotiationCompletion(user, loadStateTracker);
+
+            final AtomicReference<ResourcePackStorage> acquiredStorage = new AtomicReference<>();
+            final AtomicReference<Throwable> buildAbortReason = new AtomicReference<>();
+            final CompletableFuture<Void> connectionClosed = new CompletableFuture<>();
+            user.getChannel().closeFuture().addListener(ignored -> {
+                final CancellationException cancellation = new CancellationException(
+                        "Resource pack connection closed during runtime build");
+                buildAbortReason.compareAndSet(null, cancellation);
+                connectionClosed.completeExceptionally(cancellation);
+            });
+            final CompletableFuture<ResourcePackStorage> build = loadStateTracker
+                    .loadRequestedResourcePacks()
+                    .thenCombine(loadStateTracker.requireRemoteDeliveryDecision(),
+                            (ignored, remoteOutcome) -> null)
+                    .thenCompose(ignored -> loadStateTracker.prepareResourcePackStackAsync(keys, subpacks))
+                    .thenCompose(preparedStack -> ResourcePackStorage.createAsync(
+                            preparedStack.resourcePacksTopToBottom(),
+                            preparedStack.selectedSubpacksTopToBottom()))
+                    .thenCompose(resourcePackStorage -> {
+                        acquiredStorage.set(resourcePackStorage);
+                        final Throwable abortReason = buildAbortReason.get();
+                        if (abortReason != null) {
+                            cleanupAcquiredStorage(acquiredStorage, resourcePackStorage);
+                            return CompletableFuture.failedFuture(abortReason);
+                        }
+                        return ResourcePackModule.ensureRuntimeData(resourcePackStorage)
+                                .thenApply(ignored -> resourcePackStorage);
+                    }).whenComplete((resourcePackStorage, error) -> {
+                        if (error != null) {
+                            cleanupAcquiredStorage(acquiredStorage, acquiredStorage.get());
+                        }
+                    });
+            final CompletableFuture<ResourcePackStorage> connectedBuild = detachedCancellation(
+                    build, connectionClosed,
+                    storage -> cleanupAcquiredStorage(acquiredStorage, storage));
+            detachedTimeout(connectedBuild,
+                    ViaBedrock.getConfig().getResourcePackCacheBuildTimeoutSeconds(), TimeUnit.SECONDS,
+                    () -> buildAbortReason.compareAndSet(null,
+                            new TimeoutException("Resource pack runtime build timed out")),
+                    storage -> cleanupAcquiredStorage(acquiredStorage, storage),
+                    user.getChannel().eventLoop())
+                    .whenComplete((resourcePackStorage, error) -> {
+                        if (error == null) acquiredStorage.compareAndSet(resourcePackStorage, null);
+                        finishResourcePackStackBuild(
+                                user, loadStateTracker, resourcePackStorage, error);
+                    });
         });
         protocol.registerClientbound(ClientboundBedrockPackets.RESOURCE_PACK_DATA_INFO, null, wrapper -> {
             wrapper.cancel();
@@ -237,6 +268,8 @@ public class ResourcePackPackets {
             final PackType type = PackType.getByValue(wrapper.read(Types.UNSIGNED_BYTE), PackType.Invalid); // pack type
 
             final ResourcePackLoadStateTracker loadStateTracker = wrapper.user().get(ResourcePackLoadStateTracker.class);
+            final ResourcePackDownloadTracker downloadTracker =
+                    wrapper.user().get(ResourcePackDownloadTracker.class);
             final boolean sharedCacheEnabled = ViaBedrock.isSharedResourcePackCacheEnabled();
             final ResourcePack.Key packKey;
             final ResourcePackLoadStateTracker.Info info;
@@ -257,6 +290,14 @@ public class ResourcePackPackets {
                 if (info != null && info.announcedSize() >= 0L && info.announcedSize() != size) {
                     throw new IllegalStateException("Resource pack size changed during negotiation: "
                             + size + " != " + info.announcedSize());
+                }
+                if (downloadTracker == null) {
+                    throw new IllegalStateException("Resource pack transfer has no download tracker");
+                }
+                if (downloadTracker.registerTransfer(
+                        key, packKey, size, chunkSize, hash, premium, type)
+                        == ResourcePackDownloadTracker.TransferRegistration.DUPLICATE) {
+                    return;
                 }
             } catch (Throwable e) {
                 BedrockProtocol.kickForIllegalState(wrapper.user(), "Invalid server resource pack metadata", e);
@@ -291,9 +332,9 @@ public class ResourcePackPackets {
             if (download != null) {
                 download.processDataChunkAsync(
                                 ViaBedrock.getResourcePackWorkScheduler(), chunk, byteOffset, data)
-                        .whenComplete((completedFile, error) -> user.getChannel().eventLoop().execute(
+                        .whenComplete((chunkResult, error) -> user.getChannel().eventLoop().execute(
                                 () -> handleResourcePackChunkWrite(
-                                        user, key, download, completedFile, error)));
+                                        user, key, download, chunkResult, error)));
             } else {
                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received RESOURCE_PACK_CHUNK_DATA for unknown pack: " + key);
             }
@@ -302,60 +343,75 @@ public class ResourcePackPackets {
         protocol.registerServerboundTransition(ServerboundConfigurationPackets1_21_9.RESOURCE_PACK, ServerboundBedrockPackets.RESOURCE_PACK_CLIENT_RESPONSE, wrapper -> {
             wrapper.read(Types.UUID); // id
             final ResourcePackAction action = ResourcePackAction.values()[wrapper.read(Types.VAR_INT)]; // action
+            final ResourcePackLoadStateTracker loadStateTracker =
+                    wrapper.user().get(ResourcePackLoadStateTracker.class);
+            if (loadStateTracker == null) {
+                wrapper.cancel();
+                final ResourcePackStorage completedStorage =
+                        wrapper.user().get(ResourcePackStorage.class);
+                if (completedStorage != null) {
+                    if (action == ResourcePackAction.SUCCESSFULLY_LOADED) {
+                        completedStorage.setLoadedOnJavaClient();
+                    }
+                    ViaBedrock.getPlatform().getLogger().fine(
+                            "Ignoring late Java resource pack action after session completion: " + action);
+                    return;
+                }
+                BedrockProtocol.kickForIllegalState(wrapper.user(),
+                        "Java resource pack response has no active resource pack session",
+                        new IllegalStateException("Unexpected Java resource pack action " + action));
+                return;
+            }
             switch (action) {
                 case SUCCESSFULLY_LOADED -> {
+                    wrapper.cancel();
+                    try {
+                        loadStateTracker.markJavaClientLoaded();
+                    } catch (Throwable error) {
+                        BedrockProtocol.kickForIllegalState(
+                                wrapper.user(), "Invalid Java resource pack state transition", error);
+                        return;
+                    }
                     final ResourcePackStorage resourcePackStorage = wrapper.user().get(ResourcePackStorage.class);
                     if (resourcePackStorage != null) {
                         resourcePackStorage.setLoadedOnJavaClient();
                     }
-                    wrapper.cancel();
-                    delayResourcePackStackFinished(wrapper.user());
                 }
                 case FAILED_DOWNLOAD, FAILED_RELOAD, DISCARDED -> {
                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Client resource pack download/load failed");
-                    cancelRemotePackDelivery(wrapper.user().get(ResourcePackLoadStateTracker.class));
                     wrapper.cancel();
-                    delayResourcePackStackFinished(wrapper.user());
+                    try {
+                        loadStateTracker.markJavaClientFailed();
+                    } catch (Throwable error) {
+                        BedrockProtocol.kickForIllegalState(
+                                wrapper.user(), "Invalid Java resource pack state transition", error);
+                        return;
+                    }
+                    cancelRemotePackDelivery(loadStateTracker);
+                    finishBedrockPackDownloadsWhenReady(wrapper.user(), loadStateTracker);
                 }
                 case DECLINED, INVALID_URL -> {
-                    cancelRemotePackDelivery(wrapper.user().get(ResourcePackLoadStateTracker.class));
-                    wrapper.write(Types.BYTE, (byte) ResourcePackResponse.DownloadingFinished.getValue()); // status
-                    wrapper.write(BedrockTypes.SHORT_LE_STRING_ARRAY, new String[0]); // downloading packs
+                    wrapper.cancel();
+                    try {
+                        loadStateTracker.markJavaClientDeclined();
+                    } catch (Throwable error) {
+                        BedrockProtocol.kickForIllegalState(
+                                wrapper.user(), "Invalid Java resource pack state transition", error);
+                        return;
+                    }
+                    cancelRemotePackDelivery(loadStateTracker);
+                    finishBedrockPackDownloadsWhenReady(wrapper.user(), loadStateTracker);
                 }
                 case ACCEPTED -> {
-                    final ResourcePackLoadStateTracker loadStateTracker = wrapper.user().get(ResourcePackLoadStateTracker.class);
-                    if (loadStateTracker != null) {
-                        wrapper.cancel();
-                        loadStateTracker.setJavaClientAccepted();
-                        final WeakReference<UserConnection> userReference = new WeakReference<>(wrapper.user());
-                        loadStateTracker.loadRequestedResourcePacks().whenComplete((ignored, error) -> {
-                            final UserConnection liveUser = userReference.get();
-                            if (!isConnectionActive(liveUser)) {
-                                return;
-                            }
-                            if (error != null) {
-                                BedrockProtocol.kickForIllegalState(liveUser,
-                                        "One of the server resource packs failed to load. Try again later or decline the resource packs.",
-                                        error);
-                                return;
-                            }
-                            try {
-                                final PacketWrapper resourcePackClientResponse = PacketWrapper.create(
-                                        ServerboundBedrockPackets.RESOURCE_PACK_CLIENT_RESPONSE, liveUser);
-                                resourcePackClientResponse.write(Types.BYTE,
-                                        (byte) ResourcePackResponse.DownloadingFinished.getValue()); // status
-                                resourcePackClientResponse.write(
-                                        BedrockTypes.SHORT_LE_STRING_ARRAY, new String[0]); // downloading packs
-                                resourcePackClientResponse.scheduleSendToServer(BedrockProtocol.class);
-                            } catch (Throwable sendError) {
-                                BedrockProtocol.kickForIllegalState(liveUser,
-                                        "Failed to finish server resource pack downloads", sendError);
-                            }
-                        });
-                    } else {
-                        wrapper.write(Types.BYTE, (byte) ResourcePackResponse.DownloadingFinished.getValue()); // status
-                        wrapper.write(BedrockTypes.SHORT_LE_STRING_ARRAY, new String[0]); // downloading packs
+                    wrapper.cancel();
+                    try {
+                        loadStateTracker.markJavaClientAccepted();
+                    } catch (Throwable error) {
+                        BedrockProtocol.kickForIllegalState(
+                                wrapper.user(), "Invalid Java resource pack state transition", error);
+                        return;
                     }
+                    finishBedrockPackDownloadsWhenReady(wrapper.user(), loadStateTracker);
                 }
                 case DOWNLOADED -> wrapper.cancel();
                 default -> throw new IllegalStateException("Unhandled ResourcePackAction: " + action);
@@ -366,12 +422,11 @@ public class ResourcePackPackets {
     private static void finishResourcePackStackBuild(final UserConnection user,
                                                      final ResourcePackLoadStateTracker loadStateTracker,
                                                      final ResourcePackStorage resourcePackStorage,
-                                                     final Throwable buildError,
-                                                     final boolean delayAfterBuild) {
-        final AtomicBoolean storagePublished = new AtomicBoolean();
+                                                     final Throwable buildError) {
+        final AtomicBoolean storageAccountedFor = new AtomicBoolean();
         if (resourcePackStorage != null) {
             user.getChannel().closeFuture().addListener(ignored -> {
-                if (!storagePublished.get()) {
+                if (storageAccountedFor.compareAndSet(false, true)) {
                     resourcePackStorage.onRemove();
                 }
             });
@@ -379,9 +434,11 @@ public class ResourcePackPackets {
 
         final Runnable publish = () -> {
             if (buildError != null) {
-                if (resourcePackStorage != null) {
+                if (resourcePackStorage != null
+                        && storageAccountedFor.compareAndSet(false, true)) {
                     resourcePackStorage.onRemove();
                 }
+                loadStateTracker.failResourcePackStack(buildError);
                 failPackDelivery(loadStateTracker, buildError);
                 if (user.getChannel().isActive()) {
                     BedrockProtocol.kickForIllegalState(
@@ -389,10 +446,15 @@ public class ResourcePackPackets {
                 }
                 return;
             }
-            if (!user.getChannel().isActive()) {
-                resourcePackStorage.onRemove();
-                failPackDelivery(loadStateTracker,
-                        new CancellationException("Resource pack connection closed before runtime publication"));
+            if (!user.getChannel().isActive()
+                    || user.get(ResourcePackLoadStateTracker.class) != loadStateTracker) {
+                if (storageAccountedFor.compareAndSet(false, true)) {
+                    resourcePackStorage.onRemove();
+                }
+                final CancellationException cancellation = new CancellationException(
+                        "Resource pack session ended before runtime publication");
+                loadStateTracker.failResourcePackStack(cancellation);
+                failPackDelivery(loadStateTracker, cancellation);
                 return;
             }
 
@@ -400,12 +462,16 @@ public class ResourcePackPackets {
                 resourcePackStorage.setSupportsFreeRotation(user.getProtocolInfo().protocolVersion()
                         .newerThanOrEqualTo(ProtocolVersion.v1_21_11));
                 user.put(resourcePackStorage);
-                storagePublished.set(true);
+                storageAccountedFor.set(true);
+                if (loadStateTracker.javaPackPhase()
+                        == ResourcePackLoadStateTracker.JavaPackPhase.LOADED) {
+                    resourcePackStorage.setLoadedOnJavaClient();
+                }
                 if (ViaBedrock.getResourcePackServer() != null && loadStateTracker.httpToken() != null) {
                     ViaBedrock.getResourcePackServer().completeConnection(
                             loadStateTracker.httpToken(), resourcePackStorage);
                 } else if (ViaBedrock.getRemotePackServiceClient() != null
-                        && loadStateTracker.remotePackLookup() != null) {
+                        && loadStateTracker.shouldPublishRemotePack()) {
                     final RemotePackServiceClient remotePackServiceClient =
                             ViaBedrock.getRemotePackServiceClient();
                     remotePackServiceClient
@@ -421,15 +487,14 @@ public class ResourcePackPackets {
                             });
                 }
                 ExperimentalFeatures.dispatchResourcePackStackSet(user);
-                if (delayAfterBuild) {
-                    delayResourcePackStackFinished(user);
-                }
+                loadStateTracker.completeResourcePackStack(resourcePackStorage);
             } catch (Throwable publishError) {
                 if (user.get(ResourcePackStorage.class) == resourcePackStorage) {
                     user.remove(ResourcePackStorage.class);
-                } else {
+                } else if (storageAccountedFor.compareAndSet(false, true)) {
                     resourcePackStorage.onRemove();
                 }
+                loadStateTracker.failResourcePackStack(publishError);
                 failPackDelivery(loadStateTracker, publishError);
                 BedrockProtocol.kickForIllegalState(
                         user, "Failed to publish the shared resource pack runtime", publishError);
@@ -438,11 +503,13 @@ public class ResourcePackPackets {
         final RejectedExecutionException rejection = executeOnEventLoop(
                 user.getChannel().eventLoop(), publish,
                 () -> {
-                    if (resourcePackStorage != null) {
+                    if (resourcePackStorage != null
+                            && storageAccountedFor.compareAndSet(false, true)) {
                         resourcePackStorage.onRemove();
                     }
                 });
         if (rejection != null) {
+            loadStateTracker.failResourcePackStack(rejection);
             failPackDelivery(loadStateTracker, rejection);
             BedrockProtocol.kickForIllegalState(
                     user, "Failed to publish the shared resource pack runtime", rejection);
@@ -537,58 +604,57 @@ public class ResourcePackPackets {
         if (storage != null) storage.onRemove();
     }
 
+    private static void cleanupAcquiredStorage(final AtomicReference<ResourcePackStorage> acquiredStorage,
+                                               final ResourcePackStorage storage) {
+        if (storage != null && acquiredStorage.compareAndSet(storage, null)) {
+            cleanupStorage(storage);
+        }
+    }
+
     private static void failPackDelivery(final ResourcePackLoadStateTracker loadStateTracker,
                                          final Throwable error) {
         if (ViaBedrock.getResourcePackServer() != null && loadStateTracker.httpToken() != null) {
             ViaBedrock.getResourcePackServer().failConnection(loadStateTracker.httpToken(), error);
-        } else if (ViaBedrock.getRemotePackServiceClient() != null
-                && loadStateTracker.remotePackLookup() != null) {
+        } else if (ViaBedrock.getRemotePackServiceClient() != null) {
             cancelRemotePackDelivery(loadStateTracker);
         }
     }
 
-    private static void cancelRemotePackDelivery(final ResourcePackLoadStateTracker loadStateTracker) {
+    static void cancelRemotePackDelivery(final ResourcePackLoadStateTracker loadStateTracker) {
         if (loadStateTracker == null || ViaBedrock.getRemotePackServiceClient() == null) return;
-        final RemotePackServiceClient.Lookup lookup = loadStateTracker.claimRemotePackCancellation();
-        if (lookup != null) ViaBedrock.getRemotePackServiceClient().cancel(lookup);
-    }
-
-    static <T> CompletableFuture<T> awaitRemoteLookup(
-            final CompletableFuture<T> build,
-            final CompletionStage<RemotePackServiceClient.Lookup> lookup) {
-        if (lookup == null) {
-            return CompletableFuture.failedFuture(
-                    new IllegalStateException("Remote resource pack lookup was not started"));
-        }
-        return build.thenCombine(lookup, (value, ignored) -> value);
+        final CompletableFuture<RemotePackServiceClient.Lookup> lookupFuture =
+                loadStateTracker.claimRemotePackCancellationFuture();
+        if (lookupFuture == null) return;
+        lookupFuture.whenComplete((lookup, error) -> {
+            if (error == null && lookup != null) {
+                ViaBedrock.getRemotePackServiceClient().cancel(lookup);
+            }
+        });
     }
 
     private static void announceRemotePack(final UserConnection user,
                                            final ResourcePackLoadStateTracker loadStateTracker) {
         final RemotePackServiceClient client = ViaBedrock.getRemotePackServiceClient();
         if (client == null) {
-            BedrockProtocol.kickForIllegalState(user, "Remote resource pack service is unavailable",
-                    new IllegalStateException("Remote resource pack client is not initialized"));
+            final IllegalStateException error =
+                    new IllegalStateException("Remote resource pack client is not initialized");
+            loadStateTracker.failRemoteDelivery(error);
+            BedrockProtocol.kickForIllegalState(
+                    user, "Remote resource pack service is unavailable", error);
             return;
         }
         final boolean supportsFreeRotation = user.getProtocolInfo().protocolVersion()
                 .newerThanOrEqualTo(ProtocolVersion.v1_21_11);
         final String lookupKey = RemotePackServiceClient.computeLookupKey(
                 loadStateTracker.announcementSequenceFingerprint(), supportsFreeRotation);
-        final CompletableFuture<RemotePackServiceClient.Lookup> lookupFuture;
-        try {
-            loadStateTracker.setRemotePackLookupFuture(client.lookup(lookupKey));
-            lookupFuture = loadStateTracker.remotePackLookupFuture();
-        } catch (Throwable lookupStartError) {
-            BedrockProtocol.kickForIllegalState(
-                    user, "Failed to start the Java resource pack service lookup", lookupStartError);
-            return;
-        }
+        final CompletableFuture<RemotePackServiceClient.Lookup> lookupFuture =
+                loadStateTracker.startRemotePackLookup(() -> client.lookup(lookupKey));
         user.getChannel().closeFuture().addListener(ignored ->
-                lookupFuture.thenAccept(lookup -> cancelRemotePackDelivery(loadStateTracker)));
+                cancelRemotePackDelivery(loadStateTracker));
         lookupFuture.whenComplete((lookup, error) -> {
             final Runnable announce = () -> {
-                if (!user.getChannel().isActive()) {
+                if (!user.getChannel().isActive()
+                        || user.get(ResourcePackLoadStateTracker.class) != loadStateTracker) {
                     cancelRemotePackDelivery(loadStateTracker);
                     return;
                 }
@@ -631,8 +697,76 @@ public class ResourcePackPackets {
                         + "If you press 'No', you can join without loading the resource packs but you will have a worse gameplay experience."));
     }
 
-    private static void delayResourcePackStackFinished(final UserConnection user) {
-        user.get(CustomMappingSyncStorage.class).delayResourcePackStackFinishedIfNeeded(() -> sendResourcePackStackFinished(user));
+    private static void finishBedrockPackDownloadsWhenReady(
+            final UserConnection user, final ResourcePackLoadStateTracker loadStateTracker) {
+        final WeakReference<UserConnection> userReference = new WeakReference<>(user);
+        loadStateTracker.loadRequestedResourcePacks().whenComplete((ignored, error) -> {
+            final UserConnection liveUser = userReference.get();
+            if (!isConnectionActive(liveUser)
+                    || liveUser.get(ResourcePackLoadStateTracker.class) != loadStateTracker) {
+                return;
+            }
+            final Runnable finish = () -> {
+                if (!isConnectionActive(liveUser)
+                        || liveUser.get(ResourcePackLoadStateTracker.class) != loadStateTracker) {
+                    return;
+                }
+                if (error != null) {
+                    BedrockProtocol.kickForIllegalState(liveUser,
+                            "One of the server resource packs failed to load. Try again later or decline the resource packs.",
+                            error);
+                    return;
+                }
+                if (!loadStateTracker.claimBedrockDownloadsFinished()) return;
+                try {
+                    final PacketWrapper resourcePackClientResponse = PacketWrapper.create(
+                            ServerboundBedrockPackets.RESOURCE_PACK_CLIENT_RESPONSE, liveUser);
+                    resourcePackClientResponse.write(Types.BYTE,
+                            (byte) ResourcePackResponse.DownloadingFinished.getValue()); // status
+                    resourcePackClientResponse.write(
+                            BedrockTypes.SHORT_LE_STRING_ARRAY, new String[0]); // downloading packs
+                    resourcePackClientResponse.sendToServer(BedrockProtocol.class);
+                } catch (Throwable sendError) {
+                    BedrockProtocol.kickForIllegalState(liveUser,
+                            "Failed to finish server resource pack downloads", sendError);
+                }
+            };
+            final RejectedExecutionException rejection = executeOnEventLoop(
+                    liveUser.getChannel().eventLoop(), finish, () -> {
+                    });
+            if (rejection != null && liveUser.getChannel().isActive()) {
+                BedrockProtocol.kickForIllegalState(
+                        liveUser, "Failed to schedule server resource pack completion", rejection);
+            }
+        });
+    }
+
+    private static void armResourcePackNegotiationCompletion(
+            final UserConnection user, final ResourcePackLoadStateTracker loadStateTracker) {
+        loadStateTracker.negotiationReadyFuture().whenComplete((resourcePackStorage, error) -> {
+            if (error != null) return;
+            final Runnable finish = () -> {
+                if (!isConnectionActive(user)
+                        || user.get(ResourcePackLoadStateTracker.class) != loadStateTracker
+                        || user.get(ResourcePackStorage.class) != resourcePackStorage) {
+                    return;
+                }
+                user.get(CustomMappingSyncStorage.class).delayResourcePackStackFinishedIfNeeded(() -> {
+                    if (isConnectionActive(user)
+                            && user.get(ResourcePackLoadStateTracker.class) == loadStateTracker
+                            && loadStateTracker.claimResourcePackStackFinished()) {
+                        sendResourcePackStackFinished(user);
+                    }
+                });
+            };
+            final RejectedExecutionException rejection = executeOnEventLoop(
+                    user.getChannel().eventLoop(), finish, () -> {
+                    });
+            if (rejection != null && user.getChannel().isActive()) {
+                BedrockProtocol.kickForIllegalState(
+                        user, "Failed to finish resource pack negotiation", rejection);
+            }
+        });
     }
 
     private static void requestResourcePackChunks(final UserConnection user, final String key,
@@ -869,7 +1003,8 @@ public class ResourcePackPackets {
         final CompletableFuture<Void> stage = archiveFuture.thenCompose(path -> {
             final UserConnection liveUser = userReference.get();
             final ResourcePackLoadStateTracker liveTracker = loadTrackerReference.get();
-            if (!isConnectionActive(liveUser) || liveTracker == null) {
+            if (!isConnectionActive(liveUser) || liveTracker == null
+                    || liveUser.get(ResourcePackLoadStateTracker.class) != liveTracker) {
                 claim.close();
                 return CompletableFuture.completedFuture(null);
             }
@@ -879,7 +1014,8 @@ public class ResourcePackPackets {
                     .thenAccept(pack -> {
                         final UserConnection activeUser = userReference.get();
                         final ResourcePackLoadStateTracker activeTracker = loadTrackerReference.get();
-                        if (isConnectionActive(activeUser) && activeTracker != null) {
+                        if (isConnectionActive(activeUser) && activeTracker != null
+                                && activeUser.get(ResourcePackLoadStateTracker.class) == activeTracker) {
                             activeTracker.addLocalResourcePack(pack);
                         }
                     });
@@ -911,7 +1047,8 @@ public class ResourcePackPackets {
         return archiveFuture.thenCompose(path -> {
             final UserConnection liveUser = userReference.get();
             final ResourcePackLoadStateTracker liveTracker = loadTrackerReference.get();
-            if (!isConnectionActive(liveUser) || liveTracker == null) {
+            if (!isConnectionActive(liveUser) || liveTracker == null
+                    || liveUser.get(ResourcePackLoadStateTracker.class) != liveTracker) {
                 return CompletableFuture.completedFuture(null);
             }
             return ViaBedrock.getResourcePackArchiveStore().loadEffective(
@@ -920,7 +1057,8 @@ public class ResourcePackPackets {
                     .thenAccept(pack -> {
                         final UserConnection activeUser = userReference.get();
                         final ResourcePackLoadStateTracker activeTracker = loadTrackerReference.get();
-                        if (isConnectionActive(activeUser) && activeTracker != null) {
+                        if (isConnectionActive(activeUser) && activeTracker != null
+                                && activeUser.get(ResourcePackLoadStateTracker.class) == activeTracker) {
                             activeTracker.addLocalResourcePack(pack);
                         }
                     });
@@ -935,7 +1073,8 @@ public class ResourcePackPackets {
 
     private static void handleResourcePackChunkWrite(final UserConnection user, final String key,
                                                      final ResourcePackDownloadTracker.Download download,
-                                                     final Path completedFile, final Throwable error) {
+                                                     final ResourcePackDownloadTracker.Download.ChunkResult chunkResult,
+                                                     final Throwable error) {
         final ResourcePackDownloadTracker downloadTracker = user.get(ResourcePackDownloadTracker.class);
         if (downloadTracker == null || downloadTracker.get(key) != download) {
             return;
@@ -951,6 +1090,8 @@ public class ResourcePackPackets {
             downloadTracker.cancel(key, new CancellationException("Resource pack connection closed"));
             return;
         }
+        if (!chunkResult.acceptedNewChunk()) return;
+        final Path completedFile = chunkResult.completedFile();
         if (completedFile == null) {
             try {
                 requestResourcePackChunks(user, key, download, 1);

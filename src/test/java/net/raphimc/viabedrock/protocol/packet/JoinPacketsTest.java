@@ -268,6 +268,66 @@ class JoinPacketsTest {
     }
 
     @Test
+    void sessionOwnedStartGameWaitDoesNotCancelCanonicalRuntimeOnDisconnect() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        final UserConnectionImpl user = new UserConnectionImpl(channel);
+        final ByteBuf payload = channel.alloc().buffer().writeByte(1);
+        final CompletableFuture<ResourcePackStorage> canonical = new CompletableFuture<>();
+        try {
+            JoinPackets.resumeStartGameAfterResourcePackPreparation(
+                    user, payload, canonical, true,
+                    (liveUser, deferredPayload) -> {
+                        throw new AssertionError("Disconnected START_GAME must not be replayed");
+                    }, (liveUser, error) -> {
+                        throw new AssertionError("Disconnected START_GAME must not report a build failure", error);
+                    });
+
+            channel.close();
+            channel.runPendingTasks();
+
+            assertFalse(canonical.isDone());
+            assertFalse(canonical.isCancelled());
+            assertEquals(0, payload.refCnt());
+
+            final ResourcePackStorage storage = ResourcePackStorage.createUnshared(List.of());
+            canonical.complete(storage);
+            assertSame(storage, canonical.join());
+            storage.onRemove();
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void sessionOwnedStartGameReplaysOnlyAfterTheSameRuntimeWasPublished() throws Exception {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        final UserConnectionImpl user = new UserConnectionImpl(channel);
+        final ByteBuf payload = channel.alloc().buffer().writeByte(1);
+        final CompletableFuture<ResourcePackStorage> canonical = new CompletableFuture<>();
+        final CountDownLatch replayed = new CountDownLatch(1);
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+        final ResourcePackStorage storage = ResourcePackStorage.createUnshared(List.of());
+        try {
+            JoinPackets.resumeStartGameAfterResourcePackPreparation(
+                    user, payload, canonical, true,
+                    (liveUser, deferredPayload) -> replayed.countDown(),
+                    (liveUser, error) -> failure.set(error));
+
+            assertEquals(1L, replayed.getCount());
+            user.put(storage);
+            canonical.complete(storage);
+            runPendingTasksUntil(channel, replayed);
+
+            assertNull(failure.get());
+            assertSame(storage, user.get(ResourcePackStorage.class));
+            assertEquals(0, payload.refCnt());
+        } finally {
+            user.clearStoredObjects();
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
     void runtimeInitializationFailurePreventsPublicationAndReplay() throws Exception {
         final EmbeddedChannel channel = new EmbeddedChannel();
         final UserConnectionImpl user = new UserConnectionImpl(channel);

@@ -78,13 +78,14 @@ class ResourcePackDownloadTrackerTest {
     }
 
     @Test
-    void rejectsDuplicateOutOfBoundsOverlappingAndWrongLengthChunks() throws Exception {
+    void acceptsExactDuplicateButRejectsConflictingOutOfBoundsOverlappingAndWrongLengthChunks() throws Exception {
         final byte[] archive = bytes("abcdefgh");
 
         final ResourcePackDownloadTracker duplicateTracker = trackerWithFirstChunk(archive);
         final ResourcePackDownloadTracker.Download duplicate = duplicateTracker.get("pack");
+        assertNull(duplicate.processDataChunk(0L, 0L, bytes("abcd")));
         assertThrows(IllegalStateException.class,
-                () -> duplicate.processDataChunk(0L, 0L, bytes("abcd")));
+                () -> duplicate.processDataChunk(0L, 0L, bytes("abce")));
         duplicateTracker.remove("pack");
 
         final ResourcePackDownloadTracker outOfBoundsTracker = new ResourcePackDownloadTracker();
@@ -230,14 +231,57 @@ class ResourcePackDownloadTrackerTest {
             assertEquals(1L, download.claimNextChunkRequest());
             assertEquals(-1L, download.claimNextChunkRequest());
 
-            final CompletableFuture<Path> second = download.processDataChunkAsync(
+            final CompletableFuture<ResourcePackDownloadTracker.Download.ChunkResult> second =
+                    download.processDataChunkAsync(
                     scheduler, 1L, 4L, bytes("efgh"));
-            final CompletableFuture<Path> first = download.processDataChunkAsync(
+            final CompletableFuture<ResourcePackDownloadTracker.Download.ChunkResult> first =
+                    download.processDataChunkAsync(
                     scheduler, 0L, 0L, bytes("abcd"));
 
-            assertNull(second.get(10, TimeUnit.SECONDS));
-            assertEquals(download.tempFile(), first.get(10, TimeUnit.SECONDS));
+            assertNull(second.get(10, TimeUnit.SECONDS).completedFile());
+            assertEquals(download.tempFile(), first.get(10, TimeUnit.SECONDS).completedFile());
             assertArrayEquals(archive, Files.readAllBytes(download.tempFile()));
+            tracker.remove("pack");
+        } finally {
+            scheduler.shutdown();
+        }
+    }
+
+    @Test
+    void duplicateDataInfoIsIdempotentButConflictingMetadataFails() throws Exception {
+        final ResourcePackDownloadTracker tracker = new ResourcePackDownloadTracker();
+        final ResourcePack.Key declaredKey = new ResourcePack.Key(UUID.randomUUID(), "1.0.0");
+        final byte[] hash = sha256(bytes("archive"));
+
+        assertEquals(ResourcePackDownloadTracker.TransferRegistration.NEW,
+                tracker.registerTransfer(
+                        "pack", declaredKey, 7L, 4L, hash, false, PackType.Resources));
+        assertEquals(ResourcePackDownloadTracker.TransferRegistration.DUPLICATE,
+                tracker.registerTransfer(
+                        "pack", declaredKey, 7L, 4L, hash, false, PackType.Resources));
+        assertThrows(IllegalStateException.class,
+                () -> tracker.registerTransfer(
+                        "pack", declaredKey, 8L, 4L, hash, false, PackType.Resources));
+    }
+
+    @Test
+    void asynchronousExactDuplicateDoesNotCountAsANewChunk() throws Exception {
+        final byte[] archive = bytes("abcdefgh");
+        final ResourcePackWorkScheduler scheduler = scheduler();
+        try {
+            final ResourcePackDownloadTracker tracker = new ResourcePackDownloadTracker(null, scheduler);
+            final ResourcePackDownloadTracker.Download download = add(tracker, archive);
+
+            final ResourcePackDownloadTracker.Download.ChunkResult first =
+                    download.processDataChunkAsync(scheduler, 0L, 0L, bytes("abcd"))
+                            .get(10L, TimeUnit.SECONDS);
+            final ResourcePackDownloadTracker.Download.ChunkResult duplicate =
+                    download.processDataChunkAsync(scheduler, 0L, 0L, bytes("abcd"))
+                            .get(10L, TimeUnit.SECONDS);
+
+            assertTrue(first.acceptedNewChunk());
+            assertFalse(duplicate.acceptedNewChunk());
+            assertNull(duplicate.completedFile());
             tracker.remove("pack");
         } finally {
             scheduler.shutdown();
