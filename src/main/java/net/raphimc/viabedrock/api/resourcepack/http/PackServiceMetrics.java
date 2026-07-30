@@ -18,6 +18,9 @@ import java.util.concurrent.atomic.LongAdder;
 final class PackServiceMetrics {
 
     static final String CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8";
+    private static final double[] DOWNLOAD_DURATION_BUCKETS_SECONDS = {
+            0.01D, 0.05D, 0.1D, 0.25D, 0.5D, 1D, 2.5D, 5D, 10D, 20D, 30D, 60D, 120D, 300D
+    };
 
     private final LongAdder lookupHits = new LongAdder();
     private final LongAdder lookupMisses = new LongAdder();
@@ -36,6 +39,8 @@ final class PackServiceMetrics {
     private final AtomicLong activeDownloads = new AtomicLong();
     private final AtomicLong activeUploads = new AtomicLong();
     private final Map<String, LongAdder> downloads = new ConcurrentHashMap<>();
+    private final Map<String, LongAdder> downloadFailures = new ConcurrentHashMap<>();
+    private final Map<DownloadDurationKey, DurationHistogram> downloadDurations = new ConcurrentHashMap<>();
     private final Map<String, LongAdder> uploads = new ConcurrentHashMap<>();
     private final Map<String, LongAdder> validationFailures = new ConcurrentHashMap<>();
     private final Map<String, LongAdder> pendingResults = new ConcurrentHashMap<>();
@@ -43,6 +48,8 @@ final class PackServiceMetrics {
 
     PackServiceMetrics() {
         initialize(this.downloads, "success", "not_found", "invalid_range", "failure");
+        initialize(this.downloadFailures, "client_disconnect", "write_timeout", "artifact_read_error",
+                "response_error", "unknown_io");
         initialize(this.uploads, "success", "not_found", "rejected", "failure");
         initialize(this.validationFailures, "size", "sha1", "zip", "lookup_key", "conflict", "metadata");
         initialize(this.pendingResults, "created", "completed", "timeout", "cancelled");
@@ -57,12 +64,24 @@ final class PackServiceMetrics {
         return System.nanoTime();
     }
 
-    void finishDownload(final long startedNanos, final String result, final long bytes, final boolean range) {
+    void finishDownload(final long startedNanos, final String result, final String method,
+                        final String transfer, final String failureReason,
+                        final long bytes, final boolean range) {
         this.activeDownloads.updateAndGet(value -> Math.max(0L, value - 1L));
-        this.downloads.computeIfAbsent(result, ignored -> new LongAdder()).increment();
+        final String normalizedResult = normalizeDownloadResult(result);
+        final String normalizedMethod = "HEAD".equalsIgnoreCase(method) ? "head" : "get";
+        final String normalizedTransfer = normalizeDownloadTransfer(transfer);
+        final long elapsedNanos = Math.max(0L, System.nanoTime() - startedNanos);
+        this.downloads.get(normalizedResult).increment();
+        if ("failure".equals(normalizedResult)) {
+            this.downloadFailures.get(normalizeDownloadFailureReason(failureReason)).increment();
+        }
         this.downloadBytes.add(Math.max(0L, bytes));
-        this.downloadDurationNanos.add(Math.max(0L, System.nanoTime() - startedNanos));
+        this.downloadDurationNanos.add(elapsedNanos);
         this.downloadDurationCount.increment();
+        this.downloadDurations.computeIfAbsent(
+                new DownloadDurationKey(normalizedResult, normalizedMethod, normalizedTransfer),
+                ignored -> new DurationHistogram(DOWNLOAD_DURATION_BUCKETS_SECONDS)).observe(elapsedNanos);
         if (range) this.rangeRequests.increment();
     }
 
@@ -119,18 +138,27 @@ final class PackServiceMetrics {
         sample(output, "viabedrock_pack_service_mappings", storage.mappings());
         help(output, "viabedrock_pack_service_cache_bytes", "Bytes held by published artifacts.", "gauge");
         sample(output, "viabedrock_pack_service_cache_bytes", storage.artifactBytes());
+        help(output, "viabedrock_pack_service_cache_budget_bytes", "Configured artifact cache budget.", "gauge");
+        sample(output, "viabedrock_pack_service_cache_budget_bytes", storage.cacheBudgetBytes());
         help(output, "viabedrock_pack_service_cache_evictions_total", "Artifacts evicted by maintenance.", "counter");
         sample(output, "viabedrock_pack_service_cache_evictions_total", this.evictions.sum());
         help(output, "viabedrock_pack_service_cache_evicted_bytes_total", "Artifact bytes evicted by maintenance.", "counter");
         sample(output, "viabedrock_pack_service_cache_evicted_bytes_total", this.evictedBytes.sum());
 
         resultCounters(output, "viabedrock_pack_service_downloads_total", "Public pack downloads.", this.downloads);
+        resultCounters(output, "viabedrock_pack_service_download_failures_total",
+                "Failed public pack downloads by bounded I/O reason.", "reason", this.downloadFailures);
         help(output, "viabedrock_pack_service_downloads_active", "Downloads currently being served.", "gauge");
         sample(output, "viabedrock_pack_service_downloads_active", this.activeDownloads.get());
         help(output, "viabedrock_pack_service_download_bytes_total", "Bytes served to pack clients.", "counter");
         sample(output, "viabedrock_pack_service_download_bytes_total", this.downloadBytes.sum());
         duration(output, "viabedrock_pack_service_download_duration_seconds", "Completed download duration.",
                 this.downloadDurationNanos.sum(), this.downloadDurationCount.sum());
+        help(output, "viabedrock_pack_service_download_transfer_duration_seconds",
+                "Public pack download duration by bounded result, method and transfer kind.", "histogram");
+        this.downloadDurations.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .forEach(entry -> renderDownloadDuration(output, entry.getKey(), entry.getValue()));
         help(output, "viabedrock_pack_service_range_requests_total", "Valid partial-content downloads.", "counter");
         sample(output, "viabedrock_pack_service_range_requests_total", this.rangeRequests.sum());
 
@@ -175,9 +203,14 @@ final class PackServiceMetrics {
 
     private static void resultCounters(final StringBuilder output, final String name, final String description,
                                        final Map<String, LongAdder> values) {
+        resultCounters(output, name, description, "result", values);
+    }
+
+    private static void resultCounters(final StringBuilder output, final String name, final String description,
+                                       final String label, final Map<String, LongAdder> values) {
         help(output, name, description, "counter");
         values.entrySet().stream().sorted(Map.Entry.comparingByKey())
-                .forEach(entry -> labeled(output, name, "result", entry.getKey(), entry.getValue().sum()));
+                .forEach(entry -> labeled(output, name, label, entry.getKey(), entry.getValue().sum()));
     }
 
     private static void initialize(final Map<String, LongAdder> values, final String... labels) {
@@ -189,6 +222,47 @@ final class PackServiceMetrics {
         help(output, name, description, "summary");
         output.append(name).append("_sum ").append(nanos / 1_000_000_000D).append('\n');
         output.append(name).append("_count ").append(count).append('\n');
+    }
+
+    private static void renderDownloadDuration(final StringBuilder output, final DownloadDurationKey key,
+                                               final DurationHistogram histogram) {
+        final String labels = "result=\"" + key.result() + "\",method=\"" + key.method()
+                + "\",transfer=\"" + key.transfer() + "\"";
+        for (int i = 0; i < DOWNLOAD_DURATION_BUCKETS_SECONDS.length; i++) {
+            output.append("viabedrock_pack_service_download_transfer_duration_seconds_bucket{")
+                    .append(labels).append(",le=\"")
+                    .append(DOWNLOAD_DURATION_BUCKETS_SECONDS[i]).append("\"} ")
+                    .append(histogram.bucket(i)).append('\n');
+        }
+        output.append("viabedrock_pack_service_download_transfer_duration_seconds_bucket{")
+                .append(labels).append(",le=\"+Inf\"} ").append(histogram.count()).append('\n');
+        output.append("viabedrock_pack_service_download_transfer_duration_seconds_sum{")
+                .append(labels).append("} ").append(histogram.sumSeconds()).append('\n');
+        output.append("viabedrock_pack_service_download_transfer_duration_seconds_count{")
+                .append(labels).append("} ").append(histogram.count()).append('\n');
+    }
+
+    private static String normalizeDownloadResult(final String result) {
+        return switch (result) {
+            case "success", "not_found", "invalid_range", "failure" -> result;
+            default -> "failure";
+        };
+    }
+
+    private static String normalizeDownloadTransfer(final String transfer) {
+        return switch (transfer) {
+            case "full", "range", "head", "not_modified", "none" -> transfer;
+            default -> "none";
+        };
+    }
+
+    private static String normalizeDownloadFailureReason(final String reason) {
+        if (reason == null) return "unknown_io";
+        return switch (reason) {
+            case "client_disconnect", "write_timeout", "artifact_read_error", "response_error", "unknown_io" ->
+                    reason;
+            default -> "unknown_io";
+        };
     }
 
     private static void help(final StringBuilder output, final String name, final String description,
@@ -214,6 +288,53 @@ final class PackServiceMetrics {
             if (result == 0) result = this.method.compareTo(other.method);
             if (result == 0) result = Integer.compare(this.status, other.status);
             return result;
+        }
+    }
+
+    private record DownloadDurationKey(String result, String method, String transfer)
+            implements Comparable<DownloadDurationKey> {
+        @Override
+        public int compareTo(final DownloadDurationKey other) {
+            int comparison = this.result.compareTo(other.result);
+            if (comparison == 0) comparison = this.method.compareTo(other.method);
+            if (comparison == 0) comparison = this.transfer.compareTo(other.transfer);
+            return comparison;
+        }
+    }
+
+    private static final class DurationHistogram {
+        private final long[] boundsNanos;
+        private final LongAdder[] buckets;
+        private final LongAdder count = new LongAdder();
+        private final LongAdder sumNanos = new LongAdder();
+
+        private DurationHistogram(final double[] boundsSeconds) {
+            this.boundsNanos = new long[boundsSeconds.length];
+            this.buckets = new LongAdder[boundsSeconds.length];
+            for (int i = 0; i < boundsSeconds.length; i++) {
+                this.boundsNanos[i] = (long) (boundsSeconds[i] * 1_000_000_000D);
+                this.buckets[i] = new LongAdder();
+            }
+        }
+
+        private void observe(final long nanos) {
+            this.count.increment();
+            this.sumNanos.add(nanos);
+            for (int i = 0; i < this.boundsNanos.length; i++) {
+                if (nanos <= this.boundsNanos[i]) this.buckets[i].increment();
+            }
+        }
+
+        private long bucket(final int index) {
+            return this.buckets[index].sum();
+        }
+
+        private long count() {
+            return this.count.sum();
+        }
+
+        private double sumSeconds() {
+            return this.sumNanos.sum() / 1_000_000_000D;
         }
     }
 }

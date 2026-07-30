@@ -20,6 +20,8 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.io.RandomAccessFile;
 import java.net.InetSocketAddress;
+import java.net.SocketException;
+import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Locale;
@@ -206,8 +208,10 @@ final class PackServiceHttpServer implements AutoCloseable {
         boolean partial = false;
         boolean responseStarted = false;
         String result = "success";
+        String transfer = "none";
+        String failureReason = null;
         int status = 500;
-        try (ArtifactLease lease = this.store.acquire(sha1)) {
+        try (ArtifactLease lease = this.acquireArtifact(sha1)) {
             if (lease == null) {
                 result = "not_found";
                 status = 404;
@@ -219,6 +223,7 @@ final class PackServiceHttpServer implements AutoCloseable {
             final String etag = "\"" + artifact.sha1() + "\"";
             addArtifactHeaders(exchange, etag);
             if (etag.equals(exchange.getRequestHeaders().getFirst("If-None-Match"))) {
+                transfer = "not_modified";
                 status = 304;
                 exchange.sendResponseHeaders(status, -1L);
                 responseStarted = true;
@@ -235,6 +240,7 @@ final class PackServiceHttpServer implements AutoCloseable {
                 return;
             }
             partial = range.partial();
+            transfer = partial ? "range" : "full";
             status = partial ? 206 : 200;
             exchange.getResponseHeaders().set("Content-Type", "application/zip");
             if (partial) {
@@ -242,6 +248,7 @@ final class PackServiceHttpServer implements AutoCloseable {
                         "bytes " + range.start() + "-" + range.end() + "/" + artifact.size());
             }
             if ("HEAD".equals(method)) {
+                transfer = "head";
                 exchange.getResponseHeaders().set("Content-Length", Long.toString(range.length()));
                 exchange.sendResponseHeaders(status, -1L);
                 responseStarted = true;
@@ -249,19 +256,39 @@ final class PackServiceHttpServer implements AutoCloseable {
             }
             try (RandomAccessFile file = this.artifactFileOpener.open(artifact.path())) {
                 file.seek(range.start());
-                exchange.sendResponseHeaders(status, range.length());
+                try {
+                    exchange.sendResponseHeaders(status, range.length());
+                } catch (IOException e) {
+                    throw responseFailure(e, 0L);
+                }
                 responseStarted = true;
                 try (OutputStream output = exchange.getResponseBody()) {
                     transferred = copy(file, output, range.length());
+                } catch (DownloadFailureException e) {
+                    throw e;
+                } catch (IOException e) {
+                    throw responseFailure(e, transferred);
                 }
+            } catch (DownloadFailureException e) {
+                throw e;
+            } catch (IOException e) {
+                throw new DownloadFailureException("artifact_read_error", transferred, e);
             }
+        } catch (DownloadFailureException e) {
+            result = "failure";
+            failureReason = e.reason();
+            transferred = Math.max(transferred, e.transferred());
+            if (responseStarted) throw e;
+            status = 500;
+            sendEmpty(exchange, status);
         } catch (IOException e) {
             result = "failure";
+            failureReason = classifyResponseFailure(e);
             if (responseStarted) throw e;
             status = 500;
             sendEmpty(exchange, status);
         } finally {
-            this.metrics.finishDownload(started, result, transferred, partial);
+            this.metrics.finishDownload(started, result, method, transfer, failureReason, transferred, partial);
             this.metrics.httpRequest(route, method, status);
             this.logAccess(exchange, route, method, status, transferred);
             exchange.close();
@@ -468,13 +495,57 @@ final class PackServiceHttpServer implements AutoCloseable {
         long remaining = expected;
         long copied = 0L;
         while (remaining > 0L) {
-            final int read = input.read(buffer, 0, (int) Math.min(buffer.length, remaining));
-            if (read < 0) throw new IOException("Artifact ended before declared range length");
-            output.write(buffer, 0, read);
+            final int read;
+            try {
+                read = input.read(buffer, 0, (int) Math.min(buffer.length, remaining));
+            } catch (IOException e) {
+                throw new DownloadFailureException("artifact_read_error", copied, e);
+            }
+            if (read < 0) {
+                throw new DownloadFailureException("artifact_read_error", copied,
+                        new IOException("Artifact ended before declared range length"));
+            }
+            try {
+                output.write(buffer, 0, read);
+            } catch (IOException e) {
+                throw responseFailure(e, copied);
+            }
             copied += read;
             remaining -= read;
         }
         return copied;
+    }
+
+    private ArtifactLease acquireArtifact(final String sha1) throws DownloadFailureException {
+        try {
+            return this.store.acquire(sha1);
+        } catch (IOException e) {
+            throw new DownloadFailureException("artifact_read_error", 0L, e);
+        }
+    }
+
+    static String classifyResponseFailure(final IOException error) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof SocketTimeoutException) return "write_timeout";
+            if (current instanceof SocketException) {
+                final String message = current.getMessage();
+                if (message != null) {
+                    final String normalized = message.toLowerCase(Locale.ROOT);
+                    if (normalized.contains("broken pipe") || normalized.contains("connection reset")
+                            || normalized.contains("connection abort") || normalized.contains("socket closed")
+                            || normalized.contains("closed by peer")) {
+                        return "client_disconnect";
+                    }
+                }
+            }
+            current = current.getCause();
+        }
+        return "response_error";
+    }
+
+    private static DownloadFailureException responseFailure(final IOException error, final long transferred) {
+        return new DownloadFailureException(classifyResponseFailure(error), transferred, error);
     }
 
     private static Throwable unwrap(final Throwable error) {
@@ -489,6 +560,25 @@ final class PackServiceHttpServer implements AutoCloseable {
     @FunctionalInterface
     interface ArtifactFileOpener {
         RandomAccessFile open(java.nio.file.Path path) throws IOException;
+    }
+
+    private static final class DownloadFailureException extends IOException {
+        private final String reason;
+        private final long transferred;
+
+        private DownloadFailureException(final String reason, final long transferred, final IOException cause) {
+            super(cause.getMessage(), cause);
+            this.reason = reason;
+            this.transferred = Math.max(0L, transferred);
+        }
+
+        private String reason() {
+            return this.reason;
+        }
+
+        private long transferred() {
+            return this.transferred;
+        }
     }
 
     private static final class AccessContext {

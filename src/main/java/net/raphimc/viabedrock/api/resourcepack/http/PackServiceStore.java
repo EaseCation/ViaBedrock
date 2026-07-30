@@ -359,9 +359,10 @@ final class PackServiceStore {
                     .filter(state -> state.artifact == null).count();
             final FileStore fileStore = Files.getFileStore(this.config.dataDirectory());
             return new StorageSnapshot(artifacts, mappings, pending, bytes,
-                    fileStore.getTotalSpace(), fileStore.getUsableSpace(), fileStore.getUnallocatedSpace());
+                    this.config.cacheBudgetBytes(), fileStore.getTotalSpace(), fileStore.getUsableSpace(),
+                    fileStore.getUnallocatedSpace());
         } catch (IOException e) {
-            return new StorageSnapshot(0L, 0L, 0L, 0L, 0L, 0L, 0L);
+            return new StorageSnapshot(0L, 0L, 0L, 0L, this.config.cacheBudgetBytes(), 0L, 0L, 0L);
         }
     }
 
@@ -694,7 +695,7 @@ final class PackServiceStore {
         }
     }
 
-    record StorageSnapshot(long artifacts, long mappings, long pending, long artifactBytes,
+    record StorageSnapshot(long artifacts, long mappings, long pending, long artifactBytes, long cacheBudgetBytes,
                            long pvcTotalBytes, long pvcUsableBytes, long pvcFreeBytes) {
     }
 

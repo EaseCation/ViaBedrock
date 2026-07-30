@@ -13,6 +13,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.net.ServerSocket;
+import java.net.SocketException;
+import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -126,7 +128,25 @@ class PackServiceHttpServerTest {
                     HttpResponse.BodyHandlers.ofString());
             assertEquals(200, renderedMetrics.statusCode());
             assertTrue(renderedMetrics.body().contains("viabedrock_pack_service_cache_lookups_total{result=\"miss\"} 1"));
-            assertTrue(renderedMetrics.body().contains("viabedrock_pack_service_downloads_total{result=\"success\"}"));
+            assertTrue(renderedMetrics.body().contains("viabedrock_pack_service_cache_budget_bytes "));
+            assertTrue(renderedMetrics.body().contains(
+                    "viabedrock_pack_service_downloads_total{result=\"success\"} 4"));
+            assertTrue(renderedMetrics.body().contains(
+                    "# TYPE viabedrock_pack_service_download_transfer_duration_seconds histogram"));
+            assertTrue(renderedMetrics.body().contains(
+                    "viabedrock_pack_service_download_transfer_duration_seconds_count"
+                            + "{result=\"success\",method=\"get\",transfer=\"full\"} 1"));
+            assertTrue(renderedMetrics.body().contains(
+                    "viabedrock_pack_service_download_transfer_duration_seconds_count"
+                            + "{result=\"success\",method=\"get\",transfer=\"range\"} 1"));
+            assertTrue(renderedMetrics.body().contains(
+                    "viabedrock_pack_service_download_transfer_duration_seconds_count"
+                            + "{result=\"success\",method=\"get\",transfer=\"not_modified\"} 1"));
+            assertTrue(renderedMetrics.body().contains(
+                    "viabedrock_pack_service_download_transfer_duration_seconds_count"
+                            + "{result=\"success\",method=\"head\",transfer=\"head\"} 1"));
+            assertTrue(renderedMetrics.body().contains(
+                    "viabedrock_pack_service_download_failures_total{reason=\"client_disconnect\"} 0"));
             assertFalse(renderedMetrics.body().contains(sha1));
             assertFalse(renderedMetrics.body().contains(token.toString()));
 
@@ -170,7 +190,28 @@ class PackServiceHttpServerTest {
 
             assertEquals(500, response.statusCode());
             assertEquals(0, response.body().length);
+
+            final String renderedMetrics = HttpClient.newHttpClient().send(
+                    HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + metricsPort + "/metrics"))
+                            .GET().build(), HttpResponse.BodyHandlers.ofString()).body();
+            assertTrue(renderedMetrics.contains(
+                    "viabedrock_pack_service_download_failures_total{reason=\"artifact_read_error\"} 1"));
+            assertTrue(renderedMetrics.contains(
+                    "viabedrock_pack_service_download_transfer_duration_seconds_count"
+                            + "{result=\"failure\",method=\"get\",transfer=\"full\"} 1"));
         }
+    }
+
+    @Test
+    void classifiesOnlyBoundedResponseFailureReasons() throws Exception {
+        assertEquals("write_timeout", PackServiceHttpServer.classifyResponseFailure(
+                new SocketTimeoutException("simulated timeout")));
+        assertEquals("client_disconnect", PackServiceHttpServer.classifyResponseFailure(
+                new SocketException("Broken pipe")));
+        assertEquals("client_disconnect", PackServiceHttpServer.classifyResponseFailure(
+                new IOException("wrapped", new SocketException("Connection reset by peer"))));
+        assertEquals("response_error", PackServiceHttpServer.classifyResponseFailure(
+                new IOException("simulated response error")));
     }
 
     @Test
