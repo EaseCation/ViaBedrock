@@ -50,6 +50,7 @@ public class GameSessionStorage extends StoredObject {
     private boolean commandsEnabled;
     private boolean inventoryServerAuthoritative;
     private boolean blockBreakingServerAuthoritative;
+    private String serverBrand;
 
     private boolean immutableWorld;
     private TextComponent deathMessage;
@@ -171,6 +172,14 @@ public class GameSessionStorage extends StoredObject {
 
     public void setBlockBreakingServerAuthoritative(final boolean blockBreakingServerAuthoritative) {
         this.blockBreakingServerAuthoritative = blockBreakingServerAuthoritative;
+    }
+
+    public String getServerBrand() {
+        return this.serverBrand;
+    }
+
+    public void setServerBrand(final String serverBrand) {
+        this.serverBrand = serverBrand;
     }
 
     public boolean isImmutableWorld() {
