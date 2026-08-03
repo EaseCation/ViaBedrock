@@ -750,7 +750,7 @@ public class EntityPackets {
 
             final Entity itemEntity = entityTracker.getEntityByRid(itemEntityRuntimeId);
             final Entity collectorEntity = entityTracker.getEntityByRid(collectorEntityRuntimeId);
-            if (itemEntity == null || collectorEntity == null || itemEntity.javaType() != EntityTypes1_21_11.ITEM) {
+            if (!canTranslateTakeItemEntity(itemEntity, collectorEntity)) {
                 wrapper.cancel();
                 return;
             }
@@ -758,6 +758,12 @@ public class EntityPackets {
             wrapper.write(Types.VAR_INT, collectorEntity.javaId()); // collector entity id
             wrapper.write(Types.VAR_INT, 0); // amount
         });
+    }
+
+    static boolean canTranslateTakeItemEntity(final Entity itemEntity, final Entity collectorEntity) {
+        return itemEntity != null
+                && itemEntity.javaType() == EntityTypes1_21_11.ITEM
+                && collectorEntity instanceof LivingEntity;
     }
 
     static Integer getFishingHookOwnerJavaId(final EntityData[] entityData, final LongFunction<Integer> ownerJavaIdLookup) {

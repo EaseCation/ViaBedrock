@@ -19,22 +19,55 @@ package net.raphimc.viabedrock.protocol.packet;
 
 import com.viaversion.viaversion.api.minecraft.entities.EntityTypes1_21_11;
 import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
+import net.raphimc.viabedrock.api.model.entity.Entity;
+import net.raphimc.viabedrock.api.model.entity.LivingEntity;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorDataIDs;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorEvent;
 import net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent;
 import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
 import org.junit.jupiter.api.Test;
 
+import java.util.UUID;
 import java.util.function.LongFunction;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 class EntityPacketsTest {
 
     private static final long OWNER_UNIQUE_ID = 1234L;
+
+    @Test
+    void translatesTakeItemEntityWithLivingCollector() {
+        final Entity itemEntity = entity(EntityTypes1_21_11.ITEM);
+        final LivingEntity collectorEntity = livingEntity(EntityTypes1_21_11.PLAYER);
+
+        assertTrue(EntityPackets.canTranslateTakeItemEntity(itemEntity, collectorEntity));
+    }
+
+    @Test
+    void rejectsTakeItemEntityWithInteractionCollector() {
+        final Entity itemEntity = entity(EntityTypes1_21_11.ITEM);
+        final Entity collectorEntity = entity(EntityTypes1_21_11.INTERACTION);
+
+        assertFalse(EntityPackets.canTranslateTakeItemEntity(itemEntity, collectorEntity));
+    }
+
+    @Test
+    void rejectsTakeItemEntityWithMissingOrInvalidEntities() {
+        final Entity itemEntity = entity(EntityTypes1_21_11.ITEM);
+        final LivingEntity collectorEntity = livingEntity(EntityTypes1_21_11.PLAYER);
+
+        assertAll(
+                () -> assertFalse(EntityPackets.canTranslateTakeItemEntity(null, collectorEntity)),
+                () -> assertFalse(EntityPackets.canTranslateTakeItemEntity(itemEntity, null)),
+                () -> assertFalse(EntityPackets.canTranslateTakeItemEntity(entity(EntityTypes1_21_11.EXPERIENCE_ORB), collectorEntity))
+        );
+    }
 
     @Test
     void resolvesRemoteFishingHookOwnerJavaId() {
@@ -150,6 +183,14 @@ class EntityPacketsTest {
 
     private static EntityData variantData(final int bedrockRuntimeId) {
         return new EntityData(ActorDataIDs.VARIANT.getValue(), EntityDataTypesBedrock.INT, bedrockRuntimeId);
+    }
+
+    private static Entity entity(final EntityTypes1_21_11 javaType) {
+        return new Entity(null, 1L, 2L, "test:entity", 3, UUID.randomUUID(), javaType);
+    }
+
+    private static LivingEntity livingEntity(final EntityTypes1_21_11 javaType) {
+        return new LivingEntity(null, 1L, 2L, "test:living_entity", 3, UUID.randomUUID(), javaType);
     }
 
 }
