@@ -537,7 +537,7 @@ public class WorldPackets {
             for (Map.Entry<BlockPosition, List<BlockChangeRecord>> entry : blockChanges.entrySet()) {
                 final BlockPosition chunkPosition = entry.getKey();
                 final List<BlockChangeRecord> changes = entry.getValue();
-                final long chunkKey = (chunkPosition.x() & 0x3FFFFFL) << 42 | (chunkPosition.z() & 0x3FFFFFL) << 20 | (chunkPosition.y() & 0xFFFL);
+                final long chunkKey = packJavaSectionPosition(chunkPosition.x(), chunkPosition.y(), chunkPosition.z());
 
                 final PacketWrapper multiBlockChange = wrapper.create(ClientboundPackets26_1.SECTION_BLOCKS_UPDATE);
                 multiBlockChange.write(Types.LONG, chunkKey); // chunk position
@@ -681,6 +681,10 @@ public class WorldPackets {
         // Explicit coordinate/dimension failures are stable; only ambiguous session failures get bounded retries.
         return result == SubChunkPacket_SubChunkRequestResult.Undefined
                 || result == SubChunkPacket_SubChunkRequestResult.PlayerDoesntExist;
+    }
+
+    static long packJavaSectionPosition(final int x, final int y, final int z) {
+        return (x & 0x3FFFFFL) << 42 | (z & 0x3FFFFFL) << 20 | (y & 0xFFFFFL);
     }
 
     private static void handleSubChunkBlobFailure(final ChunkTracker chunkTracker, final BlockPosition position,

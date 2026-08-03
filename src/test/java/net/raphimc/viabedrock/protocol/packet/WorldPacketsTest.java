@@ -12,6 +12,7 @@ package net.raphimc.viabedrock.protocol.packet;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.SubChunkPacket_SubChunkRequestResult;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -27,5 +28,14 @@ class WorldPacketsTest {
         assertFalse(WorldPackets.shouldRetryFailedSubChunk(SubChunkPacket_SubChunkRequestResult.IndexOutOfBounds));
         assertFalse(WorldPackets.shouldRetryFailedSubChunk(SubChunkPacket_SubChunkRequestResult.Success));
         assertFalse(WorldPackets.shouldRetryFailedSubChunk(SubChunkPacket_SubChunkRequestResult.SuccessAllAir));
+    }
+
+    @Test
+    void packsNegativeSectionYUsingJavaTwentyBitField() {
+        final long packed = WorldPackets.packJavaSectionPosition(12, -2, -34);
+
+        assertEquals(12, (int) (packed >> 42));
+        assertEquals(-2, (int) (packed << 44 >> 44));
+        assertEquals(-34, (int) (packed << 22 >> 42));
     }
 }
