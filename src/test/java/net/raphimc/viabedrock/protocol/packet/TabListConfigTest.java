@@ -75,4 +75,15 @@ class TabListConfigTest {
         assertTrue(config.shouldEnableSwordBlockingAnimation());
     }
 
+    @Test
+    void disablesSwordBlockingAnimationByDefault(@TempDir final Path tempDir) {
+        final ViaBedrockConfig config = new ViaBedrockConfig(
+                tempDir.resolve("viabedrock.yml").toFile(),
+                Logger.getAnonymousLogger()
+        );
+        config.reload();
+
+        assertFalse(config.shouldEnableSwordBlockingAnimation());
+    }
+
 }
