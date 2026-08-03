@@ -114,6 +114,7 @@ public class JoinPackets {
 
         wrapper.user().put(new ChunkTracker(wrapper.user(), wrapper.user().get(ChunkTracker.class).getDimension()));
         if (wrapper.user().getProtocolInfo().protocolVersion().newerThanOrEqualTo(ProtocolVersion.v1_20_2)) {
+            wrapper.user().get(ClientChannelDiscoveryStorage.class).beginConfigurationCycle();
             wrapper.user().get(ClientLightStorage.class).beginConfigurationCycle();
             final PacketWrapper startConfiguration = PacketWrapper.create(ClientboundPackets26_1.START_CONFIGURATION, wrapper.user());
             startConfiguration.send(BedrockProtocol.class);
@@ -144,6 +145,7 @@ public class JoinPackets {
                         // Open the initial cycle before LOGIN_FINISHED reaches the Java client. Otherwise
                         // CLIENT_INFORMATION can start the probe before a later Bedrock pre-play packet
                         // resets the cycle and accidentally removes the negotiation deadline.
+                        wrapper.user().get(ClientChannelDiscoveryStorage.class).beginConfigurationCycle();
                         wrapper.user().get(ClientLightStorage.class).beginConfigurationCycle();
                         final ProtocolInfo protocolInfo = wrapper.user().getProtocolInfo();
                         wrapper.setPacketType(ClientboundLoginPackets.LOGIN_FINISHED);
@@ -768,6 +770,8 @@ public class JoinPackets {
 
     public static void finishCustomMappingStartGame(final UserConnection user, final PendingStartGame pending) {
         final JoinGate joinGate = JoinGate.install(user);
+        final GameSessionStorage gameSession = user.get(GameSessionStorage.class);
+        gameSession.setServerBrand(formatServerBrand(pending.serverEngine(), pending.vanillaVersion()));
         user.put(new JoinGameStorage(pending.levelName(), pending.difficulty(), pending.rainLevel(), pending.lightningLevel(), pending.currentTime(), pending.chunkTickRange()));
         user.put(new GameRulesStorage(user, pending.gameRules()));
         user.put(new BlockStateRewriter(user, pending.blockProperties(), pending.hashedRuntimeBlockIds()));
@@ -777,7 +781,7 @@ public class JoinPackets {
         entityTracker.addEntity(pending.clientPlayer(), false);
         user.put(entityTracker);
 
-        sendJavaConfigurationOutputs(user, "Bedrock" + (!pending.serverEngine().isEmpty() ? " @" + pending.serverEngine() : "") + " v: " + pending.vanillaVersion(), pending.enabledFeatures(), () -> {
+        sendJavaConfigurationOutputs(user, pending.enabledFeatures(), () -> {
             final PacketWrapper requestChunkRadius = PacketWrapper.create(ServerboundBedrockPackets.REQUEST_CHUNK_RADIUS, user);
             requestChunkRadius.write(BedrockTypes.VAR_INT, user.get(ClientSettingsStorage.class).viewDistance()); // radius
             requestChunkRadius.write(Types.BYTE, ProtocolConstants.BEDROCK_REQUEST_CHUNK_RADIUS_MAX_RADIUS); // max radius
@@ -786,7 +790,11 @@ public class JoinPackets {
         });
     }
 
-    public static void sendBrandCustomPayload(final UserConnection user, final String brand) {
+    static String formatServerBrand(final String serverEngine, final String vanillaVersion) {
+        return "Bedrock" + (!serverEngine.isEmpty() ? " @" + serverEngine : "") + " v: " + vanillaVersion;
+    }
+
+    public static void sendConfigurationBrand(final UserConnection user, final String brand) {
         final PacketWrapper brandCustomPayload = PacketWrapper.create(ClientboundConfigurationPackets1_21_9.CUSTOM_PAYLOAD, user);
         brandCustomPayload.write(Types.STRING, "minecraft:brand"); // channel
         brandCustomPayload.write(Types.STRING, brand); // content
@@ -820,15 +828,11 @@ public class JoinPackets {
     }
 
     private static void handleJavaClientGameJoin(final UserConnection user) {
-        sendJavaConfigurationOutputs(user, null, Collections.emptyList(), () -> sendJavaLoginAndInitialPackets(user));
+        sendJavaConfigurationOutputs(user, Collections.emptyList(), () -> sendJavaLoginAndInitialPackets(user));
     }
 
-    public static void sendJavaConfigurationOutputs(final UserConnection user, final String brand, final List<String> enabledFeatures, final Runnable afterFinish) {
+    public static void sendJavaConfigurationOutputs(final UserConnection user, final List<String> enabledFeatures, final Runnable afterFinish) {
         final GameSessionStorage gameSession = user.get(GameSessionStorage.class);
-
-        if (brand != null) {
-            sendBrandCustomPayload(user, brand);
-        }
 
         if (enabledFeatures != null && !enabledFeatures.isEmpty()) {
             final List<String> features = new ArrayList<>(enabledFeatures);
@@ -914,6 +918,14 @@ public class JoinPackets {
         joinGame.write(Types.VAR_INT, 64); // sea level
         joinGame.write(Types.BOOLEAN, false); // enforce secure chat
         joinGame.send(BedrockProtocol.class);
+
+        final String serverBrand = gameSession.getServerBrand();
+        if (serverBrand != null) {
+            final PacketWrapper brandCustomPayload = PacketWrapper.create(ClientboundPackets26_1.CUSTOM_PAYLOAD, user);
+            brandCustomPayload.write(Types.STRING, "minecraft:brand"); // channel
+            brandCustomPayload.write(Types.STRING, serverBrand); // content
+            brandCustomPayload.send(BedrockProtocol.class);
+        }
 
         clientPlayer.createTeam();
         clientPlayer.sendInitialEntityData();

@@ -46,6 +46,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketViolat
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketViolationType;
 import net.raphimc.viabedrock.protocol.provider.NettyPipelineProvider;
 import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
+import net.raphimc.viabedrock.protocol.storage.ClientChannelDiscoveryStorage;
 import net.raphimc.viabedrock.protocol.storage.ClientSettingsStorage;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 import net.raphimc.viabedrock.protocol.storage.PacketSyncStorage;
@@ -162,6 +163,7 @@ public class MultiStatePackets {
         final String channel = Key.namespaced(wrapper.read(Types.STRING)); // channel
         if (channel.equals("minecraft:register")) {
             final List<String> channels = Arrays.asList(new String(wrapper.read(Types.SERVERBOUND_CUSTOM_PAYLOAD_DATA), StandardCharsets.UTF_8).split("\0"));
+            wrapper.user().get(ClientChannelDiscoveryStorage.class).markRegistrationReceived();
             wrapper.user().get(ChannelStorage.class).addChannels(channels);
 
             if (channels.contains(ViaBedrockUtilityInterface.CONFIRM_CHANNEL)) {

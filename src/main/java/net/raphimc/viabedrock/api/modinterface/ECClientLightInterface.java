@@ -23,7 +23,6 @@ import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.protocols.v1_21_7to1_21_9.packet.ClientboundConfigurationPackets1_21_9;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
-import net.raphimc.viabedrock.protocol.packet.JoinPackets;
 import net.raphimc.viabedrock.protocol.storage.ClientLightStorage;
 
 import java.util.concurrent.TimeUnit;
@@ -48,12 +47,12 @@ public final class ECClientLightInterface {
         }
 
         try {
-            JoinPackets.sendBrandCustomPayload(user, "Bedrock");
+            ClientChannelDiscovery.request(user);
         } catch (final RuntimeException e) {
             storage.close();
             throw e;
         }
-        ViaBedrock.getPlatform().getLogger().fine("Sent configuration brand to probe ECClientLight capability");
+        ViaBedrock.getPlatform().getLogger().fine("Requested Java client channel discovery for ECClientLight capability");
     }
 
     public static void confirmPresence(final UserConnection user) {

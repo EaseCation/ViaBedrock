@@ -51,6 +51,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class JoinPacketsTest {
 
     @Test
+    void formatsThePlayPhaseServerBrand() {
+        assertEquals("Bedrock @EaseCation v: 1.21.80", JoinPackets.formatServerBrand("EaseCation", "1.21.80"));
+        assertEquals("Bedrock v: 1.21.80", JoinPackets.formatServerBrand("", "1.21.80"));
+    }
+
+    @Test
     void runsPlayDependentWorkOnlyAfterConfigurationFinish() {
         final List<String> events = new ArrayList<>();
         final Runnable completion = JoinPackets.sequenceConfigurationCompletion(

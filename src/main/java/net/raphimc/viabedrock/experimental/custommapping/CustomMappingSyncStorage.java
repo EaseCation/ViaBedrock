@@ -13,6 +13,7 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.util.concurrent.ScheduledFuture;
 import net.raphimc.viabedrock.ViaBedrock;
+import net.raphimc.viabedrock.api.modinterface.ClientChannelDiscovery;
 import net.raphimc.viabedrock.platform.ViaBedrockConfig;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.model.BlockProperties;
@@ -58,7 +59,6 @@ public final class CustomMappingSyncStorage extends StoredObject {
     private ScheduledFuture<?> timeoutTask;
     private TimeoutKind timeoutKind;
     private boolean finishStarted;
-    private boolean channelProbeSent;
     private Runnable pendingResourcePackStackFinished;
     private boolean resourcePackStackFinishedReleased;
     private boolean blockStatesAreFinalOutput;
@@ -122,7 +122,7 @@ public final class CustomMappingSyncStorage extends StoredObject {
     public void probeChannelIfNeeded() {
         if (this.state != State.UNSEEN || !isSyncEnabled()) return;
         this.state = State.PROBING_CHANNEL;
-        sendChannelProbeIfNeeded();
+        ClientChannelDiscovery.request(this.user());
         startTimeout(TimeoutKind.CHANNEL_PROBE);
     }
 
@@ -486,13 +486,6 @@ public final class CustomMappingSyncStorage extends StoredObject {
                 fail("Timed out waiting for BedrockLoader custom mapping snapshot", null);
             }
         }, timeoutMs, TimeUnit.MILLISECONDS);
-    }
-
-    private void sendChannelProbeIfNeeded() {
-        if (this.channelProbeSent) return;
-        this.channelProbeSent = true;
-        JoinPackets.sendBrandCustomPayload(this.user(), "Bedrock");
-        ViaBedrock.getPlatform().getLogger().info("Sent configuration brand to trigger Java client channel registration");
     }
 
     private void advertiseServerboundChannel() {
