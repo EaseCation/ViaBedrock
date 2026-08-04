@@ -428,7 +428,7 @@ public class JoinPackets {
 
                     if (editorWorldType == Editor_WorldType.EditorProject) {
                         final PacketWrapper disconnect = PacketWrapper.create(ClientboundConfigurationPackets1_21_9.DISCONNECT, wrapper.user());
-                        PacketFactory.writeJavaDisconnect(wrapper, resourcePackStorage.getTexts().get("disconnectionScreen.editor.mismatchEditorWorld"));
+                        writeEditorProjectDisconnect(disconnect, resourcePackStorage.getTexts().get("disconnectionScreen.editor.mismatchEditorWorld"));
                         disconnect.send(BedrockProtocol.class);
                         return;
                     }
@@ -792,6 +792,10 @@ public class JoinPackets {
 
     static String formatServerBrand(final String serverEngine, final String vanillaVersion) {
         return "Bedrock" + (!serverEngine.isEmpty() ? " @" + serverEngine : "") + " v: " + vanillaVersion;
+    }
+
+    static void writeEditorProjectDisconnect(final PacketWrapper disconnect, final String reason) {
+        PacketFactory.writeJavaDisconnect(disconnect, reason);
     }
 
     public static void sendConfigurationBrand(final UserConnection user, final String brand) {

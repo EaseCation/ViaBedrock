@@ -18,10 +18,14 @@
 package net.raphimc.viabedrock.protocol.packet;
 
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
+import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.connection.UserConnectionImpl;
 import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
+import com.viaversion.viaversion.protocols.v1_21_7to1_21_9.packet.ClientboundConfigurationPackets1_21_9;
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
+import net.raphimc.viabedrock.api.util.TextUtil;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.model.Position2f;
 import net.raphimc.viabedrock.protocol.model.Position3f;
@@ -54,6 +58,23 @@ class JoinPacketsTest {
     void formatsThePlayPhaseServerBrand() {
         assertEquals("Bedrock @EaseCation v: 1.21.80", JoinPackets.formatServerBrand("EaseCation", "1.21.80"));
         assertEquals("Bedrock v: 1.21.80", JoinPackets.formatServerBrand("", "1.21.80"));
+    }
+
+    @Test
+    void writesEditorProjectReasonToTheConfigurationDisconnectPacket() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        final UserConnectionImpl user = new UserConnectionImpl(channel);
+        final PacketWrapper disconnect = new PacketWrapperImpl(
+                ClientboundConfigurationPackets1_21_9.DISCONNECT, Unpooled.EMPTY_BUFFER, user);
+        final String reason = "Editor worlds are not supported";
+        try {
+            JoinPackets.writeEditorProjectDisconnect(disconnect, reason);
+
+            assertEquals(ClientboundConfigurationPackets1_21_9.DISCONNECT, disconnect.getPacketType());
+            assertEquals(TextUtil.stringToNbt(reason), disconnect.get(Types.TAG, 0));
+        } finally {
+            channel.finishAndReleaseAll();
+        }
     }
 
     @Test
