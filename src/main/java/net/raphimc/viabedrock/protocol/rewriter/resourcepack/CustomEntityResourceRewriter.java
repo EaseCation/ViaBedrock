@@ -67,7 +67,12 @@ public class CustomEntityResourceRewriter extends ItemModelResourceRewriter {
                 if (bedrockGeometry != null) {
                     for (Map.Entry<String, String> textureEntry : entityDefinition.entityData().getTextures().entrySet()) {
                         final String modelKey = modelEntry.getKey() + "_" + textureEntry.getKey();
-                        final JavaItemModel itemModelData = bedrockGeometry.toJavaItemModel("viabedrock:" + this.getJavaTexturePath(textureEntry.getValue()), RotationType.POST_1_21_11);
+                        final boolean supportsFreeRotation = resourcePackStorage.isSupportsFreeRotation();
+                        final JavaItemModel itemModelData = prepareModelForClient(
+                                bedrockGeometry.toJavaItemModel(
+                                        "viabedrock:" + this.getJavaTexturePath(textureEntry.getValue()),
+                                        rotationTypeFor(supportsFreeRotation)),
+                                supportsFreeRotation);
                         javaModelDefinitions.put(modelKey, itemModelData.compile());
 
                         for (Parent bone : bedrockGeometry.getParents()) {
@@ -84,9 +89,11 @@ public class CustomEntityResourceRewriter extends ItemModelResourceRewriter {
                                 clonedBone.setParent(null);
                                 perBoneGeometry.getParents().add(clonedBone);
 
-                                final JavaItemModel boneModelData = perBoneGeometry.toJavaItemModel(
-                                        "viabedrock:" + this.getJavaTexturePath(textureEntry.getValue()),
-                                        RotationType.HACKY_POST_1_21_6);
+                                final JavaItemModel boneModelData = prepareModelForClient(
+                                        perBoneGeometry.toJavaItemModel(
+                                                "viabedrock:" + this.getJavaTexturePath(textureEntry.getValue()),
+                                                RotationType.HACKY_POST_1_21_6),
+                                        supportsFreeRotation);
                                 final String boneKey = entityEntry.getKey() + '_' + modelKey + '_' + boneName;
                                 javaModelDefinitions.put(boneKey, boneModelData.compile());
                             } catch (Throwable e) {

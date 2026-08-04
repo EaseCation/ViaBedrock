@@ -32,6 +32,7 @@ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomEntityResourc
 import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomItemTextureResourceRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomSoundResourceRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.resourcepack.GlyphSheetResourceRewriter;
+import net.raphimc.viabedrock.protocol.rewriter.resourcepack.ItemModelResourceRewriter;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 import org.cube.converter.converter.enums.RotationType;
 import org.cube.converter.model.element.Parent;
@@ -197,8 +198,10 @@ public class ResourcePackRewriter {
                             final String javaTexturePath = "viabedrock:item/entity/" +
                                     net.raphimc.viabedrock.api.util.StringUtil.makeIdentifierValueSafe(
                                             textureEntry.getValue().replace("textures/", ""));
-                            final JavaItemModel itemModel = perBoneGeometry.toJavaItemModel(
-                                    javaTexturePath, RotationType.HACKY_POST_1_21_6);
+                            final JavaItemModel itemModel = ItemModelResourceRewriter.prepareModelForClient(
+                                    perBoneGeometry.toJavaItemModel(
+                                            javaTexturePath, RotationType.HACKY_POST_1_21_6),
+                                    resourcePackStorage.isSupportsFreeRotation());
 
                             final String boneKey = baseKey + "_" + boneName;
                             final float safeScale = Float.isFinite(itemModel.getScale()) ? itemModel.getScale() : 1.0f;

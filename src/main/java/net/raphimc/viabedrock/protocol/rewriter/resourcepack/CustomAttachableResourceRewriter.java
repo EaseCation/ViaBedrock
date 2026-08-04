@@ -27,7 +27,6 @@ import net.raphimc.viabedrock.api.resourcepack.definition.AttachableDefinitions;
 import net.raphimc.viabedrock.api.util.StringUtil;
 import net.raphimc.viabedrock.protocol.rewriter.ResourcePackRewriter;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
-import org.cube.converter.converter.enums.RotationType;
 import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
 import org.cube.converter.model.impl.java.JavaItemModel;
 
@@ -71,7 +70,11 @@ public class CustomAttachableResourceRewriter extends ItemModelResourceRewriter 
                 }
 
                 final String javaTexturePath = this.getJavaTexturePath(attachableDefinition.attachableData().getTextures().get(modelEntry.getKey()));
-                final JavaItemModel itemModelData = bedrockGeometry.toJavaItemModel("viabedrock:" + javaTexturePath, RotationType.POST_1_21_11);
+                final boolean supportsFreeRotation = resourcePackStorage.isSupportsFreeRotation();
+                final JavaItemModel itemModelData = prepareModelForClient(
+                        bedrockGeometry.toJavaItemModel("viabedrock:" + javaTexturePath,
+                                rotationTypeFor(supportsFreeRotation)),
+                        supportsFreeRotation);
                 final JsonObject itemModel = itemModelData.compile();
 
                 final JsonObject display = new JsonObject();
