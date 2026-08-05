@@ -43,16 +43,12 @@ import net.raphimc.viabedrock.protocol.storage.ClientSettingsStorage;
 import net.raphimc.viabedrock.protocol.storage.HandshakeStorage;
 import net.raphimc.viabedrock.protocol.types.primitive.ImageType;
 
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.security.InvalidKeyException;
-import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
@@ -284,9 +280,13 @@ public class SkinProvider implements Provider {
             final String authSecret = ViaBedrock.getConfig().getViaProxyAuthSecret();
             if (authSecret != null && !authSecret.isEmpty()) {
                 final long timestamp = System.currentTimeMillis() / 1000;
-                final String payload = user.getProtocolInfo().getUuid() + ":" + user.getProtocolInfo().getUsername() + ":" + timestamp;
-                final String hmac = computeHmacSha256(authSecret, payload);
-                claims.put("ViaProxyAuthToken", hmac + ":" + timestamp);
+                claims.put("ViaProxyAuthToken", ViaProxyAuthToken.create(
+                        authSecret,
+                        user.getProtocolInfo().getUuid(),
+                        user.getProtocolInfo().getUsername(),
+                        user.getChannel().remoteAddress(),
+                        timestamp
+                ));
             }
         }
 
@@ -323,16 +323,6 @@ public class SkinProvider implements Provider {
             claims.put("CapeImageWidth", result.cape().getWidth());
             claims.put("CapeImageHeight", result.cape().getHeight());
             claims.put("CapeId", UUID.randomUUID().toString());
-        }
-    }
-
-    private static String computeHmacSha256(final String secret, final String data) {
-        try {
-            final Mac mac = Mac.getInstance("HmacSHA256");
-            mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
-            return Base64.getEncoder().encodeToString(mac.doFinal(data.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException | InvalidKeyException e) {
-            throw new RuntimeException("Failed to compute HMAC-SHA256", e);
         }
     }
 
