@@ -83,6 +83,12 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
         BEFORE_PLAY_STATE_WHITELIST.addAll(LOGIN_STATE_WHITELIST);
     }
 
+    static boolean shouldSynthesizeLoginSuccess(final State serverState, final ClientboundBedrockPackets packet) {
+        return serverState == State.LOGIN
+                && !LOGIN_STATE_WHITELIST.contains(packet)
+                && BEFORE_PLAY_STATE_WHITELIST.contains(packet);
+    }
+
     public BedrockProtocol() {
         super(ClientboundBedrockPackets.class, ClientboundPackets26_1.class, ServerboundBedrockPackets.class, ServerboundPackets26_1.class);
     }
@@ -197,7 +203,7 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
             if (inventoryBootstrapQueue != null && inventoryBootstrapQueue.deferIfNeeded(packet, wrapper, serverState)) {
                 throw CancelException.generate();
             }
-            if (serverState == State.LOGIN && !LOGIN_STATE_WHITELIST.contains(packet) && BEFORE_PLAY_STATE_WHITELIST.contains(packet)) { // Bedrock client can skip the login state
+            if (shouldSynthesizeLoginSuccess(serverState, packet)) { // Bedrock client can skip the login state
                 ViaBedrock.getPlatform().getLogger().warning("Skipping LOGIN state");
                 final PacketWrapper playStatus = PacketWrapper.create(ClientboundBedrockPackets.PLAY_STATUS, wrapper.user());
                 playStatus.write(Types.INT, PlayStatus.LoginSuccess.getValue()); // status

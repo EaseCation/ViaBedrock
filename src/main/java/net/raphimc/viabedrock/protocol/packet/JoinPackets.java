@@ -148,6 +148,10 @@ public class JoinPackets {
                         wrapper.user().get(ClientChannelDiscoveryStorage.class).beginConfigurationCycle();
                         wrapper.user().get(ClientLightStorage.class).beginConfigurationCycle();
                         final ProtocolInfo protocolInfo = wrapper.user().getProtocolInfo();
+                        // Bedrock can immediately follow LoginSuccess with resource-pack packets, before the Java
+                        // client sends LOGIN_ACKNOWLEDGED. Treat those packets as configuration packets instead of
+                        // synthesizing a second LoginSuccess in BedrockProtocol.
+                        protocolInfo.setServerState(State.CONFIGURATION);
                         wrapper.setPacketType(ClientboundLoginPackets.LOGIN_FINISHED);
                         wrapper.write(Types.UUID, protocolInfo.getUuid()); // uuid
                         wrapper.write(Types.STRING, protocolInfo.getUsername()); // username
