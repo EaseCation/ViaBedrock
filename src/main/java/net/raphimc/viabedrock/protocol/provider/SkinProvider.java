@@ -17,6 +17,7 @@
  */
 package net.raphimc.viabedrock.protocol.provider;
 
+import com.viaversion.viaversion.api.Via;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.platform.providers.Provider;
 import com.viaversion.viaversion.libs.gson.JsonArray;
@@ -284,7 +285,7 @@ public class SkinProvider implements Provider {
                         authSecret,
                         user.getProtocolInfo().getUuid(),
                         user.getProtocolInfo().getUsername(),
-                        user.getChannel().remoteAddress(),
+                        Via.getManager().getProviders().get(ClientAddressProvider.class).getClientAddress(user),
                         timestamp
                 ));
             }
