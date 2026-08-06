@@ -32,7 +32,9 @@ public final class ScriptMessagePackets {
             final String messageId = wrapper.read(BedrockTypes.STRING); // message id
             final String payload = wrapper.read(BedrockTypes.STRING); // value
 
-            if (PlayerLatencyPackets.MESSAGE_ID.equals(messageId)) {
+            if (JavaCustomPayloadBridge.bridgeClientbound(messageId, payload, wrapper.user())) {
+                return;
+            } else if (PlayerLatencyPackets.MESSAGE_ID.equals(messageId)) {
                 PlayerLatencyPackets.handle(wrapper, payload);
             } else if (SpectatorCameraPackets.MESSAGE_ID.equals(messageId)) {
                 SpectatorCameraPackets.handle(wrapper, payload);

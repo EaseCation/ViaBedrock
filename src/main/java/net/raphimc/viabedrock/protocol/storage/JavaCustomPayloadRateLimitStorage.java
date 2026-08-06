@@ -14,7 +14,7 @@ import com.viaversion.viaversion.api.connection.StorableObject;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Connection-scoped fixed-window limiter for the Java custom-payload forwarding bridge.
+ * Connection-scoped fixed-window limiter for the Java custom-payload bridge.
  * The storage is attached to the ViaVersion connection, rather than a spoofable player id.
  */
 public final class JavaCustomPayloadRateLimitStorage implements StorableObject {

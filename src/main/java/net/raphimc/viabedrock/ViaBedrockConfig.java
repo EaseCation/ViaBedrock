@@ -35,7 +35,7 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
 
     private boolean enableExperimentalFeatures;
     private boolean enableSwordBlockingAnimation;
-    private boolean forwardJavaCustomPayloads;
+    private boolean bridgeJavaCustomPayloads;
     private int javaCustomPayloadMaxPayloadBytes;
     private int javaCustomPayloadMaxChannelBytes;
     private int javaCustomPayloadMaxMessagesPerMinute;
@@ -107,15 +107,15 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
     private void loadFields() {
         this.enableExperimentalFeatures = this.getBoolean("enable-experimental-features", false);
         this.enableSwordBlockingAnimation = this.getBoolean("enable-sword-blocking-animation", false);
-        final ConfigSection javaCustomPayloadForwarding = this.getSection("java-custom-payload-forwarding");
-        this.forwardJavaCustomPayloads = getBoolean(javaCustomPayloadForwarding, "enabled", false);
-        this.javaCustomPayloadMaxPayloadBytes = Math.max(1, getInt(javaCustomPayloadForwarding, "max-payload-bytes", 8 * 1024));
+        final ConfigSection javaCustomPayloadBridge = this.getSection("java-custom-payload-bridge");
+        this.bridgeJavaCustomPayloads = getBoolean(javaCustomPayloadBridge, "enabled", false);
+        this.javaCustomPayloadMaxPayloadBytes = Math.max(1, getInt(javaCustomPayloadBridge, "max-payload-bytes", 8 * 1024));
         this.javaCustomPayloadMaxChannelBytes = Math.max(1, Math.min(128,
-                getInt(javaCustomPayloadForwarding, "max-channel-bytes", 128)));
+                getInt(javaCustomPayloadBridge, "max-channel-bytes", 128)));
         this.javaCustomPayloadMaxMessagesPerMinute = Math.max(1,
-                getInt(javaCustomPayloadForwarding, "max-messages-per-minute", 120));
+                getInt(javaCustomPayloadBridge, "max-messages-per-minute", 120));
         this.javaCustomPayloadMaxBytesPerMinute = Math.max(1,
-                getInt(javaCustomPayloadForwarding, "max-bytes-per-minute", 256 * 1024));
+                getInt(javaCustomPayloadBridge, "max-bytes-per-minute", 256 * 1024));
         this.blobCacheMode = BlobCacheMode.byName(this.getString("blob-cache", "disk"));
         this.translateResourcePacks = this.getBoolean("translate-resource-packs", true);
         this.resourcePackHost = this.getString("resource-pack-host", "127.0.0.1");
@@ -211,8 +211,8 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
     }
 
     @Override
-    public boolean shouldForwardJavaCustomPayloads() {
-        return this.forwardJavaCustomPayloads;
+    public boolean shouldBridgeJavaCustomPayloads() {
+        return this.bridgeJavaCustomPayloads;
     }
 
     @Override

@@ -9,13 +9,17 @@
  */
 package net.raphimc.viabedrock.protocol.packet;
 
+import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.protocol.packet.State;
+import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
+import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import io.netty.buffer.ByteBuf;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
+import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
 import net.raphimc.viabedrock.protocol.storage.JavaCustomPayloadRateLimitStorage;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
@@ -24,25 +28,17 @@ import java.util.Arrays;
 import java.util.Base64;
 
 /**
- * Bridges a Java C2S custom payload into a ScriptMessage understood by the EaseCation Synapse
- * backend. It is transport only: no purchase event is emulated and no client data is interpreted.
- *
- * <p>The ScriptMessage id is fixed to {@value #SCRIPT_MESSAGE_ID}. Its value is Base64 URL-safe
- * bytes: one unsigned channel-length byte, UTF-8 channel bytes, then the untouched payload.</p>
+ * Bridges Java custom payloads and Bedrock ScriptMessages in both directions.
  */
-public final class JavaCustomPayloadForwarder {
+public final class JavaCustomPayloadBridge {
 
     public static final String SCRIPT_MESSAGE_ID = "easecation:java_custom_payload_v1";
 
-    private JavaCustomPayloadForwarder() {
+    private JavaCustomPayloadBridge() {
     }
 
-    /**
-     * Copies a Java custom payload when forwarding is enabled. It must not consume the wrapper:
-     * existing channel registration and experimental payload handlers still own the original packet.
-     */
-    public static void forward(final String channel, final PacketWrapper wrapper) {
-        if (!ViaBedrock.getConfig().shouldForwardJavaCustomPayloads()) {
+    public static void bridgeServerbound(final String channel, final PacketWrapper wrapper) {
+        if (!ViaBedrock.getConfig().shouldBridgeJavaCustomPayloads()) {
             return;
         }
         if (wrapper.user().getProtocolInfo().getClientState() != State.PLAY
@@ -52,8 +48,7 @@ public final class JavaCustomPayloadForwarder {
 
         try {
             final byte[] channelBytes = channel.getBytes(StandardCharsets.UTF_8);
-            if (channelBytes.length == 0
-                    || channelBytes.length > ViaBedrock.getConfig().getJavaCustomPayloadMaxChannelBytes()) {
+            if (!isWithinLimits(channelBytes, new byte[0])) {
                 return;
             }
             if (!(wrapper instanceof PacketWrapperImpl packetWrapper)) {
@@ -78,8 +73,42 @@ public final class JavaCustomPayloadForwarder {
             scriptMessage.write(BedrockTypes.STRING, encodeEnvelope(channelBytes, payload));
             scriptMessage.sendToServer(BedrockProtocol.class);
         } catch (final Exception e) {
-            ViaBedrock.getPlatform().getLogger().warning("Unable to forward a Java custom payload: " + e.getClass().getSimpleName());
+            ViaBedrock.getPlatform().getLogger().warning("Unable to bridge a Java custom payload: " + e.getClass().getSimpleName());
         }
+    }
+
+    /**
+     * @return true when the ScriptMessage belongs to this bridge and has been consumed.
+     */
+    public static boolean bridgeClientbound(final String messageId, final String encodedValue, final UserConnection user) {
+        if (!SCRIPT_MESSAGE_ID.equals(messageId)) {
+            return false;
+        }
+        if (!ViaBedrock.getConfig().shouldBridgeJavaCustomPayloads()) {
+            return true;
+        }
+        if (user.getProtocolInfo().getClientState() != State.PLAY || user.getProtocolInfo().getServerState() != State.PLAY) {
+            return true;
+        }
+
+        try {
+            final DecodedPayload decoded = decodeEnvelope(encodedValue);
+            if (!isWithinLimits(decoded.channel().getBytes(StandardCharsets.UTF_8), decoded.payload())) {
+                return true;
+            }
+            final ChannelStorage channels = user.get(ChannelStorage.class);
+            if (channels == null || !channels.hasChannel(decoded.channel())) {
+                return true;
+            }
+
+            final PacketWrapper payload = PacketWrapper.create(ClientboundPackets26_1.CUSTOM_PAYLOAD, user);
+            payload.write(Types.STRING, decoded.channel());
+            payload.write(Types.REMAINING_BYTES, decoded.payload());
+            payload.scheduleSend(BedrockProtocol.class);
+        } catch (final Exception e) {
+            ViaBedrock.getPlatform().getLogger().warning("Unable to bridge a backend ScriptMessage: " + e.getClass().getSimpleName());
+        }
+        return true;
     }
 
     static byte[] copyRemainingPayload(final ByteBuf inputBuffer) {
@@ -99,7 +128,7 @@ public final class JavaCustomPayloadForwarder {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(envelope);
     }
 
-    static DecodedEnvelope decodeEnvelope(final String encodedValue) {
+    static DecodedPayload decodeEnvelope(final String encodedValue) {
         final byte[] envelope = Base64.getUrlDecoder().decode(encodedValue);
         if (envelope.length < 2) {
             throw new IllegalArgumentException("Envelope is too short");
@@ -108,12 +137,18 @@ public final class JavaCustomPayloadForwarder {
         if (channelLength == 0 || envelope.length < 1 + channelLength) {
             throw new IllegalArgumentException("Envelope has an invalid channel length");
         }
-        return new DecodedEnvelope(
+        return new DecodedPayload(
                 new String(envelope, 1, channelLength, StandardCharsets.UTF_8),
                 Arrays.copyOfRange(envelope, 1 + channelLength, envelope.length)
         );
     }
 
-    record DecodedEnvelope(String channel, byte[] payload) {
+    private static boolean isWithinLimits(final byte[] channel, final byte[] payload) {
+        return channel.length > 0
+                && channel.length <= ViaBedrock.getConfig().getJavaCustomPayloadMaxChannelBytes()
+                && payload.length <= ViaBedrock.getConfig().getJavaCustomPayloadMaxPayloadBytes();
+    }
+
+    record DecodedPayload(String channel, byte[] payload) {
     }
 }

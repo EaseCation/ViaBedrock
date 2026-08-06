@@ -37,10 +37,9 @@ public interface ViaBedrockConfig extends Config {
     boolean shouldEnableSwordBlockingAnimation();
 
     /**
-     * @return If true, forwards Java Edition custom payloads to the Bedrock backend using the
-     * {@code easecation:java_custom_payload_v1} ScriptMessage envelope.
+     * @return If true, bridges Java Edition custom payloads and Bedrock ScriptMessages in both directions.
      */
-    default boolean shouldForwardJavaCustomPayloads() {
+    default boolean shouldBridgeJavaCustomPayloads() {
         return false;
     }
 

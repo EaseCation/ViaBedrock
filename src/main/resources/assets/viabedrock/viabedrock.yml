@@ -6,9 +6,8 @@ enable-experimental-features: false
 # Java 1.21.8 still applies its normal held-use movement slowdown while the animation is active.
 # Requires enable-experimental-features: true.
 enable-sword-blocking-animation: false
-# Forward arbitrary Java C2S custom payloads as a bounded ScriptMessage envelope. The Bedrock
-# backend exposes it as a Java-only event and decides which channels, if any, to consume.
-java-custom-payload-forwarding:
+# Bridge arbitrary Java custom payloads and bounded Bedrock ScriptMessages in both directions.
+java-custom-payload-bridge:
   enabled: false
   max-payload-bytes: 8192
   max-channel-bytes: 128

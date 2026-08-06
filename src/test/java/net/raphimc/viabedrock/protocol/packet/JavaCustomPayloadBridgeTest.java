@@ -10,31 +10,31 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-class JavaCustomPayloadForwarderTest {
+class JavaCustomPayloadBridgeTest {
 
     @Test
-    void preservesChannelAndBinaryPayloadInTheVersionedEnvelope() {
-        final byte[] channel = "minecraft:storemod".getBytes(StandardCharsets.UTF_8);
+    void preservesChannelAndBinaryPayloadInBothDirections() {
+        final byte[] channel = "easecation:launcher_commerce".getBytes(StandardCharsets.UTF_8);
         final byte[] payload = new byte[]{0, 1, -1, 42};
 
-        final String encoded = JavaCustomPayloadForwarder.encodeEnvelope(channel, payload);
-        final JavaCustomPayloadForwarder.DecodedEnvelope decoded = JavaCustomPayloadForwarder.decodeEnvelope(encoded);
+        final String encoded = JavaCustomPayloadBridge.encodeEnvelope(channel, payload);
+        final JavaCustomPayloadBridge.DecodedPayload decoded = JavaCustomPayloadBridge.decodeEnvelope(encoded);
 
-        assertEquals("minecraft:storemod", decoded.channel());
+        assertEquals("easecation:launcher_commerce", decoded.channel());
         assertArrayEquals(payload, decoded.payload());
     }
 
     @Test
-    void rejectsMalformedEnvelopeBeforeItCanReachTheBackend() {
+    void rejectsMalformedEnvelopeBeforeItCanReachEitherEndpoint() {
         assertThrows(IllegalArgumentException.class,
-                () -> JavaCustomPayloadForwarder.decodeEnvelope("AA"));
+                () -> JavaCustomPayloadBridge.decodeEnvelope("AA"));
     }
 
     @Test
     void copiesPayloadWithoutAdvancingTheOriginalPacketBuffer() {
         final ByteBuf input = Unpooled.wrappedBuffer(new byte[]{7, 8, 9});
 
-        final byte[] copied = JavaCustomPayloadForwarder.copyRemainingPayload(input);
+        final byte[] copied = JavaCustomPayloadBridge.copyRemainingPayload(input);
 
         assertArrayEquals(new byte[]{7, 8, 9}, copied);
         assertEquals(0, input.readerIndex());
