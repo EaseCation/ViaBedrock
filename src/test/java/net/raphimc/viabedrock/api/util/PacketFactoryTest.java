@@ -20,8 +20,11 @@ package net.raphimc.viabedrock.api.util;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.connection.UserConnectionImpl;
+import com.viaversion.viaversion.libs.mcstructs.text.TextComponent;
 import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
+import com.viaversion.viaversion.protocols.base.ClientboundLoginPackets;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
+import com.viaversion.viaversion.protocols.v1_21_7to1_21_9.packet.ClientboundConfigurationPackets1_21_9;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.PlayerInfoUpdateAction;
@@ -29,6 +32,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -74,6 +78,52 @@ class PacketFactoryTest {
         assertEquals(87, wrapper.get(Types.VAR_INT, 1));
         assertEquals(secondUuid, wrapper.get(Types.UUID, 1));
         assertEquals(-1, wrapper.get(Types.VAR_INT, 2));
+    }
+
+    @Test
+    void writesStructuredDisconnectComponentsForConfigurationAndPlay() {
+        final TextComponent styledAndNested = TextComponent.of("root")
+                .styled(style -> style.setBold(true).setColor(0x12AB34))
+                .append(TextComponent.translation("disconnect.genericReason", TextComponent.of("nested")));
+        final List<TextComponent> reasons = List.of(
+                TextComponent.of("Plain text"),
+                TextComponent.of("中文和 Unicode 🙂"),
+                TextComponent.translation("multiplayer.disconnect.server_shutdown"),
+                styledAndNested,
+                TextComponent.empty(),
+                TextComponent.of("较长原因🙂".repeat(1000))
+        );
+
+        for (TextComponent reason : reasons) {
+            final PacketWrapper configuration = new PacketWrapperImpl(
+                    ClientboundConfigurationPackets1_21_9.DISCONNECT, Unpooled.EMPTY_BUFFER, this.user);
+            PacketFactory.writeJavaDisconnectComponent(configuration, reason);
+            assertEquals(TextUtil.textComponentToNbt(reason), configuration.get(Types.TAG, 0));
+
+            final PacketWrapper play = new PacketWrapperImpl(
+                    ClientboundPackets26_1.DISCONNECT, Unpooled.EMPTY_BUFFER, this.user);
+            PacketFactory.writeJavaDisconnectComponent(play, reason);
+            assertEquals(TextUtil.textComponentToNbt(reason), play.get(Types.TAG, 0));
+        }
+    }
+
+    @Test
+    void normalizesMissingAndBedrockDisconnectReasonsBeforeTargetEncoding() {
+        final PacketWrapper missingReason = new PacketWrapperImpl(
+                ClientboundConfigurationPackets1_21_9.DISCONNECT, Unpooled.EMPTY_BUFFER, this.user);
+        PacketFactory.writeJavaDisconnect(missingReason, null);
+        assertEquals(TextUtil.stringToNbt(""), missingReason.get(Types.TAG, 0));
+
+        final String bedrockReason = "§c来自 Bedrock 的断开原因 🙂";
+        final PacketWrapper configuration = new PacketWrapperImpl(
+                ClientboundConfigurationPackets1_21_9.DISCONNECT, Unpooled.EMPTY_BUFFER, this.user);
+        PacketFactory.writeJavaDisconnect(configuration, bedrockReason);
+        assertEquals(TextUtil.stringToNbt(bedrockReason), configuration.get(Types.TAG, 0));
+
+        final PacketWrapper login = new PacketWrapperImpl(
+                ClientboundLoginPackets.LOGIN_DISCONNECT, Unpooled.EMPTY_BUFFER, this.user);
+        PacketFactory.writeJavaDisconnect(login, bedrockReason);
+        assertEquals(TextUtil.stringToGson(bedrockReason), login.get(Types.COMPONENT, 0));
     }
 
 }

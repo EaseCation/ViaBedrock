@@ -147,15 +147,7 @@ public class JoinPackets {
                         // resets the cycle and accidentally removes the negotiation deadline.
                         wrapper.user().get(ClientChannelDiscoveryStorage.class).beginConfigurationCycle();
                         wrapper.user().get(ClientLightStorage.class).beginConfigurationCycle();
-                        final ProtocolInfo protocolInfo = wrapper.user().getProtocolInfo();
-                        // Bedrock can immediately follow LoginSuccess with resource-pack packets, before the Java
-                        // client sends LOGIN_ACKNOWLEDGED. Treat those packets as configuration packets instead of
-                        // synthesizing a second LoginSuccess in BedrockProtocol.
-                        protocolInfo.setServerState(State.CONFIGURATION);
-                        wrapper.setPacketType(ClientboundLoginPackets.LOGIN_FINISHED);
-                        wrapper.write(Types.UUID, protocolInfo.getUuid()); // uuid
-                        wrapper.write(Types.STRING, protocolInfo.getUsername()); // username
-                        wrapper.write(Types.PROFILE_PROPERTY_ARRAY, new GameProfile.Property[0]); // properties
+                        enterInitialConfiguration(wrapper);
 
                         ClientboundBaseProtocol1_7.onLoginSuccess(wrapper.user());
                         sendClientCacheStatus(wrapper.user());
@@ -796,6 +788,18 @@ public class JoinPackets {
 
     static String formatServerBrand(final String serverEngine, final String vanillaVersion) {
         return "Bedrock" + (!serverEngine.isEmpty() ? " @" + serverEngine : "") + " v: " + vanillaVersion;
+    }
+
+    static void enterInitialConfiguration(final PacketWrapper wrapper) {
+        final ProtocolInfo protocolInfo = wrapper.user().getProtocolInfo();
+        // Java changes its inbound decoder as soon as LOGIN_FINISHED is handled. Advance the ViaBedrock
+        // server-side state before exposing that packet so a following Bedrock pre-play packet cannot
+        // synthesize a second login profile while the Java client is already in CONFIGURATION.
+        protocolInfo.setServerState(State.CONFIGURATION);
+        wrapper.setPacketType(ClientboundLoginPackets.LOGIN_FINISHED);
+        wrapper.write(Types.UUID, protocolInfo.getUuid()); // uuid
+        wrapper.write(Types.STRING, protocolInfo.getUsername()); // username
+        wrapper.write(Types.PROFILE_PROPERTY_ARRAY, new GameProfile.Property[0]); // properties
     }
 
     static void writeEditorProjectDisconnect(final PacketWrapper disconnect, final String reason) {

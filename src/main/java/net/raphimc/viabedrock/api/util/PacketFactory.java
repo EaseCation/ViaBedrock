@@ -24,7 +24,7 @@ import com.viaversion.viaversion.api.minecraft.blockentity.BlockEntity;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
-import com.viaversion.viaversion.libs.gson.JsonNull;
+import com.viaversion.viaversion.libs.mcstructs.text.TextComponent;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import net.raphimc.viabedrock.api.model.container.Container;
 import net.raphimc.viabedrock.api.model.entity.Entity;
@@ -162,9 +162,14 @@ public class PacketFactory {
     }
 
     public static void writeJavaDisconnect(final PacketWrapper wrapper, final String reason) {
+        writeJavaDisconnectComponent(wrapper, reason != null ? TextUtil.stringToTextComponent(reason) : TextComponent.empty());
+    }
+
+    public static void writeJavaDisconnectComponent(final PacketWrapper wrapper, final TextComponent reason) {
+        final TextComponent safeReason = reason != null ? reason : TextComponent.empty();
         switch (wrapper.getPacketType().state()) {
-            case LOGIN -> wrapper.write(Types.COMPONENT, reason != null ? TextUtil.stringToGson(reason) : JsonNull.INSTANCE);
-            case CONFIGURATION, PLAY -> wrapper.write(Types.TAG, reason != null ? TextUtil.stringToNbt(reason) : null);
+            case LOGIN -> wrapper.write(Types.COMPONENT, TextUtil.textComponentToGson(safeReason));
+            case CONFIGURATION, PLAY -> wrapper.write(Types.TAG, TextUtil.textComponentToNbt(safeReason));
             default -> throw new IllegalStateException("Unexpected state: " + wrapper.getPacketType().state());
         }
     }

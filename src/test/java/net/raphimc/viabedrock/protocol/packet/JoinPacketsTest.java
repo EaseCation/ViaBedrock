@@ -17,10 +17,15 @@
  */
 package net.raphimc.viabedrock.protocol.packet;
 
+import com.viaversion.viaversion.api.connection.ProtocolInfo;
+import com.viaversion.viaversion.api.protocol.ProtocolPipeline;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
+import com.viaversion.viaversion.api.protocol.packet.State;
+import com.viaversion.viaversion.api.protocol.version.ProtocolVersion;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.connection.UserConnectionImpl;
 import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
+import com.viaversion.viaversion.protocols.base.ClientboundLoginPackets;
 import com.viaversion.viaversion.protocols.v1_21_7to1_21_9.packet.ClientboundConfigurationPackets1_21_9;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -36,6 +41,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -72,6 +78,35 @@ class JoinPacketsTest {
 
             assertEquals(ClientboundConfigurationPackets1_21_9.DISCONNECT, disconnect.getPacketType());
             assertEquals(TextUtil.stringToNbt(reason), disconnect.get(Types.TAG, 0));
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void realLoginSuccessOwnsTheConfigurationTransitionBeforeTheProfileIsExposed() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        final MutableProtocolInfo protocolInfo = new MutableProtocolInfo();
+        protocolInfo.serverState = State.LOGIN;
+        protocolInfo.clientState = State.LOGIN;
+        protocolInfo.uuid = UUID.fromString("52000000-0000-0000-0000-000000000000");
+        protocolInfo.username = "fixture-player";
+        final UserConnectionImpl user = new UserConnectionImpl(channel) {
+            @Override
+            public ProtocolInfo getProtocolInfo() {
+                return protocolInfo;
+            }
+        };
+        final PacketWrapper loginSuccess = new PacketWrapperImpl(
+                ClientboundBedrockPackets.PLAY_STATUS, Unpooled.EMPTY_BUFFER, user);
+        try {
+            JoinPackets.enterInitialConfiguration(loginSuccess);
+
+            assertEquals(State.CONFIGURATION, protocolInfo.getServerState());
+            assertEquals(ClientboundLoginPackets.LOGIN_FINISHED, loginSuccess.getPacketType());
+            assertEquals(protocolInfo.uuid, loginSuccess.get(Types.UUID, 0));
+            assertEquals(protocolInfo.username, loginSuccess.get(Types.STRING, 0));
+            assertEquals(0, loginSuccess.get(Types.PROFILE_PROPERTY_ARRAY, 0).length);
         } finally {
             channel.finishAndReleaseAll();
         }
@@ -421,6 +456,97 @@ class JoinPacketsTest {
             String customBiomeName,
             int dimension,
             int remainingBytes) {
+    }
+
+    private static final class MutableProtocolInfo implements ProtocolInfo {
+        private State clientState = State.HANDSHAKE;
+        private State serverState = State.HANDSHAKE;
+        private ProtocolVersion protocolVersion = ProtocolVersion.v1_21_7;
+        private ProtocolVersion serverProtocolVersion = ProtocolVersion.unknown;
+        private String username;
+        private UUID uuid;
+        private ProtocolPipeline pipeline;
+        private boolean compressionEnabled;
+
+        @Override
+        public State getClientState() {
+            return this.clientState;
+        }
+
+        @Override
+        public State getServerState() {
+            return this.serverState;
+        }
+
+        @Override
+        public void setClientState(final State clientState) {
+            this.clientState = clientState;
+        }
+
+        @Override
+        public void setServerState(final State serverState) {
+            this.serverState = serverState;
+        }
+
+        @Override
+        public ProtocolVersion protocolVersion() {
+            return this.protocolVersion;
+        }
+
+        @Override
+        public void setProtocolVersion(final ProtocolVersion protocolVersion) {
+            this.protocolVersion = protocolVersion;
+        }
+
+        @Override
+        public ProtocolVersion serverProtocolVersion() {
+            return this.serverProtocolVersion;
+        }
+
+        @Override
+        public void setServerProtocolVersion(final ProtocolVersion protocolVersion) {
+            this.serverProtocolVersion = protocolVersion;
+        }
+
+        @Override
+        public String getUsername() {
+            return this.username;
+        }
+
+        @Override
+        public void setUsername(final String username) {
+            this.username = username;
+        }
+
+        @Override
+        public UUID getUuid() {
+            return this.uuid;
+        }
+
+        @Override
+        public void setUuid(final UUID uuid) {
+            this.uuid = uuid;
+        }
+
+        @Override
+        public boolean compressionEnabled() {
+            return this.compressionEnabled;
+        }
+
+        @Override
+        public void setCompressionEnabled(final boolean compressionEnabled) {
+            this.compressionEnabled = compressionEnabled;
+        }
+
+        @Override
+        public ProtocolPipeline getPipeline() {
+            return this.pipeline;
+        }
+
+        @Override
+        public void setPipeline(final ProtocolPipeline pipeline) {
+            this.pipeline = pipeline;
+        }
     }
 
 }
