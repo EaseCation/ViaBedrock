@@ -49,6 +49,7 @@ import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
 import net.raphimc.viabedrock.protocol.storage.PlayerListStorage;
+import net.raphimc.viabedrock.protocol.storage.SpectatorCameraTracker;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.util.UUID;
@@ -109,6 +110,7 @@ public class OtherPlayerPackets {
             wrapper.write(Types.VAR_INT, 0); // data
             wrapper.send(BedrockProtocol.class);
             wrapper.cancel();
+            wrapper.user().get(SpectatorCameraTracker.class).onJavaPlayerSpawned(entity);
 
             final PacketWrapper setEquipment = PacketWrapper.create(ClientboundPackets26_1.SET_EQUIPMENT, wrapper.user());
             setEquipment.write(Types.VAR_INT, entity.javaId()); // entity id

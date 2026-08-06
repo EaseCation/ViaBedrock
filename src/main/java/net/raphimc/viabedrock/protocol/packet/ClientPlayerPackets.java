@@ -101,19 +101,33 @@ public class ClientPlayerPackets {
 
     private static final PacketHandler CLIENT_PLAYER_GAME_MODE_INFO_UPDATE = wrapper -> {
         final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
+        final GameMode gameMode = wrapper.user().get(SpectatorCameraTracker.class).projectJavaGameMode(clientPlayer.javaGameMode());
 
         final PacketWrapper playerInfoUpdate = PacketWrapper.create(ClientboundPackets26_1.PLAYER_INFO_UPDATE, wrapper.user());
         playerInfoUpdate.write(Types.PROFILE_ACTIONS_ENUM1_21_4, BitSets.create(8, PlayerInfoUpdateAction.UPDATE_GAME_MODE)); // actions
         playerInfoUpdate.write(Types.VAR_INT, 1); // length
         playerInfoUpdate.write(Types.UUID, clientPlayer.javaUuid()); // uuid
-        playerInfoUpdate.write(Types.VAR_INT, clientPlayer.javaGameMode().ordinal()); // game mode
+        playerInfoUpdate.write(Types.VAR_INT, gameMode.ordinal()); // game mode
         playerInfoUpdate.send(BedrockProtocol.class);
     };
 
     private static final PacketHandler CLIENT_PLAYER_GAME_MODE_UPDATE = wrapper -> {
         final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
-        PacketFactory.sendJavaGameEvent(wrapper.user(), GameEventType.CHANGE_GAME_MODE, clientPlayer.javaGameMode().ordinal());
+        final GameMode gameMode = wrapper.user().get(SpectatorCameraTracker.class).projectJavaGameMode(clientPlayer.javaGameMode());
+        PacketFactory.sendJavaGameEvent(wrapper.user(), GameEventType.CHANGE_GAME_MODE, gameMode.ordinal());
     };
+
+    public static void sendJavaGameMode(final UserConnection user, final GameMode gameMode) {
+        final ClientPlayerEntity clientPlayer = user.get(EntityTracker.class).getClientPlayer();
+        final PacketWrapper playerInfoUpdate = PacketWrapper.create(ClientboundPackets26_1.PLAYER_INFO_UPDATE, user);
+        playerInfoUpdate.write(Types.PROFILE_ACTIONS_ENUM1_21_4, BitSets.create(8, PlayerInfoUpdateAction.UPDATE_GAME_MODE)); // actions
+        playerInfoUpdate.write(Types.VAR_INT, 1); // length
+        playerInfoUpdate.write(Types.UUID, clientPlayer.javaUuid()); // uuid
+        playerInfoUpdate.write(Types.VAR_INT, gameMode.ordinal()); // game mode
+        playerInfoUpdate.send(BedrockProtocol.class);
+
+        PacketFactory.sendJavaGameEvent(user, GameEventType.CHANGE_GAME_MODE, gameMode.ordinal());
+    }
 
     private static boolean isInstantBreak(final UserConnection user, final ChunkTracker chunkTracker, final BlockPosition position) {
         final int javaBlockStateId = chunkTracker.getJavaBlockState(position);
@@ -302,12 +316,14 @@ public class ClientPlayerPackets {
             wrapper.write(Types.PROFILE_ACTIONS_ENUM1_21_4, BitSets.create(8, PlayerInfoUpdateAction.UPDATE_GAME_MODE)); // actions
             wrapper.write(Types.VAR_INT, 1); // length
             wrapper.write(Types.UUID, playerListEntry.key()); // uuid
-            wrapper.write(Types.VAR_INT, GameTypeRewriter.getEffectiveGameMode(gameType, gameSession.getLevelGameType()).ordinal()); // game mode
-
-            if (playerListEntry.key().equals(clientPlayer.javaUuid())) {
+            final boolean clientPlayerUpdate = playerListEntry.key().equals(clientPlayer.javaUuid());
+            GameMode javaGameMode = GameTypeRewriter.getEffectiveGameMode(gameType, gameSession.getLevelGameType());
+            if (clientPlayerUpdate) {
                 clientPlayer.setGameType(gameType);
+                javaGameMode = wrapper.user().get(SpectatorCameraTracker.class).projectJavaGameMode(clientPlayer.javaGameMode());
                 CLIENT_PLAYER_GAME_MODE_UPDATE.handle(wrapper);
             }
+            wrapper.write(Types.VAR_INT, javaGameMode.ordinal()); // game mode
         });
         protocol.registerClientbound(ClientboundBedrockPackets.UPDATE_ADVENTURE_SETTINGS, null, wrapper -> {
             wrapper.cancel();
@@ -512,6 +528,11 @@ public class ClientPlayerPackets {
             wrapper.cancel();
             final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
             final Set<InputFlag> inputFlags = EnumUtil.getEnumSetFromBitmask(InputFlag.class, wrapper.read(Types.BYTE), InputFlag::ordinal); // input flags
+            final SpectatorCameraTracker spectatorCamera = wrapper.user().get(SpectatorCameraTracker.class);
+            if (spectatorCamera.handleShiftInput(inputFlags.contains(InputFlag.SHIFT))) {
+                inputFlags.remove(InputFlag.SHIFT);
+                clientPlayer.setSneaking(false);
+            }
             clientPlayer.setInputFlags(inputFlags);
         });
         protocol.registerServerbound(ServerboundPackets26_1.CLIENT_TICK_END, ServerboundBedrockPackets.PLAYER_AUTH_INPUT, wrapper -> {

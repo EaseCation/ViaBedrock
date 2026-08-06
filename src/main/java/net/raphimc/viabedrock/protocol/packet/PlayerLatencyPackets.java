@@ -27,10 +27,8 @@ import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
-import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 import net.raphimc.viabedrock.protocol.storage.PlayerListStorage;
-import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -46,35 +44,28 @@ public final class PlayerLatencyPackets {
     private PlayerLatencyPackets() {
     }
 
-    public static void register(final BedrockProtocol protocol) {
-        protocol.registerClientbound(ClientboundBedrockPackets.SCRIPT_MESSAGE, null, wrapper -> {
-            wrapper.cancel();
-            final String messageId = wrapper.read(BedrockTypes.STRING); // message id
-            final String payload = wrapper.read(BedrockTypes.STRING); // value
-            if (!MESSAGE_ID.equals(messageId)) return;
-
-            final Map<UUID, Integer> latencies;
-            try {
-                latencies = parseSnapshot(payload);
-            } catch (RuntimeException e) {
-                final PlayerListStorage playerList = wrapper.user().get(PlayerListStorage.class);
-                if (playerList.markInvalidLatencyPayloadLogged()) {
-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Ignoring invalid player latency snapshot");
-                }
-                return;
-            }
-
+    static void handle(final PacketWrapper wrapper, final String payload) {
+        final Map<UUID, Integer> latencies;
+        try {
+            latencies = parseSnapshot(payload);
+        } catch (RuntimeException e) {
             final PlayerListStorage playerList = wrapper.user().get(PlayerListStorage.class);
-            final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
-            final UUID localPlayerUuid = entityTracker.getClientPlayer() != null ? entityTracker.getClientPlayer().javaUuid() : null;
-            final Map<UUID, Integer> updates = playerList.replaceServerLatencies(latencies, localPlayerUuid);
-            if (updates.isEmpty() || wrapper.user().getProtocolInfo().getServerState() != State.PLAY) return;
+            if (playerList.markInvalidLatencyPayloadLogged()) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Ignoring invalid player latency snapshot");
+            }
+            return;
+        }
 
-            final PacketWrapper playerInfoUpdate = PacketFactory.createJavaPlayerLatencyUpdate(wrapper.user(), updates);
-            playerInfoUpdate.send(BedrockProtocol.class);
-            playerList.markLatenciesPublished(updates);
-            ExperimentalFeatures.dispatchPlayerLatenciesUpdated(wrapper.user(), updates);
-        });
+        final PlayerListStorage playerList = wrapper.user().get(PlayerListStorage.class);
+        final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
+        final UUID localPlayerUuid = entityTracker.getClientPlayer() != null ? entityTracker.getClientPlayer().javaUuid() : null;
+        final Map<UUID, Integer> updates = playerList.replaceServerLatencies(latencies, localPlayerUuid);
+        if (updates.isEmpty() || wrapper.user().getProtocolInfo().getServerState() != State.PLAY) return;
+
+        final PacketWrapper playerInfoUpdate = PacketFactory.createJavaPlayerLatencyUpdate(wrapper.user(), updates);
+        playerInfoUpdate.send(BedrockProtocol.class);
+        playerList.markLatenciesPublished(updates);
+        ExperimentalFeatures.dispatchPlayerLatenciesUpdated(wrapper.user(), updates);
     }
 
     static Map<UUID, Integer> parseSnapshot(final String payload) {

@@ -19,6 +19,7 @@ import net.raphimc.viabedrock.protocol.model.Position3f;
 import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
+import net.raphimc.viabedrock.protocol.storage.SpectatorCameraTracker;
 
 import java.util.Random;
 import java.util.concurrent.ThreadLocalRandom;
@@ -45,8 +46,13 @@ public final class SoundPacketProjection {
                 ? cameraAudio.bedrockListenerPosition(playerPosition) : playerPosition;
         final ChannelStorage channels = user.get(ChannelStorage.class);
         final boolean cameraRenderedByJava = channels != null && channels.hasChannel(CameraInterface.CONFIRM_CHANNEL);
-        final Position3f javaListenerPosition = playerPosition != null && cameraAudio != null
+        final Position3f instructionCameraListenerPosition = playerPosition != null && cameraAudio != null
                 ? cameraAudio.javaListenerPosition(playerPosition, cameraRenderedByJava) : playerPosition;
+        final SpectatorCameraTracker spectatorCamera = user.get(SpectatorCameraTracker.class);
+        final Position3f entityCameraListenerPosition = spectatorCamera != null
+                ? spectatorCamera.javaListenerPosition() : null;
+        final Position3f javaListenerPosition = entityCameraListenerPosition != null
+                ? entityCameraListenerPosition : instructionCameraListenerPosition;
         return project(definition, user.getProtocolInfo().protocolVersion(), javaIdentifier, sourcePosition,
                 eventVolume, eventPitch, global, generatedCustomSound, seed,
                 bedrockListenerPosition, javaListenerPosition);

@@ -109,7 +109,7 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
         HudPackets.register(this);
         InventoryPackets.register(this);
         WorldEffectPackets.register(this);
-        PlayerLatencyPackets.register(this);
+        ScriptMessagePackets.register(this);
         UnhandledPackets.register(this);
 
         if (ViaBedrock.getConfig().shouldEnableExperimentalFeatures()) {
@@ -171,6 +171,7 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
         user.put(new InventoryBootstrapQueue(user));
         user.put(new InventoryTracker(user));
         user.put(new PlayerArmorHudTracker(user));
+        user.put(new SpectatorCameraTracker(user));
 
         if (ViaBedrock.getConfig().shouldEnableExperimentalFeatures()) {
             ExperimentalFeatures.registerStorages(user);

@@ -187,6 +187,7 @@ public class WorldPackets {
             wrapper.user().put(chunkTracker);
             final EntityTracker oldEntityTracker = wrapper.user().get(EntityTracker.class);
             final ClientPlayerEntity clientPlayer = oldEntityTracker.getClientPlayer();
+            wrapper.user().get(SpectatorCameraTracker.class).onDimensionChange();
             oldEntityTracker.prepareForRespawn();
             final EntityTracker newEntityTracker = new EntityTracker(wrapper.user());
             newEntityTracker.addEntity(clientPlayer);

@@ -158,6 +158,10 @@ public class EntityTracker extends StoredObject {
             throw new IllegalArgumentException("Cannot remove client player entity");
         }
 
+        final SpectatorCameraTracker spectatorCamera = this.user().get(SpectatorCameraTracker.class);
+        if (spectatorCamera != null) {
+            spectatorCamera.onEntityRemoved(entity);
+        }
         ExperimentalFeatures.dispatchEntityRemoved(this.user(), entity);
 
         this.entities.remove(entity.uniqueId());
