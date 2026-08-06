@@ -37,6 +37,42 @@ public interface ViaBedrockConfig extends Config {
     boolean shouldEnableSwordBlockingAnimation();
 
     /**
+     * @return If true, forwards Java Edition custom payloads to the Bedrock backend using the
+     * {@code easecation:java_custom_payload_v1} ScriptMessage envelope.
+     */
+    default boolean shouldForwardJavaCustomPayloads() {
+        return false;
+    }
+
+    /**
+     * @return Maximum accepted Java custom-payload body size in bytes.
+     */
+    default int getJavaCustomPayloadMaxPayloadBytes() {
+        return 8 * 1024;
+    }
+
+    /**
+     * @return Maximum accepted UTF-8 custom-payload channel size in bytes.
+     */
+    default int getJavaCustomPayloadMaxChannelBytes() {
+        return 128;
+    }
+
+    /**
+     * @return Maximum forwarded custom payload messages per connection in a fixed one-minute window.
+     */
+    default int getJavaCustomPayloadMaxMessagesPerMinute() {
+        return 120;
+    }
+
+    /**
+     * @return Maximum forwarded custom-payload bytes per connection in a fixed one-minute window.
+     */
+    default int getJavaCustomPayloadMaxBytesPerMinute() {
+        return 256 * 1024;
+    }
+
+    /**
      * @return The blob cache mode to use.
      */
     BlobCacheMode getBlobCacheMode();

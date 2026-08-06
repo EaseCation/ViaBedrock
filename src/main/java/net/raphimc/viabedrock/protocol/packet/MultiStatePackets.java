@@ -161,6 +161,7 @@ public class MultiStatePackets {
     public static final PacketHandler CUSTOM_PAYLOAD_HANDLER = wrapper -> {
         wrapper.cancel();
         final String channel = Key.namespaced(wrapper.read(Types.STRING)); // channel
+        JavaCustomPayloadForwarder.forward(channel, wrapper);
         if (channel.equals("minecraft:register")) {
             final List<String> channels = Arrays.asList(new String(wrapper.read(Types.SERVERBOUND_CUSTOM_PAYLOAD_DATA), StandardCharsets.UTF_8).split("\0"));
             wrapper.user().get(ClientChannelDiscoveryStorage.class).markRegistrationReceived();
