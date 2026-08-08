@@ -206,9 +206,7 @@ public class ClientPlayerPackets {
                         clientPlayer.setAbilities(clientPlayer.abilities()); // Java client always resets abilities on respawn. Resend them
                         chunkTracker.resetJavaChunkLoading();
                         clientPlayer.setDimensionChangeInfo(null);
-                        if (gameRulesStorage.getGameRule("keepInventory")) {
-                            PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getInventoryContainer()); // Java client always resets inventory on respawn. Resend it
-                        }
+                        PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getInventoryContainer()); // Java client always resets inventory on respawn. Resend it
                         inventoryTracker.getInventoryContainer().sendSelectedHotbarSlotToClient(); // Java client always resets selected hotbar slot on respawn. Resend it
                     }
                     wrapper.cancel();
