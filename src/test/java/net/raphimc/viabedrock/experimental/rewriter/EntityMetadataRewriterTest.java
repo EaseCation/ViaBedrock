@@ -91,6 +91,16 @@ class EntityMetadataRewriterTest {
     void keepsJavaGravityEnabledForDroppedItemsWithoutBedrockGravityFlag() {
         assertFalse(EntityMetadataRewriter.noGravity(
                 EntityTypes1_21_11.ITEM, EnumSet.noneOf(ActorFlags.class)));
+        assertFalse(EntityMetadataRewriter.noGravity(
+                EntityTypes1_21_11.ITEM, EnumSet.of(ActorFlags.HAS_GRAVITY)));
+    }
+
+    @Test
+    void disablesJavaGravityForImmobileDroppedItems() {
+        assertTrue(EntityMetadataRewriter.noGravity(
+                EntityTypes1_21_11.ITEM, EnumSet.of(ActorFlags.NOAI)));
+        assertTrue(EntityMetadataRewriter.noGravity(
+                EntityTypes1_21_11.ITEM, EnumSet.of(ActorFlags.NOAI, ActorFlags.HAS_GRAVITY)));
     }
 
     @Test

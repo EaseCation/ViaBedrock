@@ -839,7 +839,9 @@ public class EntityMetadataRewriter {
 
     static boolean noGravity(final EntityTypes1_21_11 type, final Set<ActorFlags> bedrockFlags) {
         // Bedrock servers can omit HAS_GRAVITY for dropped items while still simulating item gravity.
-        return !type.is(EntityTypes1_21_11.ITEM) && !bedrockFlags.contains(ActorFlags.HAS_GRAVITY);
+        return type.is(EntityTypes1_21_11.ITEM)
+                ? bedrockFlags.contains(ActorFlags.NOAI)
+                : !bedrockFlags.contains(ActorFlags.HAS_GRAVITY);
     }
 
     static byte livingFlags(final Set<ActorFlags> bedrockFlags) {
