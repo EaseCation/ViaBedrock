@@ -165,15 +165,27 @@ public class LivingEntity extends Entity {
 
     protected boolean translateAttribute(final EntityAttribute attribute, final PacketWrapper javaAttributes, final AtomicInteger attributeCount, final List<EntityData> javaEntityData) {
         return switch (attribute.name()) {
-            case "minecraft:attack_damage", "minecraft:knockback_resistance", "minecraft:movement" -> {
+            case "minecraft:attack_damage", "minecraft:knockback_resistance" -> {
                 javaAttributes.write(Types.VAR_INT, BedrockProtocol.MAPPINGS.getJavaEntityAttributes().get(switch (attribute.name()) {
                     case "minecraft:attack_damage" -> Attributes.ATTACK_DAMAGE;
                     case "minecraft:knockback_resistance" -> Attributes.KNOCKBACK_RESISTANCE;
-                    case "minecraft:movement" -> Attributes.MOVEMENT_SPEED;
                     default -> throw new IllegalStateException("Unhandled entity attribute: " + attribute.name());
                 })); // attribute id
                 javaAttributes.write(Types.DOUBLE, (double) attribute.computeClampedValue()); // base value
                 javaAttributes.write(Types.VAR_INT, 0); // modifier count
+                attributeCount.incrementAndGet();
+                yield true;
+            }
+            case "minecraft:movement" -> {
+                final JavaMovementAttribute movement = javaMovementAttribute(attribute);
+                javaAttributes.write(Types.VAR_INT, BedrockProtocol.MAPPINGS.getJavaEntityAttributes().get(Attributes.MOVEMENT_SPEED)); // attribute id
+                javaAttributes.write(Types.DOUBLE, (double) movement.baseValue()); // base value
+                javaAttributes.write(Types.VAR_INT, movement.sprinting() ? 1 : 0); // modifier count
+                if (movement.sprinting()) {
+                    javaAttributes.write(Types.STRING, "minecraft:sprinting"); // modifier id
+                    javaAttributes.write(Types.DOUBLE, 0.3D); // amount
+                    javaAttributes.write(Types.BYTE, (byte) 2); // add multiplied total
+                }
                 attributeCount.incrementAndGet();
                 yield true;
             }
@@ -189,6 +201,33 @@ public class LivingEntity extends Entity {
             case "minecraft:lava_movement", "minecraft:underwater_movement" -> true; // Ignore for now because Java Edition doesn't have these attributes
             default -> false;
         };
+    }
+
+    static JavaMovementAttribute javaMovementAttribute(final EntityAttribute attribute) {
+        float baseValue = attribute.computeClampedValue();
+        boolean sprinting = false;
+        for (EntityAttribute.Modifier modifier : attribute.modifiers()) {
+            if (!isSprintingModifier(modifier)) {
+                continue;
+            }
+
+            final float multiplier = 1F + modifier.amount();
+            if (Float.isFinite(multiplier) && multiplier > 0F) {
+                baseValue /= multiplier;
+                sprinting = true;
+            }
+        }
+        return new JavaMovementAttribute(baseValue, sprinting);
+    }
+
+    static boolean isSprintingModifier(final EntityAttribute.Modifier modifier) {
+        return modifier.operation() == net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.AttributeModifierOperation.OPERATION_MULTIPLY_TOTAL
+                && modifier.operand() == net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.AttributeOperands.OPERAND_CURRENT
+                && (modifier.id().equalsIgnoreCase("d208fc00-42aa-4aad-9276-d5446530de43")
+                || modifier.name().equalsIgnoreCase("Sprinting speed boost"));
+    }
+
+    record JavaMovementAttribute(float baseValue, boolean sprinting) {
     }
 
 }
