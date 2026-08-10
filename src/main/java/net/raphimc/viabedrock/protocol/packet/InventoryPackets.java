@@ -490,6 +490,12 @@ public class InventoryPackets {
                     final byte containerId = wrapper.get(Types.BYTE, 0);
                     final Container container = inventoryTracker.getContainerServerbound(containerId);
                     if (container == null) {
+                        // Java's player inventory is not opened by a server container packet. Nukkit uses
+                        // container -1 to return its cursor item to the inventory and clear the UI state.
+                        if (containerId == 0 && !inventoryTracker.isContainerOpen()) {
+                            wrapper.set(Types.BYTE, 0, (byte) -1);
+                            return;
+                        }
                         wrapper.cancel();
                         return;
                     }
