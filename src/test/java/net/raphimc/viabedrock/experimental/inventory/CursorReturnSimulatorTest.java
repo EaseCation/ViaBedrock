@@ -108,6 +108,22 @@ class CursorReturnSimulatorTest {
         assertFalse(this.tracker.getHudContainer().getItem(0).isEmpty());
     }
 
+    @Test
+    void clearsOnlyThePlayerCraftingGridAndOutputOnClose() {
+        for (int slot = 28; slot <= 32; slot++) {
+            this.tracker.getHudContainer().setItemSilent(slot, item(1));
+        }
+        this.tracker.getHudContainer().setItemSilent(50, item(1));
+
+        ClientAuthInventoryModule.clearPlayerCraftingGrid(this.tracker);
+
+        for (int slot = 28; slot <= 31; slot++) {
+            assertTrue(this.tracker.getHudContainer().getItem(slot).isEmpty());
+        }
+        assertTrue(this.tracker.getHudContainer().getItem(50).isEmpty());
+        assertFalse(this.tracker.getHudContainer().getItem(32).isEmpty());
+    }
+
     private List<InventoryActionData> simulate(final int limit) {
         return ClickSimulator.simulateCursorReturn(this.tracker, ignored -> limit);
     }

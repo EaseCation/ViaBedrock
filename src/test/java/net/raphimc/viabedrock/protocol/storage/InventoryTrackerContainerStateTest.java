@@ -46,12 +46,13 @@ class InventoryTrackerContainerStateTest {
     private final EmbeddedChannel channel = new EmbeddedChannel();
     private final UserConnectionImpl user = new UserConnectionImpl(this.channel);
     private final RecordingClosePacketSink packets = new RecordingClosePacketSink();
+    private final RecordingClosePreparation closePreparation = new RecordingClosePreparation();
     private InventoryTracker tracker;
     private Container container;
 
     @BeforeEach
     void setUp() {
-        this.tracker = new InventoryTracker(this.user, this.packets);
+        this.tracker = new InventoryTracker(this.user, this.packets, this.closePreparation);
         this.container = new ChestContainer(this.user, (byte) 7, new StringComponent("Chest"), null, 27);
     }
 
@@ -70,6 +71,7 @@ class InventoryTrackerContainerStateTest {
         assertTrue(this.tracker.getHudContainer().getItem(0).isEmpty());
         assertEquals(List.of(new BedrockClose((byte) 7, ContainerType.NONE)), this.packets.bedrockCloses);
         assertEquals(List.of(), this.packets.javaCloses);
+        assertEquals(1, this.closePreparation.calls);
 
         assertNull(this.tracker.acceptServerClose((byte) 7, ContainerType.CONTAINER));
         assertEquals(1, this.packets.bedrockCloses.size());
@@ -98,11 +100,13 @@ class InventoryTrackerContainerStateTest {
         assertEquals(CLOSED, this.tracker.getContainerState());
         assertEquals(List.of(), this.packets.javaCloses);
         assertEquals(List.of(), this.packets.bedrockCloses);
+        assertEquals(0, this.closePreparation.calls);
     }
 
     @Test
     void directDimensionChangeClosesBedrockContainerOnce() {
         this.openContainer();
+        this.putItemOnCursor();
 
         this.tracker.closeForDimensionChange();
         this.tracker.closeForDimensionChange();
@@ -110,6 +114,7 @@ class InventoryTrackerContainerStateTest {
         assertEquals(CLOSED, this.tracker.getContainerState());
         assertEquals(List.of(), this.packets.javaCloses);
         assertEquals(List.of(new BedrockClose((byte) 7, ContainerType.NONE)), this.packets.bedrockCloses);
+        assertEquals(1, this.closePreparation.calls);
     }
 
     @Test
@@ -123,16 +128,19 @@ class InventoryTrackerContainerStateTest {
         assertEquals(CLOSED, this.tracker.getContainerState());
         assertEquals(List.of(), this.packets.javaCloses);
         assertEquals(List.of(), this.packets.bedrockCloses);
+        assertEquals(0, this.closePreparation.calls);
     }
 
     @Test
     void forcedCloseSendsEachPacketOnceAndConsumesLateConfirmation() {
         this.openContainer();
+        this.putItemOnCursor();
 
         assertTrue(this.tracker.forceCloseCurrentContainer());
         assertEquals(CLOSE_PENDING, this.tracker.getContainerState());
         assertEquals(List.of(7), this.packets.javaCloses);
         assertEquals(List.of(new BedrockClose((byte) 7, ContainerType.NONE)), this.packets.bedrockCloses);
+        assertEquals(1, this.closePreparation.calls);
 
         assertSame(this.container, this.tracker.acceptClientCloseConfirmation((byte) 7));
         assertNull(this.tracker.acceptClientCloseConfirmation((byte) 7));
@@ -230,6 +238,18 @@ class InventoryTrackerContainerStateTest {
         @Override
         public void sendBedrockClose(final UserConnection user, final byte containerId, final ContainerType containerType) {
             this.bedrockCloses.add(new BedrockClose(containerId, containerType));
+        }
+    }
+
+    private final class RecordingClosePreparation implements InventoryTracker.ContainerClosePreparation {
+
+        private int calls;
+
+        @Override
+        public boolean returnCursor(final UserConnection user) {
+            this.calls++;
+            InventoryTrackerContainerStateTest.this.tracker.getHudContainer().setItemSilent(0, BedrockItem.empty());
+            return true;
         }
     }
 

@@ -31,6 +31,7 @@ import net.raphimc.viabedrock.api.model.container.player.HudContainer;
 import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
 import net.raphimc.viabedrock.api.model.container.player.OffhandContainer;
 import net.raphimc.viabedrock.api.util.PacketFactory;
+import net.raphimc.viabedrock.experimental.inventory.ClientAuthInventoryModule;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
@@ -68,6 +69,12 @@ public class InventoryTracker extends StoredObject {
 
     }
 
+    interface ContainerClosePreparation {
+
+        boolean returnCursor(UserConnection user);
+
+    }
+
     private static final ContainerClosePacketSink PACKET_FACTORY_CLOSE_SINK = new ContainerClosePacketSink() {
         @Override
         public void sendJavaClose(final UserConnection user, final int containerId) {
@@ -79,6 +86,7 @@ public class InventoryTracker extends StoredObject {
             PacketFactory.sendBedrockContainerClose(user, containerId, containerType);
         }
     };
+    private static final ContainerClosePreparation CLIENT_AUTH_CLOSE_PREPARATION = ClientAuthInventoryModule::returnCursorBeforeClose;
 
     private final InventoryContainer inventoryContainer = new InventoryContainer(this.user());
     private final OffhandContainer offhandContainer = new OffhandContainer(this.user());
@@ -86,6 +94,7 @@ public class InventoryTracker extends StoredObject {
     private final HudContainer hudContainer = new HudContainer(this.user());
     private final Map<FullContainerName, BundleContainer> dynamicContainerRegistry = new HashMap<>();
     private final ContainerClosePacketSink closePacketSink;
+    private final ContainerClosePreparation closePreparation;
 
     private Container currentContainer = null;
     private Container pendingCloseContainer = null;
@@ -93,12 +102,18 @@ public class InventoryTracker extends StoredObject {
     private NpcDialogueState currentNpcDialogue = null;
 
     public InventoryTracker(final UserConnection user) {
-        this(user, PACKET_FACTORY_CLOSE_SINK);
+        this(user, PACKET_FACTORY_CLOSE_SINK, CLIENT_AUTH_CLOSE_PREPARATION);
     }
 
     InventoryTracker(final UserConnection user, final ContainerClosePacketSink closePacketSink) {
+        this(user, closePacketSink, CLIENT_AUTH_CLOSE_PREPARATION);
+    }
+
+    InventoryTracker(final UserConnection user, final ContainerClosePacketSink closePacketSink,
+                     final ContainerClosePreparation closePreparation) {
         super(user);
         this.closePacketSink = closePacketSink;
+        this.closePreparation = closePreparation;
     }
 
     public Container getContainerClientbound(final byte containerId, final FullContainerName containerName, final BedrockItem storageItem) {
@@ -149,6 +164,9 @@ public class InventoryTracker extends StoredObject {
         if (container == null || container.containerId() != containerId || container.type() != containerType) {
             return null;
         }
+        if (!this.returnCursorBeforeClose()) {
+            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to return cursor before server-initiated container close");
+        }
         this.closePacketSink.sendBedrockClose(this.user(), container.containerId(), ContainerType.NONE);
         this.currentContainer = null;
         this.pendingCloseContainer = null;
@@ -179,6 +197,9 @@ public class InventoryTracker extends StoredObject {
     }
 
     public void closeForDimensionChange() {
+        if (!this.returnCursorBeforeClose()) {
+            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to return cursor before dimension change");
+        }
         if (this.currentContainer != null) {
             this.closePacketSink.sendBedrockClose(this.user(), this.currentContainer.containerId(), ContainerType.NONE);
         }
@@ -189,6 +210,10 @@ public class InventoryTracker extends StoredObject {
 
     private void clearCursorAfterContainerClose() {
         this.hudContainer.setItemSilent(0, BedrockItem.empty());
+    }
+
+    private boolean returnCursorBeforeClose() {
+        return this.hudContainer.getItem(0).isEmpty() || this.closePreparation.returnCursor(this.user());
     }
 
     public boolean clearCursorIfContainerClosed() {
@@ -317,6 +342,9 @@ public class InventoryTracker extends StoredObject {
 
     boolean forceCloseCurrentContainer() {
         final Container container = this.currentContainer;
+        if (container == null || !this.returnCursorBeforeClose()) {
+            return false;
+        }
         if (!this.beginClientClose(container)) {
             return false;
         }

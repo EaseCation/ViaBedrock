@@ -88,6 +88,7 @@ public class ClientAuthInventoryModule implements FeatureModule {
             // discarded so it cannot be restored by the next full inventory sync.
             if (tracker.clearCursorIfContainerClosed()) {
                 sendJavaCursor(wrapper.user(), tracker);
+                clearPlayerCraftingGrid(tracker);
             }
             wrapper.user().get(DragState.class).reset();
             // The server (Nukkit) returns the crafting grid items to the inventory on close
@@ -371,6 +372,14 @@ public class ClientAuthInventoryModule implements FeatureModule {
         final PacketWrapper setCursor = PacketWrapper.create(ClientboundPackets26_1.SET_CURSOR_ITEM, user);
         setCursor.write(VersionedTypes.V26_1.item, javaCursor);
         setCursor.send(BedrockProtocol.class);
+    }
+
+    static void clearPlayerCraftingGrid(final InventoryTracker tracker) {
+        final Container hud = tracker.getHudContainer();
+        for (int slot = 28; slot <= 31; slot++) {
+            hud.setItemSilent(slot, BedrockItem.empty());
+        }
+        hud.setItemSilent(HUD_OUTPUT_SLOT, BedrockItem.empty());
     }
 
     /**
