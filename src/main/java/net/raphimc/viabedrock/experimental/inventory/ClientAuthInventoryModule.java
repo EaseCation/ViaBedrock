@@ -82,12 +82,6 @@ public class ClientAuthInventoryModule implements FeatureModule {
         ProtocolUtil.appendServerbound(protocol, ServerboundPackets26_1.CONTAINER_CLOSE, wrapper -> {
             final InventoryTracker tracker = wrapper.user().get(InventoryTracker.class);
             final Container pending = tracker.completePendingCloseWithoutConfirmation();
-            if (pending != null) {
-                // Run after the translated close has left the current pipeline. The first -1 clears
-                // Nukkit's stale lastOpenedWindowId; this second one returns and clears its cursor item.
-                wrapper.user().getChannel().eventLoop().execute(() ->
-                        PacketFactory.sendBedrockContainerClose(wrapper.user(), (byte) -1, ContainerType.NONE));
-            }
             // Java can open and close its player inventory without a matching Bedrock CONTAINER_OPEN.
             // In that case there is no pending container, but the predicted HUD cursor still has to be
             // discarded so it cannot be restored by the next full inventory sync.
@@ -233,6 +227,28 @@ public class ClientAuthInventoryModule implements FeatureModule {
         sendNormalTransaction(user, actions);
         applyMirrorUpdates(actions, tracker);
         PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
+        return true;
+    }
+
+    public static boolean returnCursorBeforeClose(final UserConnection user) {
+        if (user.get(GameSessionStorage.class).isInventoryServerAuthoritative()) {
+            return true;
+        }
+
+        final InventoryTracker tracker = user.get(InventoryTracker.class);
+        final List<InventoryActionData> actions = runOrRollback(
+                () -> ClickSimulator.simulateCursorReturn(
+                        tracker, JavaItemStackLimits.forTracker(tracker)),
+                error -> ViaBedrock.getPlatform().getLogger().log(Level.WARNING,
+                        "Failed to return the Java cursor before closing the Bedrock container", error));
+        if (actions == null || !BedrockItemLockPolicy.allows(actions)) {
+            return false;
+        }
+        if (!actions.isEmpty()) {
+            sendNormalTransaction(user, actions);
+            applyMirrorUpdates(actions, tracker);
+            sendJavaCursor(user, tracker);
+        }
         return true;
     }
 
@@ -389,6 +405,7 @@ public class ClientAuthInventoryModule implements FeatureModule {
         public List<Short> getDragSlots() {
             return new ArrayList<>(dragSlots);
         }
+
     }
 
 }

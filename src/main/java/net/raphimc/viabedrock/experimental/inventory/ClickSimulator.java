@@ -100,6 +100,57 @@ public class ClickSimulator {
         };
     }
 
+    static List<InventoryActionData> simulateCursorReturn(
+            final InventoryTracker tracker,
+            final JavaItemStackLimits.Resolver stackLimits) {
+        final BedrockItem cursor = SlotMapper.getCursorItem(tracker);
+        if (cursor.isEmpty()) return Collections.emptyList();
+
+        final int maxStackSize = stackLimits.maxStackSize(cursor);
+        if (maxStackSize <= 0 || cursor.amount() > maxStackSize) return null;
+
+        final List<InventoryActionData> actions = new ArrayList<>();
+        int remaining = cursor.amount();
+
+        // Bedrock/Nukkit addItem first merges existing stacks, then scans player slots from 0.
+        for (int slot = 0; slot < 36 && remaining > 0; slot++) {
+            final BedrockSlotRef ref = new BedrockSlotRef(
+                    ContainerID.CONTAINER_ID_INVENTORY.getValue(), slot, tracker.getInventoryContainer());
+            final BedrockItem target = ref.container().getItem(ref.slot());
+            if (target.isEmpty() || !canStackPredicted(target, cursor)) continue;
+            remaining = mergeCursorInto(actions, ref, cursor, remaining, maxStackSize);
+        }
+        for (int slot = 0; slot < 36 && remaining > 0; slot++) {
+            final BedrockSlotRef ref = new BedrockSlotRef(
+                    ContainerID.CONTAINER_ID_INVENTORY.getValue(), slot, tracker.getInventoryContainer());
+            if (!ref.container().getItem(ref.slot()).isEmpty()) continue;
+            remaining = mergeCursorInto(actions, ref, cursor, remaining, maxStackSize);
+        }
+
+        if (remaining > 0) {
+            final BedrockItem dropped = cursor.copy();
+            dropped.setAmount(remaining);
+            actions.add(worldDropAction(dropped));
+        }
+        actions.add(cursorAction(cursor, BedrockItem.empty()));
+        return actions;
+    }
+
+    private static int mergeCursorInto(final List<InventoryActionData> actions, final BedrockSlotRef ref,
+                                       final BedrockItem cursor, final int remaining, final int maxStackSize) {
+        final BedrockItem target = ref.container().getItem(ref.slot());
+        if (!target.isEmpty() && !canStackPredicted(target, cursor)) return remaining;
+
+        final int capacity = target.isEmpty() ? maxStackSize : maxStackSize - target.amount();
+        if (capacity <= 0) return remaining;
+
+        final int moved = Math.min(remaining, capacity);
+        final BedrockItem updated = target.isEmpty() ? cursor.copy() : target.copy();
+        updated.setAmount((target.isEmpty() ? 0 : target.amount()) + moved);
+        actions.add(slotAction(ref, target, updated));
+        return remaining - moved;
+    }
+
     // --- PICKUP (mode=0) ---
 
     private static List<InventoryActionData> simulatePickup(int javaContainerId, short javaSlot, byte button,

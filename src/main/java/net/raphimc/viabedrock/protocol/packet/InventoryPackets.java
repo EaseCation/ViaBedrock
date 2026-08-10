@@ -45,6 +45,7 @@ import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
 import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.api.util.TextUtil;
+import net.raphimc.viabedrock.experimental.inventory.ClientAuthInventoryModule;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
@@ -490,9 +491,13 @@ public class InventoryPackets {
                     final byte containerId = wrapper.get(Types.BYTE, 0);
                     final Container container = inventoryTracker.getContainerServerbound(containerId);
                     if (container == null) {
-                        // Java's player inventory is not opened by a server container packet. Nukkit uses
-                        // container -1 to return its cursor item to the inventory and clear the UI state.
+                        // Java's player inventory is not opened by a server container packet. Bedrock uses
+                        // container -1 to close that UI after its cursor transaction has completed.
                         if (containerId == 0 && !inventoryTracker.isContainerOpen()) {
+                            if (!ClientAuthInventoryModule.returnCursorBeforeClose(wrapper.user())) {
+                                wrapper.cancel();
+                                return;
+                            }
                             wrapper.set(Types.BYTE, 0, (byte) -1);
                             return;
                         }
@@ -500,15 +505,14 @@ public class InventoryPackets {
                         return;
                     }
 
-                    if (!inventoryTracker.beginClientClose(container)) {
+                    // A Bedrock client resolves its cursor with an inventory transaction before it
+                    // closes the screen. Java only sends CONTAINER_CLOSE, so provide that missing step.
+                    if (!ClientAuthInventoryModule.returnCursorBeforeClose(wrapper.user())
+                            || !inventoryTracker.beginClientClose(container)) {
                         wrapper.cancel();
                         return;
                     }
-
-                    // Nukkit consumes the first -1 close to clear its last opened window marker. Send the
-                    // tracked close first and reuse this packet for that first cursor cleanup close.
-                    PacketFactory.sendBedrockContainerClose(wrapper.user(), container.containerId(), ContainerType.NONE);
-                    wrapper.set(Types.BYTE, 0, (byte) -1);
+                    wrapper.set(Types.BYTE, 0, container.containerId());
                 });
             }
         });
