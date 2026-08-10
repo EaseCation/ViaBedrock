@@ -50,6 +50,7 @@ class CursorReturnSimulatorTest {
         assertEquals(0, actions.get(0).slot());
         assertEquals(1, actions.get(0).toItem().amount());
         assertTrue(actions.get(1).toItem().isEmpty());
+        assertEquals(List.of(36), ClientAuthInventoryModule.changedJavaInventorySlots(actions, this.tracker));
     }
 
     @Test
@@ -79,6 +80,7 @@ class CursorReturnSimulatorTest {
         assertEquals(64, actions.get(1).toItem().amount());
         assertEquals(1, actions.get(2).toItem().amount());
         assertTrue(actions.get(3).toItem().isEmpty());
+        assertEquals(List.of(9, 10, 36), ClientAuthInventoryModule.changedJavaInventorySlots(actions, this.tracker));
     }
 
     @Test
@@ -95,6 +97,7 @@ class CursorReturnSimulatorTest {
         assertEquals(InventorySourceType.WorldInteraction, actions.get(0).source().type());
         assertEquals(3, actions.get(0).toItem().amount());
         assertTrue(actions.get(1).toItem().isEmpty());
+        assertTrue(ClientAuthInventoryModule.changedJavaInventorySlots(actions, this.tracker).isEmpty());
     }
 
     @Test

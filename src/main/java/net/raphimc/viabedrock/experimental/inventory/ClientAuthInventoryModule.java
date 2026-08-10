@@ -54,6 +54,7 @@ import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -247,6 +248,7 @@ public class ClientAuthInventoryModule implements FeatureModule {
         if (!actions.isEmpty()) {
             sendNormalTransaction(user, actions);
             applyMirrorUpdates(actions, tracker);
+            sendChangedJavaInventorySlots(user, tracker, actions);
             sendJavaCursor(user, tracker);
         }
         return true;
@@ -273,6 +275,32 @@ public class ClientAuthInventoryModule implements FeatureModule {
                         new InventoryTransactionData.NormalTransactionData()
                 ));
         txPacket.sendToServer(BedrockProtocol.class);
+    }
+
+    private static void sendChangedJavaInventorySlots(final UserConnection user, final InventoryTracker tracker,
+                                                      final List<InventoryActionData> actions) {
+        final Container inventory = tracker.getInventoryContainer();
+        for (final int slot : changedJavaInventorySlots(actions, tracker)) {
+            final int bedrockSlot = slot >= 36 ? slot - 36 : slot;
+            final PacketWrapper setSlot = PacketWrapper.create(ClientboundPackets26_1.CONTAINER_SET_SLOT, user);
+            setSlot.write(Types.VAR_INT, ContainerID.CONTAINER_ID_INVENTORY.getValue());
+            setSlot.write(Types.VAR_INT, 0);
+            setSlot.write(Types.SHORT, (short) slot);
+            setSlot.write(VersionedTypes.V26_1.item, inventory.getJavaItem(bedrockSlot));
+            setSlot.send(BedrockProtocol.class);
+        }
+    }
+
+    static List<Integer> changedJavaInventorySlots(final List<InventoryActionData> actions,
+                                                   final InventoryTracker tracker) {
+        final LinkedHashSet<Integer> slots = new LinkedHashSet<>();
+        for (final InventoryActionData action : actions) {
+            if (action.source().type() == InventorySourceType.ContainerInventory
+                    && action.source().containerId() == ContainerID.CONTAINER_ID_INVENTORY.getValue()) {
+                slots.add(tracker.getInventoryContainer().javaSlot(action.slot()));
+            }
+        }
+        return List.copyOf(slots);
     }
 
     static <T> T runOrRollback(final Supplier<T> simulation, final Consumer<RuntimeException> failureHandler) {
