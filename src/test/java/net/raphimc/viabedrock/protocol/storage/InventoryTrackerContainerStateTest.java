@@ -24,6 +24,7 @@ import io.netty.channel.embedded.EmbeddedChannel;
 import net.raphimc.viabedrock.api.model.container.ChestContainer;
 import net.raphimc.viabedrock.api.model.container.Container;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
+import net.raphimc.viabedrock.protocol.model.BedrockItem;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -62,9 +63,11 @@ class InventoryTrackerContainerStateTest {
     @Test
     void openThenServerCloseAcknowledgesOnceAndCloses() {
         this.openContainer();
+        this.putItemOnCursor();
 
         assertSame(this.container, this.tracker.acceptServerClose((byte) 7, ContainerType.CONTAINER));
         assertEquals(CLOSED, this.tracker.getContainerState());
+        assertTrue(this.tracker.getHudContainer().getItem(0).isEmpty());
         assertEquals(List.of(new BedrockClose((byte) 7, ContainerType.NONE)), this.packets.bedrockCloses);
         assertEquals(List.of(), this.packets.javaCloses);
 
@@ -154,12 +157,14 @@ class InventoryTrackerContainerStateTest {
     @Test
     void clientAuthoritativeCompletionClearsPendingWithoutPackets() {
         this.openContainer();
+        this.putItemOnCursor();
         assertTrue(this.tracker.beginClientClose(this.container));
 
         assertSame(this.container, this.tracker.completePendingCloseWithoutConfirmation());
         assertNull(this.tracker.completePendingCloseWithoutConfirmation());
 
         assertEquals(CLOSED, this.tracker.getContainerState());
+        assertTrue(this.tracker.getHudContainer().getItem(0).isEmpty());
         assertEquals(List.of(), this.packets.javaCloses);
         assertEquals(List.of(), this.packets.bedrockCloses);
     }
@@ -167,18 +172,25 @@ class InventoryTrackerContainerStateTest {
     @Test
     void mismatchedCloseIdOrTypeDoesNotAdvanceState() {
         this.openContainer();
+        this.putItemOnCursor();
 
         assertNull(this.tracker.acceptServerClose((byte) 8, ContainerType.CONTAINER));
         assertNull(this.tracker.acceptServerClose((byte) 7, ContainerType.WORKBENCH));
 
         assertEquals(OPEN, this.tracker.getContainerState());
         assertSame(this.container, this.tracker.getCurrentContainer());
+        assertFalse(this.tracker.getHudContainer().getItem(0).isEmpty());
         assertEquals(List.of(), this.packets.bedrockCloses);
     }
 
     private void openContainer() {
         this.tracker.setCurrentContainer(this.container);
         assertEquals(OPEN, this.tracker.getContainerState());
+    }
+
+    private void putItemOnCursor() {
+        this.tracker.getHudContainer().setItemSilent(0, new BedrockItem(1));
+        assertFalse(this.tracker.getHudContainer().getItem(0).isEmpty());
     }
 
     private record BedrockClose(byte containerId, ContainerType type) {

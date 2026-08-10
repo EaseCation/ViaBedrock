@@ -152,6 +152,7 @@ public class InventoryTracker extends StoredObject {
         this.closePacketSink.sendBedrockClose(this.user(), container.containerId(), ContainerType.NONE);
         this.currentContainer = null;
         this.pendingCloseContainer = null;
+        this.clearCursorAfterContainerClose();
         return container;
     }
 
@@ -162,6 +163,7 @@ public class InventoryTracker extends StoredObject {
         }
         this.currentContainer = null;
         this.pendingCloseContainer = null;
+        this.clearCursorAfterContainerClose();
         return container;
     }
 
@@ -172,6 +174,7 @@ public class InventoryTracker extends StoredObject {
         }
         this.currentContainer = null;
         this.pendingCloseContainer = null;
+        this.clearCursorAfterContainerClose();
         return container;
     }
 
@@ -181,6 +184,11 @@ public class InventoryTracker extends StoredObject {
         }
         this.currentContainer = null;
         this.pendingCloseContainer = null;
+        this.clearCursorAfterContainerClose();
+    }
+
+    private void clearCursorAfterContainerClose() {
+        this.hudContainer.setItemSilent(0, BedrockItem.empty());
     }
 
     public void closeCurrentForm() {
