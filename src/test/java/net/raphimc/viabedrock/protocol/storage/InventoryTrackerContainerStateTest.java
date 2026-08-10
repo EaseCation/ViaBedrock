@@ -183,6 +183,27 @@ class InventoryTrackerContainerStateTest {
         assertEquals(List.of(), this.packets.bedrockCloses);
     }
 
+    @Test
+    void closingUntrackedPlayerInventoryClearsCursor() {
+        this.putItemOnCursor();
+
+        assertTrue(this.tracker.clearCursorIfContainerClosed());
+
+        assertTrue(this.tracker.getHudContainer().getItem(0).isEmpty());
+        assertEquals(CLOSED, this.tracker.getContainerState());
+    }
+
+    @Test
+    void untrackedCloseCannotClearCursorWhileContainerIsOpen() {
+        this.openContainer();
+        this.putItemOnCursor();
+
+        assertFalse(this.tracker.clearCursorIfContainerClosed());
+
+        assertFalse(this.tracker.getHudContainer().getItem(0).isEmpty());
+        assertEquals(OPEN, this.tracker.getContainerState());
+    }
+
     private void openContainer() {
         this.tracker.setCurrentContainer(this.container);
         assertEquals(OPEN, this.tracker.getContainerState());

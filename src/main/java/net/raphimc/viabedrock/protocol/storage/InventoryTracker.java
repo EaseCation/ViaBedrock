@@ -191,6 +191,14 @@ public class InventoryTracker extends StoredObject {
         this.hudContainer.setItemSilent(0, BedrockItem.empty());
     }
 
+    public boolean clearCursorIfContainerClosed() {
+        if (this.isContainerOpen()) {
+            return false;
+        }
+        this.clearCursorAfterContainerClose();
+        return true;
+    }
+
     public void closeCurrentForm() {
         if (this.currentForm == null) {
             throw new IllegalStateException("There is no form currently open");

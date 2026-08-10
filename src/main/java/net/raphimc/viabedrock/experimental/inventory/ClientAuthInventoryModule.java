@@ -82,6 +82,11 @@ public class ClientAuthInventoryModule implements FeatureModule {
         ProtocolUtil.appendServerbound(protocol, ServerboundPackets26_1.CONTAINER_CLOSE, wrapper -> {
             final InventoryTracker tracker = wrapper.user().get(InventoryTracker.class);
             final Container pending = tracker.completePendingCloseWithoutConfirmation();
+            // Java can open and close its player inventory without a matching Bedrock CONTAINER_OPEN.
+            // In that case there is no pending container, but the predicted HUD cursor still has to be
+            // discarded so it cannot be restored by the next full inventory sync.
+            tracker.clearCursorIfContainerClosed();
+            wrapper.user().get(DragState.class).reset();
             // The server (Nukkit) returns the crafting grid items to the inventory on close
             // (resetCraftingGridType -> inventory.addItem) and echoes the inventory, but it does NOT echo the
             // UI grid being emptied. Clear the 2x2/3x3 crafting grid + output mirror here so stale 3x3 items
