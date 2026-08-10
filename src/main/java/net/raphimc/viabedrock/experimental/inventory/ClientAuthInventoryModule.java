@@ -250,7 +250,7 @@ public class ClientAuthInventoryModule implements FeatureModule {
             sendNormalTransaction(user, actions);
             applyMirrorUpdates(actions, tracker);
             sendChangedJavaInventorySlots(user, tracker, actions);
-            sendJavaCursor(user, tracker);
+            scheduleJavaCursor(user, tracker);
         }
         return true;
     }
@@ -372,6 +372,14 @@ public class ClientAuthInventoryModule implements FeatureModule {
         final PacketWrapper setCursor = PacketWrapper.create(ClientboundPackets26_1.SET_CURSOR_ITEM, user);
         setCursor.write(VersionedTypes.V26_1.item, javaCursor);
         setCursor.send(BedrockProtocol.class);
+    }
+
+    private static void scheduleJavaCursor(final UserConnection user, final InventoryTracker tracker) {
+        final BedrockItem cursor = tracker.getHudContainer().getItem(0);
+        final Item javaCursor = user.get(ItemRewriter.class).javaItem(cursor);
+        final PacketWrapper setCursor = PacketWrapper.create(ClientboundPackets26_1.SET_CURSOR_ITEM, user);
+        setCursor.write(VersionedTypes.V26_1.item, javaCursor);
+        setCursor.scheduleSend(BedrockProtocol.class);
     }
 
     static void clearPlayerCraftingGrid(final InventoryTracker tracker) {
