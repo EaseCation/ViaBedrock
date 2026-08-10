@@ -500,12 +500,15 @@ public class InventoryPackets {
                         return;
                     }
 
-                    if (container.javaContainerId() != container.containerId()) {
-                        wrapper.set(Types.BYTE, 0, container.containerId());
-                    }
                     if (!inventoryTracker.beginClientClose(container)) {
                         wrapper.cancel();
+                        return;
                     }
+
+                    // Close the tracked container first, then let the translated close (-1) return and
+                    // clear Nukkit's cursor item just like closing the untracked player inventory does.
+                    PacketFactory.sendBedrockContainerClose(wrapper.user(), container.containerId(), ContainerType.NONE);
+                    wrapper.set(Types.BYTE, 0, (byte) -1);
                 });
             }
         });
