@@ -505,8 +505,8 @@ public class InventoryPackets {
                         return;
                     }
 
-                    // Close the tracked container first, then let the translated close (-1) return and
-                    // clear Nukkit's cursor item just like closing the untracked player inventory does.
+                    // Nukkit consumes the first -1 close to clear its last opened window marker. Send the
+                    // tracked close first and reuse this packet for that first cursor cleanup close.
                     PacketFactory.sendBedrockContainerClose(wrapper.user(), container.containerId(), ContainerType.NONE);
                     wrapper.set(Types.BYTE, 0, (byte) -1);
                 });

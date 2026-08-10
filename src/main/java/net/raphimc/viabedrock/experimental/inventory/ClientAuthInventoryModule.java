@@ -82,6 +82,12 @@ public class ClientAuthInventoryModule implements FeatureModule {
         ProtocolUtil.appendServerbound(protocol, ServerboundPackets26_1.CONTAINER_CLOSE, wrapper -> {
             final InventoryTracker tracker = wrapper.user().get(InventoryTracker.class);
             final Container pending = tracker.completePendingCloseWithoutConfirmation();
+            if (pending != null) {
+                // Run after the translated close has left the current pipeline. The first -1 clears
+                // Nukkit's stale lastOpenedWindowId; this second one returns and clears its cursor item.
+                wrapper.user().getChannel().eventLoop().execute(() ->
+                        PacketFactory.sendBedrockContainerClose(wrapper.user(), (byte) -1, ContainerType.NONE));
+            }
             // Java can open and close its player inventory without a matching Bedrock CONTAINER_OPEN.
             // In that case there is no pending container, but the predicted HUD cursor still has to be
             // discarded so it cannot be restored by the next full inventory sync.
