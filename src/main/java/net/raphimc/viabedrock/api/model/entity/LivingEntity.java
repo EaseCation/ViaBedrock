@@ -204,6 +204,8 @@ public class LivingEntity extends Entity {
     }
 
     static JavaMovementAttribute javaMovementAttribute(final EntityAttribute attribute) {
+        // Bedrock 当前值已包含属性修饰符，而 Java 会单独应用疾跑修饰符。
+        // 这里只还原已识别的疾跑倍率，其他修饰符仍保留在基础值中。
         float baseValue = attribute.computeClampedValue();
         boolean sprinting = false;
         for (EntityAttribute.Modifier modifier : attribute.modifiers()) {
