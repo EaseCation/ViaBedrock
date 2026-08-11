@@ -442,6 +442,7 @@ public class ClientPlayerEntity extends PlayerEntity {
 
         final EntityAttribute oldMovementAttribute = this.attributes.get("minecraft:movement");
         final List<EntityAttribute.Modifier> modifiers = new ArrayList<>(Arrays.asList(oldMovementAttribute.modifiers()));
+        // 与属性翻译共用疾跑标识，避免乱序更新残留旧的疾跑修饰符变体。
         modifiers.removeIf(LivingEntity::isSprintingModifier);
         if (this.sprinting) {
             modifiers.add(new EntityAttribute.Modifier("d208fc00-42aa-4aad-9276-d5446530de43", "Sprinting speed boost", 0.3F, AttributeModifierOperation.OPERATION_MULTIPLY_TOTAL, AttributeOperands.OPERAND_CURRENT, false));
