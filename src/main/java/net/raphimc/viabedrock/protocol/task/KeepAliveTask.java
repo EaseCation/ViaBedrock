@@ -19,12 +19,14 @@ package net.raphimc.viabedrock.protocol.task;
 
 import com.viaversion.viaversion.api.Via;
 import com.viaversion.viaversion.api.connection.UserConnection;
+import com.viaversion.viaversion.api.protocol.packet.PacketType;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.protocol.packet.State;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import com.viaversion.viaversion.protocols.v1_21_7to1_21_9.packet.ClientboundConfigurationPackets1_21_9;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
+import net.raphimc.viabedrock.protocol.provider.NettyPipelineProvider;
 
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -33,21 +35,45 @@ public class KeepAliveTask implements Runnable {
     @Override
     public void run() {
         for (UserConnection info : Via.getManager().getConnectionManager().getConnections()) {
-            final State state = info.getProtocolInfo().getServerState();
-            if ((state == State.PLAY || state == State.CONFIGURATION) && info.getProtocolInfo().getPipeline().contains(BedrockProtocol.class)) {
+            if (info.getProtocolInfo().getPipeline().contains(BedrockProtocol.class)) {
                 info.getChannel().eventLoop().submit(() -> {
                     if (!info.getChannel().isActive()) return;
 
                     try {
-                        final PacketWrapper keepAlive = PacketWrapper.create(info.getProtocolInfo().getServerState() == State.PLAY ? ClientboundPackets26_1.KEEP_ALIVE : ClientboundConfigurationPackets1_21_9.KEEP_ALIVE, info);
+                        final NettyPipelineProvider pipelineProvider = Via.getManager().getProviders().get(NettyPipelineProvider.class);
+                        final PacketType packetType = selectPacketType(
+                                info.getProtocolInfo().getClientState(),
+                                info.getProtocolInfo().getServerState(),
+                                pipelineProvider.isJavaClientboundStateReady(
+                                        info, info.getProtocolInfo().getServerState()));
+                        if (packetType == null) return;
+
+                        final PacketWrapper keepAlive = PacketWrapper.create(packetType, info);
                         keepAlive.write(Types.LONG, ThreadLocalRandom.current().nextLong()); // id
-                        keepAlive.send(BedrockProtocol.class);
+                        pipelineProvider.beginJavaClientboundPacket(info, "ViaBedrock/KeepAliveTask", packetType);
+                        try {
+                            keepAlive.send(BedrockProtocol.class);
+                        } finally {
+                            pipelineProvider.endJavaClientboundPacket(info);
+                        }
                     } catch (Throwable e) {
                         BedrockProtocol.kickForIllegalState(info, "Error sending keep alive packet. See console for details.", e);
                     }
                 });
             }
         }
+    }
+
+    static PacketType selectPacketType(final State clientState, final State serverState,
+                                       final boolean platformStateReady) {
+        if (!platformStateReady || clientState != serverState) {
+            return null;
+        }
+        return switch (serverState) {
+            case CONFIGURATION -> ClientboundConfigurationPackets1_21_9.KEEP_ALIVE;
+            case PLAY -> ClientboundPackets26_1.KEEP_ALIVE;
+            default -> null;
+        };
     }
 
 }

@@ -19,11 +19,45 @@ package net.raphimc.viabedrock.protocol.provider;
 
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.platform.providers.Provider;
+import com.viaversion.viaversion.api.protocol.packet.PacketType;
+import com.viaversion.viaversion.api.protocol.packet.State;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketCompressionAlgorithm;
 
 import javax.crypto.SecretKey;
 
 public abstract class NettyPipelineProvider implements Provider {
+
+    /**
+     * Returns whether a Java clientbound packet for the given state can be injected into the
+     * platform pipeline without crossing a protocol-state transition.
+     *
+     * <p>ViaBedrock-generated packets are fed back through the platform's clientbound pipeline.
+     * The default guard requires both Via protocol directions to agree. Platforms which keep a
+     * second packet registry (for example ViaProxy's NetMinecraft decoder) must additionally
+     * verify that registry in their override.</p>
+     *
+     * @param user  The user
+     * @param state The state of the Java packet that will be injected
+     * @return Whether the platform pipeline is ready for that packet state
+     */
+    public boolean isJavaClientboundStateReady(final UserConnection user, final State state) {
+        return user.getProtocolInfo().getClientState() == state
+                && user.getProtocolInfo().getServerState() == state;
+    }
+
+    /**
+     * Marks the origin of a synchronously injected Java clientbound packet for platform-level
+     * protocol diagnostics. Implementations must not retain player content.
+     */
+    public void beginJavaClientboundPacket(final UserConnection user, final String origin,
+                                           final PacketType packetType) {
+    }
+
+    /**
+     * Clears a marker installed by {@link #beginJavaClientboundPacket(UserConnection, String, PacketType)}.
+     */
+    public void endJavaClientboundPacket(final UserConnection user) {
+    }
 
     /**
      * Returns the transport RTT between the proxy and Bedrock server.
