@@ -385,48 +385,89 @@ public class HudPackets {
                 wrapper.cancel();
                 return;
             }
-            if (!shouldForwardBossEvent(entity.hasBossBar(), updateType)) {
-                wrapper.cancel();
-                return;
-            }
-            wrapper.write(Types.UUID, entity.javaUuid()); // uuid
+            final UUID uuid = entity.javaUuid();
+            final BossBarStorage bossBars = wrapper.user().get(BossBarStorage.class);
             switch (updateType) {
                 case Add -> {
-                    entity.setHasBossBar(true);
-                    wrapper.write(Types.VAR_INT, BossEventOperationType.ADD.ordinal()); // operation
-                    wrapper.write(Types.TAG, TextUtil.stringToNbt(wrapper.user().get(ResourcePackStorage.class).getTexts().translate(wrapper.read(BedrockTypes.STRING)))); // name
+                    final var name = TextUtil.stringToNbt(wrapper.user().get(ResourcePackStorage.class).getTexts().translate(wrapper.read(BedrockTypes.STRING)));
                     wrapper.read(BedrockTypes.STRING); // filtered name
-                    wrapper.write(Types.FLOAT, wrapper.read(BedrockTypes.FLOAT_LE)); // progress
+                    final float progress = wrapper.read(BedrockTypes.FLOAT_LE);
                     wrapper.read(BedrockTypes.UNSIGNED_SHORT_LE); // darken screen | Does nothing in Bedrock Edition
-                    wrapper.write(Types.VAR_INT, MathUtil.getOrFallback(wrapper.read(BedrockTypes.UNSIGNED_VAR_INT), 0, 5, 0)); // color
+                    final int color = MathUtil.getOrFallback(wrapper.read(BedrockTypes.UNSIGNED_VAR_INT), 0, 5, 0);
                     wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // overlay | Does nothing in Bedrock Edition
-                    wrapper.write(Types.VAR_INT, 0); // overlay
-                    wrapper.write(Types.UNSIGNED_BYTE, (short) 0); // flags
+                    final BossBarStorage.BossBar bar = bossBars.add(uuid, name, progress, color);
+                    entity.setHasBossBar(true);
+                    if (!bossBars.markAddSent(uuid)) {
+                        wrapper.cancel();
+                        return;
+                    }
+                    writeBossBarAdd(wrapper, uuid, bar);
                 }
                 case Remove -> {
                     entity.setHasBossBar(false);
+                    if (!bossBars.remove(uuid)) {
+                        wrapper.cancel();
+                        return;
+                    }
+                    wrapper.write(Types.UUID, uuid); // uuid
                     wrapper.write(Types.VAR_INT, BossEventOperationType.REMOVE.ordinal()); // operation
                 }
                 case Update_Percent -> {
+                    final float progress = wrapper.read(BedrockTypes.FLOAT_LE);
+                    final BossBarStorage.BossBar bar = bossBars.get(uuid);
+                    if (bar == null) {
+                        wrapper.cancel();
+                        return;
+                    }
+                    bar.setProgress(progress);
+                    if (restoreClearedBossBar(wrapper, bossBars, uuid, bar)) return;
+                    wrapper.write(Types.UUID, uuid); // uuid
                     wrapper.write(Types.VAR_INT, BossEventOperationType.UPDATE_PROGRESS.ordinal()); // operation
-                    wrapper.write(Types.FLOAT, wrapper.read(BedrockTypes.FLOAT_LE)); // progress
+                    wrapper.write(Types.FLOAT, progress); // progress
                 }
                 case Update_Name -> {
-                    wrapper.write(Types.VAR_INT, BossEventOperationType.UPDATE_NAME.ordinal()); // operation
-                    wrapper.write(Types.TAG, TextUtil.stringToNbt(wrapper.user().get(ResourcePackStorage.class).getTexts().translate(wrapper.read(BedrockTypes.STRING)))); // name
+                    final var name = TextUtil.stringToNbt(wrapper.user().get(ResourcePackStorage.class).getTexts().translate(wrapper.read(BedrockTypes.STRING)));
                     wrapper.read(BedrockTypes.STRING); // filtered name
+                    final BossBarStorage.BossBar bar = bossBars.get(uuid);
+                    if (bar == null) {
+                        wrapper.cancel();
+                        return;
+                    }
+                    bar.setName(name);
+                    if (restoreClearedBossBar(wrapper, bossBars, uuid, bar)) return;
+                    wrapper.write(Types.UUID, uuid); // uuid
+                    wrapper.write(Types.VAR_INT, BossEventOperationType.UPDATE_NAME.ordinal()); // operation
+                    wrapper.write(Types.TAG, name); // name
                 }
                 case Update_Properties -> {
-                    wrapper.write(Types.VAR_INT, BossEventOperationType.UPDATE_STYLE.ordinal()); // operation
                     wrapper.read(BedrockTypes.UNSIGNED_SHORT_LE); // darken screen | Does nothing in Bedrock Edition
-                    wrapper.write(Types.VAR_INT, MathUtil.getOrFallback(wrapper.read(BedrockTypes.UNSIGNED_VAR_INT), 0, 5, 0)); // color
+                    final int color = MathUtil.getOrFallback(wrapper.read(BedrockTypes.UNSIGNED_VAR_INT), 0, 5, 0);
                     wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // overlay | Does nothing in Bedrock Edition
+                    final BossBarStorage.BossBar bar = bossBars.get(uuid);
+                    if (bar == null) {
+                        wrapper.cancel();
+                        return;
+                    }
+                    bar.setColor(color);
+                    if (restoreClearedBossBar(wrapper, bossBars, uuid, bar)) return;
+                    wrapper.write(Types.UUID, uuid); // uuid
+                    wrapper.write(Types.VAR_INT, BossEventOperationType.UPDATE_STYLE.ordinal()); // operation
+                    wrapper.write(Types.VAR_INT, color); // color
                     wrapper.write(Types.VAR_INT, 0); // overlay
                 }
                 case Update_Style -> {
-                    wrapper.write(Types.VAR_INT, BossEventOperationType.UPDATE_STYLE.ordinal()); // operation
-                    wrapper.write(Types.VAR_INT, MathUtil.getOrFallback(wrapper.read(BedrockTypes.UNSIGNED_VAR_INT), 0, 5, 0)); // color
+                    final int color = MathUtil.getOrFallback(wrapper.read(BedrockTypes.UNSIGNED_VAR_INT), 0, 5, 0);
                     wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // overlay | Does nothing in Bedrock Edition
+                    final BossBarStorage.BossBar bar = bossBars.get(uuid);
+                    if (bar == null) {
+                        wrapper.cancel();
+                        return;
+                    }
+                    bar.setColor(color);
+                    if (restoreClearedBossBar(wrapper, bossBars, uuid, bar)) return;
+                    wrapper.write(Types.UUID, uuid); // uuid
+                    wrapper.write(Types.VAR_INT, BossEventOperationType.UPDATE_STYLE.ordinal()); // operation
+                    wrapper.write(Types.VAR_INT, color); // color
                     wrapper.write(Types.VAR_INT, 0); // overlay
                 }
                 case PlayerAdded, PlayerRemoved, Query -> wrapper.cancel();
@@ -463,12 +504,25 @@ public class HudPackets {
         });
     }
 
-    static boolean shouldForwardBossEvent(final boolean hasBossBar, final BossEventUpdateType updateType) {
-        return switch (updateType) {
-            case Add -> !hasBossBar;
-            case Remove, Update_Percent, Update_Name, Update_Properties, Update_Style -> hasBossBar;
-            case PlayerAdded, PlayerRemoved, Query -> false;
+    private static boolean restoreClearedBossBar(final PacketWrapper wrapper, final BossBarStorage bossBars, final UUID uuid, final BossBarStorage.BossBar bar) {
+        return switch (bossBars.reconcileUpdate(uuid)) {
+            case ADD -> {
+                writeBossBarAdd(wrapper, uuid, bar);
+                yield true;
+            }
+            case UPDATE -> false;
+            case DROP -> throw new IllegalStateException("Boss bar disappeared while reconciling update: " + uuid);
         };
+    }
+
+    private static void writeBossBarAdd(final PacketWrapper wrapper, final UUID uuid, final BossBarStorage.BossBar bar) {
+        wrapper.write(Types.UUID, uuid); // uuid
+        wrapper.write(Types.VAR_INT, BossEventOperationType.ADD.ordinal()); // operation
+        wrapper.write(Types.TAG, bar.name()); // name
+        wrapper.write(Types.FLOAT, bar.progress()); // progress
+        wrapper.write(Types.VAR_INT, bar.color()); // color
+        wrapper.write(Types.VAR_INT, 0); // overlay
+        wrapper.write(Types.UNSIGNED_BYTE, (short) 0); // flags
     }
 
 }

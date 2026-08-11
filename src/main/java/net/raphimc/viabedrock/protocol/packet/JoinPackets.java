@@ -116,6 +116,7 @@ public class JoinPackets {
         if (wrapper.user().getProtocolInfo().protocolVersion().newerThanOrEqualTo(ProtocolVersion.v1_20_2)) {
             wrapper.user().get(ClientChannelDiscoveryStorage.class).beginConfigurationCycle();
             wrapper.user().get(ClientLightStorage.class).beginConfigurationCycle();
+            wrapper.user().get(BossBarStorage.class).onJavaOverlayCleared();
             final PacketWrapper startConfiguration = PacketWrapper.create(ClientboundPackets26_1.START_CONFIGURATION, wrapper.user());
             startConfiguration.send(BedrockProtocol.class);
             wrapper.user().getProtocolInfo().setServerState(State.CONFIGURATION);

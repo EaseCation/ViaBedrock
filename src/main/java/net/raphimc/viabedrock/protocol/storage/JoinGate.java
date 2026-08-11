@@ -29,12 +29,14 @@ import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ServerboundPack
 import io.netty.buffer.ByteBuf;
 import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
+import net.raphimc.viabedrock.protocol.data.enums.java.generated.BossEventOperationType;
 import net.raphimc.viabedrock.protocol.packet.JoinPackets;
 
 import java.util.ArrayDeque;
 import java.util.EnumSet;
 import java.util.Iterator;
 import java.util.Queue;
+import java.util.UUID;
 
 public class JoinGate extends StoredObject {
 
@@ -266,6 +268,10 @@ public class JoinGate extends StoredObject {
         return this.joinPhase == joinPhase;
     }
 
+    public boolean isOpen() {
+        return this.isJoinPhase(JoinPhase.OPEN);
+    }
+
     private boolean markJavaLoginSent() {
         if (this.atLeastJoinPhase(JoinPhase.LOGIN_SENT)) {
             return false;
@@ -343,10 +349,22 @@ public class JoinGate extends StoredObject {
             try {
                 final PacketWrapper wrapper = PacketWrapper.create(queuedPacket.packet(), queuedPacket.payload().duplicate(), this.user());
                 wrapper.send(BedrockProtocol.class);
+                this.markQueuedBossBarAddDelivered(queuedPacket);
             } catch (InformativeException ignored) {
             } finally {
                 queuedPacket.payload().release();
             }
+        }
+    }
+
+    private void markQueuedBossBarAddDelivered(final ClientboundEntry queuedPacket) {
+        if (queuedPacket.packet() != ClientboundPackets26_1.BOSS_EVENT) return;
+
+        final ByteBuf payload = queuedPacket.payload().duplicate();
+        final UUID uuid = Types.UUID.read(payload);
+        final int operation = Types.VAR_INT.readPrimitive(payload);
+        if (operation == BossEventOperationType.ADD.ordinal()) {
+            this.user().get(BossBarStorage.class).markClientVisible(uuid);
         }
     }
 

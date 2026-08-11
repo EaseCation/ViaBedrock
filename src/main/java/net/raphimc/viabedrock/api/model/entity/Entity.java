@@ -36,6 +36,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.DataItemType
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.SharedTypes_Legacy_LevelSoundEvent;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.BossEventOperationType;
 import net.raphimc.viabedrock.protocol.model.Position3f;
+import net.raphimc.viabedrock.protocol.storage.BossBarStorage;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
 
@@ -88,8 +89,10 @@ public class Entity {
     }
 
     public void remove() {
-        if (this.hasBossBar) {
-            this.hasBossBar = false;
+        final BossBarStorage bossBars = this.user.get(BossBarStorage.class);
+        final boolean clientHasBossBar = bossBars != null ? bossBars.remove(this.javaUuid) : this.hasBossBar;
+        this.hasBossBar = false;
+        if (clientHasBossBar) {
             final PacketWrapper bossEvent = PacketWrapper.create(ClientboundPackets26_1.BOSS_EVENT, this.user);
             bossEvent.write(Types.UUID, this.javaUuid()); // uuid
             bossEvent.write(Types.VAR_INT, BossEventOperationType.REMOVE.ordinal()); // operation

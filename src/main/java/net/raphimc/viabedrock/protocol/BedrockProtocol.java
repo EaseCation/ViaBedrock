@@ -168,6 +168,7 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
         user.put(new CustomMappingSyncStorage(user));
         user.put(new PlayerListStorage());
         user.put(new ScoreboardTracker());
+        user.put(new BossBarStorage(user));
         user.put(new InventoryBootstrapQueue(user));
         user.put(new InventoryTracker(user));
         user.put(new PlayerArmorHudTracker(user));
