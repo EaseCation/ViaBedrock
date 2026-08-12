@@ -36,6 +36,7 @@ public final class CustomMappingAccess {
     private final Int2ObjectMap<Float> javaSecondsToDestroy;
     private final Int2ObjectMap<BlockEntityRule> runtimeBlockEntityRules;
     private final Int2ObjectMap<String> runtimeIdentifiers;
+    private final Int2ObjectMap<String> javaIdentifiers;
     private final IntSet allowedJavaBlockStates;
     private final IntSet allowedBlockEntityTypes;
     private final Map<String, Integer> blockEntityTypeIds;
@@ -56,6 +57,7 @@ public final class CustomMappingAccess {
         this.javaSecondsToDestroy = builder.javaSecondsToDestroy;
         this.runtimeBlockEntityRules = builder.runtimeBlockEntityRules;
         this.runtimeIdentifiers = builder.runtimeIdentifiers;
+        this.javaIdentifiers = builder.javaIdentifiers;
         this.allowedJavaBlockStates = builder.allowedJavaBlockStates;
         this.allowedBlockEntityTypes = builder.allowedBlockEntityTypes;
         this.blockEntityTypeIds = Map.copyOf(builder.blockEntityTypeIds);
@@ -166,6 +168,10 @@ public final class CustomMappingAccess {
         return this.runtimeIdentifiers.get(bedrockRuntimeId);
     }
 
+    public String identifierByJavaBlockStateId(final int javaBlockStateId) {
+        return this.javaIdentifiers.get(javaBlockStateId);
+    }
+
     public int blockEntityTypeId(final String javaTypeIdentifier) {
         return this.blockEntityTypeIds.getOrDefault(javaTypeIdentifier, -1);
     }
@@ -265,6 +271,7 @@ public final class CustomMappingAccess {
         private final Int2ObjectOpenHashMap<Float> javaSecondsToDestroy = new Int2ObjectOpenHashMap<>();
         private final Int2ObjectOpenHashMap<BlockEntityRule> runtimeBlockEntityRules = new Int2ObjectOpenHashMap<>();
         private final Int2ObjectOpenHashMap<String> runtimeIdentifiers = new Int2ObjectOpenHashMap<>();
+        private final Int2ObjectOpenHashMap<String> javaIdentifiers = new Int2ObjectOpenHashMap<>();
         private final IntOpenHashSet allowedJavaBlockStates = new IntOpenHashSet();
         private final IntOpenHashSet allowedBlockEntityTypes = new IntOpenHashSet();
         private final Map<String, Integer> blockEntityTypeIds = new HashMap<>();
@@ -291,6 +298,7 @@ public final class CustomMappingAccess {
             this.allowedJavaBlockStates.add(sourceJavaRawId);
             this.runtimeBlockEntityRules.put(runtimeId, rule);
             this.runtimeIdentifiers.put(runtimeId, bedrockIdentifier);
+            this.javaIdentifiers.put(sourceJavaRawId, bedrockIdentifier);
             this.maxJavaBlockStateId = Math.max(this.maxJavaBlockStateId, sourceJavaRawId);
             this.lightProfileKey = fnv1a(fnv1a(fnv1a(fnv1a(this.lightProfileKey, runtimeId), sourceJavaRawId), emit), filter);
         }

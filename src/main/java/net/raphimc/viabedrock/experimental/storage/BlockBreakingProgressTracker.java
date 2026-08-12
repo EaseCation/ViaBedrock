@@ -89,13 +89,13 @@ public final class BlockBreakingProgressTracker extends StoredObject {
         }
     }
 
-    public void finishMining(final BlockPosition position, final int sequence) {
+    public void finishMining(final BlockPosition position, final int sequence, final int javaBlockStateId) {
         if (this.isMiningTarget(position)) {
             this.miningPhase = MiningPhase.FINISHING;
             this.miningTarget = null;
             this.suspendedTicks = 0;
             this.postFinishCooldownTicks = 5;
-            this.expectJavaAckAfterBlockUpdate(position, sequence);
+            this.expectJavaAckAfterBlockUpdate(position, sequence, javaBlockStateId);
         }
     }
 
@@ -142,9 +142,9 @@ public final class BlockBreakingProgressTracker extends StoredObject {
         this.clearProgress(position);
     }
 
-    public void expectJavaAckAfterBlockUpdate(final BlockPosition position, final int sequence) {
+    public void expectJavaAckAfterBlockUpdate(final BlockPosition position, final int sequence, final int javaBlockStateId) {
         if (sequence > 0) {
-            this.pendingBreakAcks.put(position, new PendingBreakAck(sequence, System.currentTimeMillis()));
+            this.pendingBreakAcks.put(position, new PendingBreakAck(sequence, javaBlockStateId, System.currentTimeMillis()));
         }
     }
 
@@ -172,14 +172,24 @@ public final class BlockBreakingProgressTracker extends StoredObject {
             this.clearProgress(position);
         }
 
+        for (TimedOutBreakAck timedOut : this.collectTimedOutBreakAcks(now)) {
+            PacketFactory.sendJavaBlockUpdate(this.user(), timedOut.position(), timedOut.javaBlockStateId());
+            PacketFactory.sendJavaBlockChangedAck(this.user(), timedOut.sequence());
+        }
+    }
+
+    List<TimedOutBreakAck> collectTimedOutBreakAcks(final long now) {
+        final List<TimedOutBreakAck> timedOut = new ArrayList<>();
         final Iterator<Map.Entry<BlockPosition, PendingBreakAck>> it = this.pendingBreakAcks.entrySet().iterator();
         while (it.hasNext()) {
-            final PendingBreakAck ack = it.next().getValue();
+            final Map.Entry<BlockPosition, PendingBreakAck> entry = it.next();
+            final PendingBreakAck ack = entry.getValue();
             if (now - ack.timestamp > BREAK_ACK_TIMEOUT_MS) {
-                PacketFactory.sendJavaBlockChangedAck(this.user(), ack.sequence);
+                timedOut.add(new TimedOutBreakAck(entry.getKey(), ack.sequence, ack.javaBlockStateId));
                 it.remove();
             }
         }
+        return timedOut;
     }
 
     private int breakerIdFor(final BlockPosition position) {
@@ -231,7 +241,10 @@ public final class BlockBreakingProgressTracker extends StoredObject {
         }
     }
 
-    private record PendingBreakAck(int sequence, long timestamp) {
+    private record PendingBreakAck(int sequence, int javaBlockStateId, long timestamp) {
+    }
+
+    record TimedOutBreakAck(BlockPosition position, int sequence, int javaBlockStateId) {
     }
 
     public enum MiningPhase {
