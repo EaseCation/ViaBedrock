@@ -37,6 +37,16 @@ import java.util.Set;
  */
 public final class InstantBreakBlocks {
 
+    private static final Set<String> SHEARS_INSTANT_BREAK = Set.of(
+            "oak_leaves", "spruce_leaves", "birch_leaves", "jungle_leaves", "acacia_leaves",
+            "dark_oak_leaves", "mangrove_leaves", "cherry_leaves", "pale_oak_leaves",
+            "azalea_leaves", "flowering_azalea_leaves"
+    );
+
+    private static final Set<String> CUSTOM_SHEARS_INSTANT_BREAK = Set.of(
+            "easecation:cherry_leaves"
+    );
+
     private static final Set<String> VANILLA_INSTANT_BREAK = Set.of(
             // Crops / farmland plants
             "wheat", "carrots", "potatoes", "beetroots",
@@ -81,6 +91,11 @@ public final class InstantBreakBlocks {
      */
     public static boolean isVanillaInstantBreak(final String javaIdentifier) {
         return VANILLA_INSTANT_BREAK.contains(javaIdentifier);
+    }
+
+    public static boolean isShearsInstantBreak(final String javaIdentifier, final String customBedrockIdentifier) {
+        return (javaIdentifier != null && SHEARS_INSTANT_BREAK.contains(javaIdentifier))
+                || (customBedrockIdentifier != null && CUSTOM_SHEARS_INSTANT_BREAK.contains(customBedrockIdentifier));
     }
 
 }

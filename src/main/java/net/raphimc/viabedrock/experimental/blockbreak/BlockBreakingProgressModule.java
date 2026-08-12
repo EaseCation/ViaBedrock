@@ -42,15 +42,17 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.AnimatePacke
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.LevelEvent;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerActionType;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAuthInputPacket_InputData;
-import net.raphimc.viabedrock.protocol.model.BlockChangeEntry;
-import net.raphimc.viabedrock.protocol.model.Position3f;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.PlayerActionAction;
+import net.raphimc.viabedrock.protocol.model.BlockChangeEntry;
+import net.raphimc.viabedrock.protocol.model.Position3f;
+import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.neighbor.BlockNeighborView;
 import net.raphimc.viabedrock.protocol.rewriter.neighbor.TrackerNeighborView;
 import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
+import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.util.ArrayList;
@@ -158,7 +160,7 @@ public final class BlockBreakingProgressModule implements FeatureModule {
         switch (action) {
             case START_DESTROY_BLOCK -> this.startMining(user, clientPlayer, tracker, chunkTracker, position, direction, sequence);
             case ABORT_DESTROY_BLOCK -> this.suspendMining(clientPlayer, tracker, position);
-            case STOP_DESTROY_BLOCK -> this.finishMining(user, gameSession, clientPlayer, tracker, position, direction, sequence);
+            case STOP_DESTROY_BLOCK -> this.finishMining(user, gameSession, clientPlayer, tracker, chunkTracker, position, direction, sequence);
             default -> throw new IllegalStateException("Unhandled mining action: " + action);
         }
     }
@@ -176,7 +178,7 @@ public final class BlockBreakingProgressModule implements FeatureModule {
         clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.StartDestroyBlock, position, direction.ordinal()));
 
         if (this.isInstantBreak(user, chunkTracker, position)) {
-            this.finishMining(user, user.get(GameSessionStorage.class), clientPlayer, tracker, position, direction, sequence);
+            this.finishMining(user, user.get(GameSessionStorage.class), clientPlayer, tracker, chunkTracker, position, direction, sequence);
         }
     }
 
@@ -185,7 +187,7 @@ public final class BlockBreakingProgressModule implements FeatureModule {
         tracker.suspendMining(position);
     }
 
-    private void finishMining(final UserConnection user, final GameSessionStorage gameSession, final ClientPlayerEntity clientPlayer, final BlockBreakingProgressTracker tracker, final BlockPosition position, final Direction direction, final int sequence) {
+    private void finishMining(final UserConnection user, final GameSessionStorage gameSession, final ClientPlayerEntity clientPlayer, final BlockBreakingProgressTracker tracker, final ChunkTracker chunkTracker, final BlockPosition position, final Direction direction, final int sequence) {
         if (!tracker.isMiningTarget(position)) {
             PacketFactory.sendJavaBlockChangedAck(user, sequence);
             return;
@@ -202,7 +204,7 @@ public final class BlockBreakingProgressModule implements FeatureModule {
             clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.PredictDestroyBlock, position, direction.ordinal()));
             clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.AbortDestroyBlock, position, 0));
         }
-        tracker.finishMining(position, sequence);
+        tracker.finishMining(position, sequence, chunkTracker.getJavaBlockState(position));
     }
 
     private void handleSwing(final PacketWrapper wrapper) {
@@ -257,7 +259,16 @@ public final class BlockBreakingProgressModule implements FeatureModule {
             return true;
         }
         final CustomMappingSyncStorage customMappingSync = user.get(CustomMappingSyncStorage.class);
-        return customMappingSync != null && customMappingSync.access().secondsToDestroy(javaBlockStateId) == 0.0F;
+        if (customMappingSync != null && customMappingSync.access().secondsToDestroy(javaBlockStateId) == 0.0F) {
+            return true;
+        }
+
+        final String heldIdentifier = user.get(ItemRewriter.class).bedrockIdentifier(
+                user.get(InventoryTracker.class).getInventoryContainer().getSelectedHotbarItem());
+        final String customIdentifier = customMappingSync != null
+                ? customMappingSync.access().identifierByJavaBlockStateId(javaBlockStateId) : null;
+        return "minecraft:shears".equals(heldIdentifier)
+                && InstantBreakBlocks.isShearsInstantBreak(javaBlockState != null ? javaBlockState.identifier() : null, customIdentifier);
     }
 
     private void sendBedrockSwing(final UserConnection user, final ClientPlayerEntity clientPlayer) {

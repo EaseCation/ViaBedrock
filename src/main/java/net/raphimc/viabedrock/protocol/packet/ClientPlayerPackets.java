@@ -137,7 +137,16 @@ public class ClientPlayerPackets {
         }
         final CustomMappingSyncStorage customMappingSync = user.get(CustomMappingSyncStorage.class);
         // Custom (mod) blocks: seconds_to_destroy synced from BedrockLoader; 0 means instant break.
-        return customMappingSync != null && customMappingSync.access().secondsToDestroy(javaBlockStateId) == 0.0F;
+        if (customMappingSync != null && customMappingSync.access().secondsToDestroy(javaBlockStateId) == 0.0F) {
+            return true;
+        }
+
+        final String heldIdentifier = user.get(ItemRewriter.class).bedrockIdentifier(
+                user.get(InventoryTracker.class).getInventoryContainer().getSelectedHotbarItem());
+        final String customIdentifier = customMappingSync != null
+                ? customMappingSync.access().identifierByJavaBlockStateId(javaBlockStateId) : null;
+        return "minecraft:shears".equals(heldIdentifier)
+                && InstantBreakBlocks.isShearsInstantBreak(javaBlockState != null ? javaBlockState.identifier() : null, customIdentifier);
     }
 
     private static void finishBlockBreak(final UserConnection user, final GameSessionStorage gameSession, final ClientPlayerEntity clientPlayer, final ChunkTracker chunkTracker, final BlockPosition position, final Direction direction) {
