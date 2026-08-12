@@ -20,12 +20,14 @@ package net.raphimc.viabedrock.api.modinterface;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
+import com.viaversion.viaversion.api.protocol.packet.State;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import com.viaversion.viaversion.protocols.v1_21_7to1_21_9.packet.ClientboundConfigurationPackets1_21_9;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorDataIDs;
 import net.raphimc.viabedrock.protocol.model.SkinData;
+import net.raphimc.viabedrock.protocol.storage.JavaPlayerStateStorage;
 import net.raphimc.viabedrock.protocol.types.primitive.ImageType;
 
 import java.nio.charset.StandardCharsets;
@@ -40,6 +42,7 @@ public class ViaBedrockUtilityInterface {
     public static final String CONFIRM_CHANNEL = "viabedrockutility:confirm";
 
     public static final String CHANNEL = "viabedrockutility:data";
+    public static final String PLAYER_STATE_CHANNEL = "viabedrockutility:player_state";
     private static final int MAX_PAYLOAD_SIZE = 1048576;
 
     public static void confirmPresence(final UserConnection user) {
@@ -47,6 +50,12 @@ public class ViaBedrockUtilityInterface {
         pluginMessage.write(Types.STRING, CHANNEL); // Channel
         pluginMessage.write(Types.INT, PayloadType.CONFIRM.ordinal()); // Type
         pluginMessage.send(BedrockProtocol.class);
+    }
+
+    public static void handlePlayerState(final UserConnection user, final byte[] payload) {
+        if (user.getProtocolInfo().getClientState() == State.PLAY) {
+            user.get(JavaPlayerStateStorage.class).updateFromPayload(payload);
+        }
     }
 
     public static void spawnCustomEntity(final UserConnection user, final UUID uuid, final String identifier, final Map<ActorDataIDs, EntityData> entityData) {

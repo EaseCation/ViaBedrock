@@ -177,6 +177,7 @@ public class ClientPlayerPackets {
                         final GameRulesStorage gameRulesStorage = wrapper.user().get(GameRulesStorage.class);
                         final ChunkTracker chunkTracker = wrapper.user().get(ChunkTracker.class);
                         final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
+                        wrapper.user().get(JavaPlayerStateStorage.class).reset();
 
                         if (clientPlayer.isDead() && !gameRulesStorage.<Boolean>getGameRule("keepInventory")) {
                             inventoryTracker.getInventoryContainer().clearItems();
@@ -548,6 +549,13 @@ public class ClientPlayerPackets {
             if (!clientPlayer.isInitiallySpawned() || clientPlayer.isDead()) {
                 wrapper.cancel();
                 return;
+            }
+
+            final PlayerAuthInputPacket_InputData crawlingTransition = wrapper.user()
+                    .get(JavaPlayerStateStorage.class)
+                    .consumeCrawlingTransition();
+            if (crawlingTransition != null) {
+                clientPlayer.addAuthInputData(crawlingTransition);
             }
 
             clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.BlockBreakingDelayEnabled);
