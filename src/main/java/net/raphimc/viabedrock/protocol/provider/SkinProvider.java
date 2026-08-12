@@ -44,6 +44,7 @@ import net.raphimc.viabedrock.protocol.storage.ClientSettingsStorage;
 import net.raphimc.viabedrock.protocol.storage.HandshakeStorage;
 import net.raphimc.viabedrock.protocol.types.primitive.ImageType;
 
+import javax.crypto.SecretKey;
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.InputStream;
@@ -288,10 +289,28 @@ public class SkinProvider implements Provider {
                         Via.getManager().getProviders().get(ClientAddressProvider.class).getClientAddress(user),
                         timestamp
                 ));
+                addJavaClientEncryptionKeyClaim(
+                        claims,
+                        authSecret,
+                        Via.getManager().getProviders().get(JavaClientEncryptionKeyProvider.class)
+                                .getJavaClientEncryptionKey(user)
+                );
             }
         }
 
         return claims;
+    }
+
+    static void addJavaClientEncryptionKeyClaim(final Map<String, Object> claims, final String authSecret,
+                                                 final SecretKey encryptionKey) {
+        if (authSecret == null || authSecret.isEmpty() || encryptionKey == null) {
+            return;
+        }
+        final byte[] encodedKey = encryptionKey.getEncoded();
+        if (encodedKey == null || encodedKey.length == 0) {
+            return;
+        }
+        claims.put("JavaClientEncryptionKey", Base64.getEncoder().encodeToString(encodedKey));
     }
 
     static JavaSkinData awaitJavaSkin(

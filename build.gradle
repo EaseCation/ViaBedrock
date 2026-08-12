@@ -60,6 +60,7 @@ dependencies {
     }
     compileOnly "org.yaml:snakeyaml:2.6"
     compileOnly "com.google.guava:guava:33.6.0-jre"
+    compileOnly "org.checkerframework:checker-qual:3.54.0"
     compileOnly "io.netty:netty-handler:4.2.14.Final"
     compileOnly "com.google.code.gson:gson:2.14.0"
     compileOnly "dev.kastle.netty:netty-transport-raknet:1.7.0"
