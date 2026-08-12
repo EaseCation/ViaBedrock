@@ -21,12 +21,18 @@ import com.viaversion.viaversion.api.minecraft.entities.EntityTypes1_21_11;
 import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
 import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.api.model.entity.LivingEntity;
+import net.raphimc.viabedrock.api.model.entity.PlayerEntity;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorDataIDs;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorEvent;
+import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.AnimatePacketPayload_Action;
+import net.raphimc.viabedrock.protocol.data.enums.java.AnimateAction;
 import net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent;
+import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
 import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 import java.util.function.LongFunction;
 
@@ -34,6 +40,7 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -177,6 +184,83 @@ class EntityPacketsTest {
         );
     }
 
+    @Test
+    void mapsArmSwingOnlyForLivingEntities() {
+        final LivingEntity livingEntity = livingEntity(EntityTypes1_21_11.ZOMBIE);
+        final Entity boat = entity(EntityTypes1_21_11.OAK_BOAT);
+        final Entity customCarrier = entity(EntityTypes1_21_11.INTERACTION);
+
+        assertAll(
+                () -> assertEquals(AnimateAction.SWING_MAIN_HAND, resolve(AnimatePacketPayload_Action.Swing, livingEntity).action()),
+                () -> assertEquals(AnimateAction.SWING_MAIN_HAND, EntityPackets.javaAnimateAction(ActorEvent.START_ATTACKING, livingEntity)),
+                () -> assertNull(resolve(AnimatePacketPayload_Action.Swing, boat)),
+                () -> assertNull(EntityPackets.javaAnimateAction(ActorEvent.START_ATTACKING, boat)),
+                () -> assertNull(resolve(AnimatePacketPayload_Action.Swing, customCarrier)),
+                () -> assertNull(EntityPackets.javaAnimateAction(ActorEvent.START_ATTACKING, customCarrier)),
+                () -> assertTrue(EntityPackets.isJavaAnimateActionValid(AnimateAction.SWING_OFF_HAND, livingEntity)),
+                () -> assertFalse(EntityPackets.isJavaAnimateActionValid(AnimateAction.SWING_OFF_HAND, boat))
+        );
+    }
+
+    @Test
+    void mapsWakeUpOnlyForPlayers() {
+        final PlayerEntity player = playerEntity();
+
+        assertAll(
+                () -> assertEquals(AnimateAction.WAKE_UP, resolve(AnimatePacketPayload_Action.WakeUp, player).action()),
+                () -> assertNull(resolve(AnimatePacketPayload_Action.WakeUp, livingEntity(EntityTypes1_21_11.ZOMBIE))),
+                () -> assertNull(resolve(AnimatePacketPayload_Action.WakeUp, entity(EntityTypes1_21_11.OAK_BOAT)))
+        );
+    }
+
+    @Test
+    void keepsHurtOnTheDedicatedDamageEventPath() {
+        assertNull(EntityPackets.javaAnimateAction(ActorEvent.HURT, livingEntity(EntityTypes1_21_11.ZOMBIE)));
+    }
+
+    @Test
+    void preservesCriticalAnimationsForEveryTrackedEntityType() {
+        final Entity boat = entity(EntityTypes1_21_11.OAK_BOAT);
+        final Entity customCarrier = entity(EntityTypes1_21_11.INTERACTION);
+
+        assertAll(
+                () -> assertEquals(AnimateAction.CRITICAL_HIT, resolve(AnimatePacketPayload_Action.CriticalHit, boat).action()),
+                () -> assertEquals(AnimateAction.MAGIC_CRITICAL_HIT, resolve(AnimatePacketPayload_Action.MagicCriticalHit, customCarrier).action()),
+                () -> assertFalse(EntityPackets.isJavaAnimateActionValid(AnimateAction.UNUSED, boat)),
+                () -> assertNull(resolve(AnimatePacketPayload_Action.NoAction, boat))
+        );
+    }
+
+    @Test
+    void ignoresLateAnimationAfterEntityRemoval() {
+        final long runtimeId = 42L;
+        final Map<Long, Entity> entities = new HashMap<>();
+        entities.put(runtimeId, livingEntity(EntityTypes1_21_11.ZOMBIE, runtimeId));
+        entities.remove(runtimeId);
+
+        assertNull(EntityPackets.resolveJavaAnimate(AnimatePacketPayload_Action.Swing, runtimeId, entities::get));
+    }
+
+    @Test
+    void resolvesRuntimeIdReuseAgainstTheCurrentEntity() {
+        final long runtimeId = 42L;
+        final Map<Long, Entity> entities = new HashMap<>();
+        final LivingEntity original = livingEntity(EntityTypes1_21_11.ZOMBIE, runtimeId);
+        final Entity replacementBoat = entity(EntityTypes1_21_11.OAK_BOAT, runtimeId);
+        entities.put(runtimeId, original);
+
+        final EntityPackets.JavaAnimate originalSwing = EntityPackets.resolveJavaAnimate(AnimatePacketPayload_Action.Swing, runtimeId, entities::get);
+        entities.put(runtimeId, replacementBoat);
+        final EntityPackets.JavaAnimate replacementCritical = EntityPackets.resolveJavaAnimate(AnimatePacketPayload_Action.CriticalHit, runtimeId, entities::get);
+
+        assertAll(
+                () -> assertSame(original, originalSwing.entity()),
+                () -> assertNull(EntityPackets.resolveJavaAnimate(AnimatePacketPayload_Action.Swing, runtimeId, entities::get)),
+                () -> assertSame(replacementBoat, replacementCritical.entity()),
+                () -> assertEquals(AnimateAction.CRITICAL_HIT, replacementCritical.action())
+        );
+    }
+
     private static EntityData ownerData(final long ownerUniqueId) {
         return new EntityData(ActorDataIDs.OWNER.getValue(), EntityDataTypesBedrock.LONG, ownerUniqueId);
     }
@@ -186,11 +270,27 @@ class EntityPacketsTest {
     }
 
     private static Entity entity(final EntityTypes1_21_11 javaType) {
-        return new Entity(null, 1L, 2L, "test:entity", 3, UUID.randomUUID(), javaType);
+        return entity(javaType, 2L);
+    }
+
+    private static Entity entity(final EntityTypes1_21_11 javaType, final long runtimeId) {
+        return new Entity(null, 1L, runtimeId, "test:entity", 3, UUID.randomUUID(), javaType);
     }
 
     private static LivingEntity livingEntity(final EntityTypes1_21_11 javaType) {
-        return new LivingEntity(null, 1L, 2L, "test:living_entity", 3, UUID.randomUUID(), javaType);
+        return livingEntity(javaType, 2L);
+    }
+
+    private static LivingEntity livingEntity(final EntityTypes1_21_11 javaType, final long runtimeId) {
+        return new LivingEntity(null, 1L, runtimeId, "test:living_entity", 3, UUID.randomUUID(), javaType);
+    }
+
+    private static PlayerEntity playerEntity() {
+        return new PlayerEntity(null, 2L, 3, UUID.randomUUID(), new PlayerAbilities(1L, (byte) 0, (byte) 0));
+    }
+
+    private static EntityPackets.JavaAnimate resolve(final AnimatePacketPayload_Action action, final Entity entity) {
+        return EntityPackets.resolveJavaAnimate(action, entity.runtimeId(), runtimeId -> entity.runtimeId() == runtimeId ? entity : null);
     }
 
 }

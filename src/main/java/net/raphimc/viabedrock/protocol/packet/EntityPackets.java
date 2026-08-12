@@ -529,14 +529,17 @@ public class EntityPackets {
                     if (javaEvent != null) {
                         wrapper.write(Types.INT, entity.javaId()); // entity id
                         wrapper.write(Types.BYTE, javaEvent.getValue()); // event
-                    } else if (event == ActorEvent.START_ATTACKING && entity instanceof LivingEntity) {
+                    } else {
+                        final AnimateAction javaAnimateAction = javaAnimateAction(event, entity);
+                        if (javaAnimateAction == null) {
+                            wrapper.cancel();
+                            return;
+                        }
                         // Nukkit uses ActorEvent 4 as a generic mob arm swing, while Java reserves entity
                         // status 4 for a few entity types. Other living entities need an Animate packet.
                         wrapper.setPacketType(ClientboundPackets26_1.ANIMATE);
                         wrapper.write(Types.VAR_INT, entity.javaId()); // entity id
-                        wrapper.write(Types.UNSIGNED_BYTE, (short) AnimateAction.SWING_MAIN_HAND.ordinal()); // action
-                    } else {
-                        wrapper.cancel();
+                        wrapper.write(Types.UNSIGNED_BYTE, (short) javaAnimateAction.ordinal()); // action
                     }
                 }
             }
@@ -631,30 +634,18 @@ public class EntityPackets {
             wrapper.read(BedrockTypes.FLOAT_LE); // data
             wrapper.read(BedrockTypes.OPTIONAL_STRING); // swing source
 
-            final Entity entity = wrapper.user().get(EntityTracker.class).getEntityByRid(entityRuntimeId);
-            // Java handles arm animations as LivingEntity actions, while custom entities use Interaction carriers.
-            if (!(entity instanceof LivingEntity)) {
+            final JavaAnimate javaAnimate = resolveJavaAnimate(action, entityRuntimeId, wrapper.user().get(EntityTracker.class)::getEntityByRid);
+            if (javaAnimate == null) {
                 wrapper.cancel();
                 return;
             }
 
+            final Entity entity = javaAnimate.entity();
             wrapper.write(Types.VAR_INT, entity.javaId()); // entity id
-            wrapper.write(Types.UNSIGNED_BYTE, (short) (switch (action) {
-                case NoAction -> {
-                    wrapper.cancel();
-                    yield AnimateAction.SWING_MAIN_HAND; // any action
-                }
-                case Swing -> AnimateAction.SWING_MAIN_HAND;
-                case WakeUp -> {
-                    if (entity instanceof ClientPlayerEntity clientPlayer) {
-                        clientPlayer.sendPlayerActionPacketToServer(PlayerActionType.StopSleeping);
-                    }
-                    yield AnimateAction.WAKE_UP;
-                }
-                case CriticalHit -> AnimateAction.CRITICAL_HIT;
-                case MagicCriticalHit -> AnimateAction.MAGIC_CRITICAL_HIT;
-                default -> throw new IllegalStateException("Unhandled AnimatePacket_Action: " + action);
-            }).ordinal()); // action
+            wrapper.write(Types.UNSIGNED_BYTE, (short) javaAnimate.action().ordinal()); // action
+            if (javaAnimate.action() == AnimateAction.WAKE_UP && entity instanceof ClientPlayerEntity clientPlayer) {
+                clientPlayer.sendPlayerActionPacketToServer(PlayerActionType.StopSleeping);
+            }
         });
         protocol.registerClientbound(ClientboundBedrockPackets.ANIMATE_ENTITY, null, wrapper -> {
             // Java has no MoLang animation system; a server-triggered named animation only makes sense for entities
@@ -828,6 +819,39 @@ public class EntityPackets {
             case SHAKE_WETNESS_STOP -> net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent.CANCEL_SHAKE_WETNESS;
             default -> null;
         };
+    }
+
+    static JavaAnimate resolveJavaAnimate(final AnimatePacketPayload_Action bedrockAction, final long entityRuntimeId,
+                                          final LongFunction<Entity> entityLookup) {
+        final Entity entity = entityLookup.apply(entityRuntimeId);
+        final AnimateAction javaAction = switch (bedrockAction) {
+            case NoAction -> null;
+            case Swing -> AnimateAction.SWING_MAIN_HAND;
+            case WakeUp -> AnimateAction.WAKE_UP;
+            case CriticalHit -> AnimateAction.CRITICAL_HIT;
+            case MagicCriticalHit -> AnimateAction.MAGIC_CRITICAL_HIT;
+        };
+        return isJavaAnimateActionValid(javaAction, entity) ? new JavaAnimate(entity, javaAction) : null;
+    }
+
+    static AnimateAction javaAnimateAction(final ActorEvent bedrockEvent, final Entity entity) {
+        final AnimateAction javaAction = bedrockEvent == ActorEvent.START_ATTACKING ? AnimateAction.SWING_MAIN_HAND : null;
+        return isJavaAnimateActionValid(javaAction, entity) ? javaAction : null;
+    }
+
+    static boolean isJavaAnimateActionValid(final AnimateAction action, final Entity entity) {
+        if (action == null || entity == null) {
+            return false;
+        }
+        return switch (action) {
+            case SWING_MAIN_HAND, SWING_OFF_HAND -> entity instanceof LivingEntity;
+            case WAKE_UP -> entity instanceof PlayerEntity;
+            case CRITICAL_HIT, MAGIC_CRITICAL_HIT -> true;
+            case UNUSED -> false;
+        };
+    }
+
+    record JavaAnimate(Entity entity, AnimateAction action) {
     }
 
 }
