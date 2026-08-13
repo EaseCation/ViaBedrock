@@ -131,12 +131,12 @@ class SpectatorMenuProjectionTest {
         this.projection.begin(List.of(new SpectatorCameraPackets.Target(TARGET_ID, "Visible Target")), List.of());
 
         assertEquals(3, this.operations.size());
-        assertEquals(new Operation("remove", List.of(OWN_ID, TARGET_ID, OTHER_ID), List.of()), this.operations.get(0));
+        assertEquals(new Operation("remove", List.of(TARGET_ID, OTHER_ID), List.of()), this.operations.get(0));
 
         final PlayerListStorage.JavaProfile own = this.operations.get(1).profiles().getFirst();
-        assertEquals(OWN_ID, own.uuid());
+        assertEquals("mode", this.operations.get(1).type());
+        assertEquals(OWN_ID, this.operations.get(1).uuids().getFirst());
         assertEquals(GameMode.ADVENTURE, own.gameMode());
-        assertFalse(own.listed());
 
         final PlayerListStorage.JavaProfile target = this.operations.get(2).profiles().getFirst();
         assertEquals(TARGET_ID, target.uuid());
@@ -172,9 +172,24 @@ class SpectatorMenuProjectionTest {
         this.profiles.put(OWN_ID, this.profile(OWN_ID, GameMode.SURVIVAL, true));
         this.projection.refreshProfile(OWN_ID);
 
-        assertEquals("remove", this.operations.get(0).type());
-        assertEquals(GameMode.SPECTATOR, this.operations.get(1).profiles().getFirst().gameMode());
+        assertEquals(1, this.operations.size());
+        assertEquals("mode", this.operations.getFirst().type());
+        assertEquals(List.of(OWN_ID), this.operations.getFirst().uuids());
+        assertEquals(GameMode.SPECTATOR, this.operations.getFirst().profiles().getFirst().gameMode());
         assertEquals(GameMode.SURVIVAL, this.profiles.get(OWN_ID).gameMode());
+    }
+
+    @Test
+    void neverRemovesOwnProfileWhileProjectingOrClearing() {
+        this.projection.begin(List.of(new SpectatorCameraPackets.Target(TARGET_ID, "Visible")), List.of());
+        this.projection.refreshProfile(OWN_ID);
+        this.projection.clear();
+
+        for (Operation operation : this.operations) {
+            if (operation.type().equals("remove")) {
+                assertFalse(operation.uuids().contains(OWN_ID));
+            }
+        }
     }
 
     @Test
@@ -258,8 +273,12 @@ class SpectatorMenuProjectionTest {
         this.operations.clear();
         this.projection.clear();
 
-        assertEquals(new Operation("remove", List.of(OWN_ID, TARGET_ID, OTHER_ID), List.of()), this.operations.get(0));
-        assertEquals(List.copyOf(this.profiles.values()), this.operations.get(1).profiles());
+        assertEquals(new Operation("remove", List.of(TARGET_ID, OTHER_ID), List.of()), this.operations.get(0));
+        assertEquals(List.of(this.profiles.get(TARGET_ID), this.profiles.get(OTHER_ID)),
+                this.operations.get(1).profiles());
+        assertEquals("mode", this.operations.get(2).type());
+        assertEquals(List.of(OWN_ID), this.operations.get(2).uuids());
+        assertEquals(GameMode.ADVENTURE, this.operations.get(2).profiles().getFirst().gameMode());
         assertFalse(this.projection.isActive());
     }
 

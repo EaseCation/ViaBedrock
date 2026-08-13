@@ -152,7 +152,15 @@ public final class SpectatorMenuProjection extends StoredObject {
         this.requestedTeams = List.of();
         this.visibleProjected.clear();
         this.unavailableTargets.clear();
-        this.packetSink.add(profiles);
+        final UUID ownUuid = this.profileSource.ownUuid();
+        final List<PlayerListStorage.JavaProfile> remoteProfiles = profiles.stream()
+                .filter(profile -> !profile.uuid().equals(ownUuid))
+                .toList();
+        this.packetSink.add(remoteProfiles);
+        final PlayerListStorage.JavaProfile ownProfile = this.profileSource.profile(ownUuid);
+        if (ownProfile != null) {
+            this.packetSink.updateGameMode(ownUuid, ownProfile.gameMode());
+        }
     }
 
     public void afterPlayerListAdd(final UUID[] uuids) {
@@ -177,8 +185,7 @@ public final class SpectatorMenuProjection extends StoredObject {
 
     public void refreshProfile(final UUID uuid) {
         if (!this.active) return;
-        this.packetSink.remove(new UUID[]{uuid});
-        this.visibleProjected.remove(uuid);
+        this.removeKnownProfiles(List.of(uuid));
         this.restoreOwnProfileIfPresent(List.of(uuid));
         this.addProjected(List.of(uuid));
     }
@@ -197,14 +204,14 @@ public final class SpectatorMenuProjection extends StoredObject {
     public void beforeEntitySpawn(final UUID uuid) {
         if (!this.active) return;
         this.removeProjectedTeams();
-        this.packetSink.remove(new UUID[]{uuid});
-        this.visibleProjected.remove(uuid);
+        this.removeKnownProfiles(List.of(uuid));
     }
 
     public void afterEntitySpawn(final UUID uuid) {
         if (!this.active) return;
         this.unavailableTargets.remove(uuid);
-        this.packetSink.remove(new UUID[]{uuid});
+        this.removeKnownProfiles(List.of(uuid));
+        this.restoreOwnProfileIfPresent(List.of(uuid));
         this.addProjected(List.of(uuid));
         this.addProjectedTeams();
     }
@@ -315,7 +322,11 @@ public final class SpectatorMenuProjection extends StoredObject {
 
     private void removeKnownProfiles(final Iterable<UUID> uuids) {
         final Set<UUID> unique = new LinkedHashSet<>();
+        final UUID ownUuid = this.profileSource.ownUuid();
         for (UUID uuid : uuids) {
+            // LocalPlayer caches its PlayerInfo object. Removing and re-adding the
+            // local profile leaves that cache pointing at a stale game mode.
+            if (uuid.equals(ownUuid)) continue;
             unique.add(uuid);
         }
         if (!unique.isEmpty()) {
@@ -331,15 +342,8 @@ public final class SpectatorMenuProjection extends StoredObject {
             if (!ownUuid.equals(uuid)) continue;
             final PlayerListStorage.JavaProfile base = this.profileSource.profile(uuid);
             if (base != null) {
-                this.packetSink.add(List.of(new PlayerListStorage.JavaProfile(
-                        base.uuid(),
-                        base.name(),
-                        base.properties(),
-                        this.effectiveOwnGameMode(base.uuid(), base.gameMode()),
-                        false,
-                        base.latency(),
-                        base.displayName()
-                )));
+                this.packetSink.updateGameMode(base.uuid(),
+                        this.effectiveOwnGameMode(base.uuid(), base.gameMode()));
             }
             return;
         }
