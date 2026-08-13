@@ -36,7 +36,9 @@ public final class ScriptMessagePackets {
                 return;
             } else if (PlayerLatencyPackets.MESSAGE_ID.equals(messageId)) {
                 PlayerLatencyPackets.handle(wrapper, payload);
-            } else if (SpectatorCameraPackets.MESSAGE_ID.equals(messageId)) {
+            } else if (SpectatorCameraPackets.MESSAGE_ID_V1.equals(messageId)) {
+                SpectatorCameraPackets.handleLegacy(wrapper, payload);
+            } else if (SpectatorCameraPackets.MESSAGE_ID_V2.equals(messageId)) {
                 SpectatorCameraPackets.handle(wrapper, payload);
             }
         });

@@ -326,10 +326,17 @@ public class ClientPlayerPackets {
             wrapper.write(Types.UUID, playerListEntry.key()); // uuid
             final boolean clientPlayerUpdate = playerListEntry.key().equals(clientPlayer.javaUuid());
             GameMode javaGameMode = GameTypeRewriter.getEffectiveGameMode(gameType, gameSession.getLevelGameType());
+            playerList.updateJavaGameMode(playerListEntry.key(), javaGameMode);
             if (clientPlayerUpdate) {
                 clientPlayer.setGameType(gameType);
                 javaGameMode = wrapper.user().get(SpectatorCameraTracker.class).projectJavaGameMode(clientPlayer.javaGameMode());
                 CLIENT_PLAYER_GAME_MODE_UPDATE.handle(wrapper);
+            }
+            final SpectatorMenuProjection spectatorMenu = wrapper.user().get(SpectatorMenuProjection.class);
+            if (spectatorMenu.isActive()) {
+                wrapper.cancel();
+                spectatorMenu.refreshProfile(playerListEntry.key());
+                return;
             }
             wrapper.write(Types.VAR_INT, javaGameMode.ordinal()); // game mode
         });
@@ -362,6 +369,11 @@ public class ClientPlayerPackets {
                 case REQUEST_STATS, REQUEST_GAMERULE_VALUES -> wrapper.cancel();
                 default -> throw new IllegalStateException("Unhandled ClientCommandAction: " + action);
             }
+        });
+        protocol.registerServerbound(ServerboundPackets26_1.TELEPORT_TO_ENTITY, null, wrapper -> {
+            wrapper.cancel();
+            final UUID targetId = wrapper.read(Types.UUID);
+            wrapper.user().get(SpectatorCameraTracker.class).requestTarget(targetId);
         });
         protocol.registerServerbound(ServerboundPackets26_1.PLAYER_COMMAND, null, wrapper -> {
             wrapper.cancel();

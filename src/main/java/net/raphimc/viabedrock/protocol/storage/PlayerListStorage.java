@@ -17,17 +17,22 @@
  */
 package net.raphimc.viabedrock.protocol.storage;
 
+import com.viaversion.nbt.tag.Tag;
+import com.viaversion.viaversion.api.minecraft.GameProfile;
 import com.viaversion.viaversion.api.connection.StorableObject;
 import com.viaversion.viaversion.util.Pair;
+import net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode;
 
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 public class PlayerListStorage implements StorableObject {
 
     private final Map<UUID, Pair<Long, String>> playerList = new HashMap<>();
+    private final Map<UUID, JavaProfile> javaProfiles = new LinkedHashMap<>();
     private final Map<UUID, Integer> serverLatencies = new HashMap<>();
     private final Map<UUID, Integer> publishedLatencies = new HashMap<>();
     private boolean invalidLatencyPayloadLogged;
@@ -38,6 +43,7 @@ public class PlayerListStorage implements StorableObject {
 
     public Pair<Long, String> removePlayer(final UUID uuid) {
         this.publishedLatencies.remove(uuid);
+        this.javaProfiles.remove(uuid);
         return this.playerList.remove(uuid);
     }
 
@@ -47,6 +53,35 @@ public class PlayerListStorage implements StorableObject {
 
     public Pair<Long, String> getPlayer(final UUID uuid) {
         return this.playerList.get(uuid);
+    }
+
+    public List<Entry> entries() {
+        return this.playerList.entrySet().stream()
+                .map(entry -> new Entry(entry.getKey(), entry.getValue().key(), entry.getValue().value()))
+                .toList();
+    }
+
+    public void putJavaProfile(final JavaProfile profile) {
+        this.javaProfiles.put(profile.uuid(), profile);
+    }
+
+    public void putJavaProfileIfAbsent(final JavaProfile profile) {
+        this.javaProfiles.putIfAbsent(profile.uuid(), profile);
+    }
+
+    public JavaProfile javaProfile(final UUID uuid) {
+        return this.javaProfiles.get(uuid);
+    }
+
+    public List<JavaProfile> javaProfiles() {
+        return List.copyOf(this.javaProfiles.values());
+    }
+
+    public void updateJavaGameMode(final UUID uuid, final GameMode gameMode) {
+        final JavaProfile profile = this.javaProfiles.get(uuid);
+        if (profile != null) {
+            this.javaProfiles.put(uuid, profile.withGameMode(gameMode));
+        }
     }
 
     public Pair<UUID, String> getPlayer(final long entityUniqueId) {
@@ -92,6 +127,34 @@ public class PlayerListStorage implements StorableObject {
 
         this.invalidLatencyPayloadLogged = true;
         return true;
+    }
+
+    public record Entry(UUID uuid, long entityUniqueId, String name) {
+    }
+
+    public record JavaProfile(
+            UUID uuid,
+            String name,
+            GameProfile.Property[] properties,
+            GameMode gameMode,
+            boolean listed,
+            int latency,
+            Tag displayName
+    ) {
+
+        public JavaProfile {
+            properties = properties.clone();
+        }
+
+        @Override
+        public GameProfile.Property[] properties() {
+            return this.properties.clone();
+        }
+
+        public JavaProfile withGameMode(final GameMode gameMode) {
+            return new JavaProfile(this.uuid, this.name, this.properties, gameMode,
+                    this.listed, this.latency, this.displayName);
+        }
     }
 
 }

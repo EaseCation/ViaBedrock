@@ -17,6 +17,7 @@
  */
 package net.raphimc.viabedrock.protocol.packet;
 
+import com.viaversion.nbt.tag.Tag;
 import com.viaversion.viaversion.api.Via;
 import com.viaversion.viaversion.api.minecraft.GameProfile;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
@@ -59,6 +60,7 @@ public class HudPackets {
     public static void register(final BedrockProtocol protocol) {
         protocol.registerClientbound(ClientboundBedrockPackets.PLAYER_LIST, ClientboundPackets26_1.PLAYER_INFO_UPDATE, wrapper -> {
             final PlayerListStorage playerListStorage = wrapper.user().get(PlayerListStorage.class);
+            final SpectatorMenuProjection spectatorMenu = wrapper.user().get(SpectatorMenuProjection.class);
             final ScoreboardTracker scoreboardTracker = wrapper.user().get(ScoreboardTracker.class);
             final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
 
@@ -101,18 +103,30 @@ public class HudPackets {
                         final boolean isHost = wrapper.read(Types.BOOLEAN); // is host
                         final boolean isSubClient = wrapper.read(Types.BOOLEAN); // is sub client
                         wrapper.read(BedrockTypes.INT_LE); // color (argb)
-                        wrapper.write(Types.PROFILE_PROPERTY_ARRAY, new GameProfile.Property[]{
+                        final GameProfile.Property[] properties = new GameProfile.Property[]{
                                 new GameProfile.Property("xuid", xuid),
                                 new GameProfile.Property("platform_online_id", platformOnlineId),
                                 new GameProfile.Property("device_os", String.valueOf(deviceOs)),
                                 new GameProfile.Property("is_teacher", String.valueOf(isTeacher)),
                                 new GameProfile.Property("is_host", String.valueOf(isHost)),
                                 new GameProfile.Property("is_subclient", String.valueOf(isSubClient))
-                        }); // properties
-                        wrapper.write(Types.BOOLEAN, ExperimentalFeatures.isPlayerListEntryListed(wrapper.user(), uuids[i], entityUniqueIds[i], names[i])); // listed
+                        };
+                        wrapper.write(Types.PROFILE_PROPERTY_ARRAY, properties); // properties
+                        final boolean listed = ExperimentalFeatures.isPlayerListEntryListed(wrapper.user(), uuids[i], entityUniqueIds[i], names[i]);
+                        wrapper.write(Types.BOOLEAN, listed); // listed
                         final int latency = localPlayer ? packetSyncStorage.latencyMillis() : playerListStorage.serverLatency(uuids[i]);
                         wrapper.write(Types.VAR_INT, latency); // latency
-                        wrapper.write(Types.OPTIONAL_TAG, ExperimentalFeatures.decoratePlayerListDisplayName(wrapper.user(), uuids[i], entityUniqueIds[i], names[i], latency, TextUtil.stringToNbt(names[i]))); // display name
+                        final Tag displayName = ExperimentalFeatures.decoratePlayerListDisplayName(wrapper.user(), uuids[i], entityUniqueIds[i], names[i], latency, TextUtil.stringToNbt(names[i]));
+                        wrapper.write(Types.OPTIONAL_TAG, displayName); // display name
+                        playerListStorage.putJavaProfile(new PlayerListStorage.JavaProfile(
+                                uuids[i],
+                                StringUtil.encodeUUID(uuids[i]),
+                                properties,
+                                net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode.SURVIVAL,
+                                listed,
+                                latency,
+                                displayName
+                        ));
 
                         if (localPlayer) {
                             packetSyncStorage.markLatencyPublished(System.nanoTime());
@@ -154,6 +168,10 @@ public class HudPackets {
                     }
 
                     PacketFactory.sendJavaCustomChatCompletions(wrapper.user(), CustomChatCompletionsAction.ADD, names);
+                    if (spectatorMenu.isActive()) {
+                        wrapper.cancel();
+                        spectatorMenu.afterPlayerListAdd(uuids);
+                    }
                 }
                 case Remove -> {
                     wrapper.setPacketType(ClientboundPackets26_1.PLAYER_INFO_REMOVE);
@@ -173,6 +191,7 @@ public class HudPackets {
                     }
 
                     PacketFactory.sendJavaCustomChatCompletions(wrapper.user(), CustomChatCompletionsAction.REMOVE, names.toArray(new String[0]));
+                    spectatorMenu.afterPlayerListRemove(uuids);
                 }
                 default -> throw new IllegalStateException("Unhandled PlayerListPacketType: " + action);
             }

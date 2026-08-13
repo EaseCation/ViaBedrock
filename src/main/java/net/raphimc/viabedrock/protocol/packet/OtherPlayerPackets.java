@@ -50,6 +50,7 @@ import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
 import net.raphimc.viabedrock.protocol.storage.PlayerListStorage;
 import net.raphimc.viabedrock.protocol.storage.SpectatorCameraTracker;
+import net.raphimc.viabedrock.protocol.storage.SpectatorMenuProjection;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.util.UUID;
@@ -83,17 +84,34 @@ public class OtherPlayerPackets {
             entity.setRotation(rotation);
             entity.updateName(username);
 
+            final SpectatorMenuProjection spectatorMenu = wrapper.user().get(SpectatorMenuProjection.class);
+            spectatorMenu.beforeEntitySpawn(uuid);
+
+            final GameProfile.Property[] profileProperties = new GameProfile.Property[]{
+                    new GameProfile.Property("platform_online_id", platformOnlineId),
+                    new GameProfile.Property("device_id", wrapper.read(BedrockTypes.STRING)), // device id
+                    new GameProfile.Property("device_os", wrapper.read(BedrockTypes.INT_LE).toString()) // device os
+            };
+            final net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode javaGameMode =
+                    GameTypeRewriter.getEffectiveGameMode(gameType, gameSession.getLevelGameType());
+            playerListStorage.putJavaProfileIfAbsent(new PlayerListStorage.JavaProfile(
+                    uuid,
+                    StringUtil.encodeUUID(uuid),
+                    profileProperties,
+                    javaGameMode,
+                    false,
+                    playerListStorage.serverLatency(uuid),
+                    null
+            ));
+            playerListStorage.updateJavaGameMode(uuid, javaGameMode);
+
             final PacketWrapper playerInfoUpdate = PacketWrapper.create(ClientboundPackets26_1.PLAYER_INFO_UPDATE, wrapper.user());
             playerInfoUpdate.write(Types.PROFILE_ACTIONS_ENUM1_21_4, BitSets.create(8, PlayerInfoUpdateAction.ADD_PLAYER, PlayerInfoUpdateAction.UPDATE_GAME_MODE, PlayerInfoUpdateAction.UPDATE_LATENCY)); // actions
             playerInfoUpdate.write(Types.VAR_INT, 1); // length
             playerInfoUpdate.write(Types.UUID, uuid); // uuid
             playerInfoUpdate.write(Types.STRING, StringUtil.encodeUUID(uuid)); // username
-            playerInfoUpdate.write(Types.PROFILE_PROPERTY_ARRAY, new GameProfile.Property[]{
-                    new GameProfile.Property("platform_online_id", platformOnlineId),
-                    new GameProfile.Property("device_id", wrapper.read(BedrockTypes.STRING)), // device id
-                    new GameProfile.Property("device_os", wrapper.read(BedrockTypes.INT_LE).toString()) // device os
-            }); // properties
-            playerInfoUpdate.write(Types.VAR_INT, GameTypeRewriter.getEffectiveGameMode(gameType, gameSession.getLevelGameType()).ordinal()); // game mode
+            playerInfoUpdate.write(Types.PROFILE_PROPERTY_ARRAY, profileProperties); // properties
+            playerInfoUpdate.write(Types.VAR_INT, javaGameMode.ordinal()); // game mode
             playerInfoUpdate.write(Types.VAR_INT, playerListStorage.serverLatency(uuid)); // latency
             playerInfoUpdate.send(BedrockProtocol.class);
 
@@ -111,6 +129,7 @@ public class OtherPlayerPackets {
             wrapper.send(BedrockProtocol.class);
             wrapper.cancel();
             wrapper.user().get(SpectatorCameraTracker.class).onJavaPlayerSpawned(entity);
+            spectatorMenu.afterEntitySpawn(uuid);
 
             final PacketWrapper setEquipment = PacketWrapper.create(ClientboundPackets26_1.SET_EQUIPMENT, wrapper.user());
             setEquipment.write(Types.VAR_INT, entity.javaId()); // entity id

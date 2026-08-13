@@ -15,6 +15,7 @@ import io.netty.channel.embedded.EmbeddedChannel;
 import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode;
 import net.raphimc.viabedrock.protocol.model.Position3f;
+import net.raphimc.viabedrock.protocol.packet.SpectatorCameraPackets;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -33,18 +34,57 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class SpectatorCameraTrackerTest {
 
     private static final int OWN_JAVA_ID = 1;
+    private static final UUID SESSION_ID = UUID.fromString("11111111-1111-1111-1111-111111111111");
+    private static final UUID TARGET_ID = UUID.fromString("22222222-2222-2222-2222-222222222222");
 
     private final EmbeddedChannel channel = new EmbeddedChannel();
     private final UserConnectionImpl user = new UserConnectionImpl(this.channel);
     private final Map<Long, Entity> entities = new HashMap<>();
     private final List<Integer> cameraPackets = new ArrayList<>();
-    private final List<String> detachRequests = new ArrayList<>();
+    private final List<Request> requests = new ArrayList<>();
     private final List<GameMode> gameModes = new ArrayList<>();
     private int abilityResends;
     private SpectatorCameraTracker tracker;
 
     @BeforeEach
     void setUp() {
+        this.user.put(new PlayerListStorage());
+        final SpectatorMenuProjection menu = new SpectatorMenuProjection(
+                this.user,
+                new SpectatorMenuProjection.ProfileSource() {
+                    @Override
+                    public List<PlayerListStorage.JavaProfile> profiles() {
+                        return List.of();
+                    }
+
+                    @Override
+                    public PlayerListStorage.JavaProfile profile(final UUID uuid) {
+                        return null;
+                    }
+
+                    @Override
+                    public UUID ownUuid() {
+                        return null;
+                    }
+                },
+                new SpectatorMenuProjection.PacketSink() {
+                    @Override
+                    public void remove(final UUID[] uuids) {
+                    }
+
+                    @Override
+                    public void add(final List<PlayerListStorage.JavaProfile> profiles) {
+                    }
+
+                    @Override
+                    public void addTeam(final SpectatorMenuProjection.ProjectedTeam team) {
+                    }
+
+                    @Override
+                    public void removeTeam(final String teamId) {
+                    }
+                }
+        );
         this.tracker = new SpectatorCameraTracker(this.user, new SpectatorCameraTracker.EntityLookup() {
             @Override
             public Entity findByRuntimeId(final long runtimeId) {
@@ -67,8 +107,23 @@ class SpectatorCameraTrackerTest {
             }
 
             @Override
-            public void sendDetachRequest(final String reason) {
-                detachRequests.add(reason);
+            public void sendSessionReady(final UUID sessionId, final long generation) {
+                requests.add(new Request("ready", sessionId, generation, null));
+            }
+
+            @Override
+            public void sendDetachRequest(final UUID sessionId, final long generation, final String reason) {
+                requests.add(new Request(reason, sessionId, generation, null));
+            }
+
+            @Override
+            public void sendTargetRequest(final UUID sessionId, final long generation, final UUID targetId) {
+                requests.add(new Request("target", sessionId, generation, targetId));
+            }
+
+            @Override
+            public void sendLegacyDetachRequest(final String reason) {
+                requests.add(new Request(reason, null, -1L, null));
             }
 
             @Override
@@ -80,7 +135,7 @@ class SpectatorCameraTrackerTest {
             public void resendAbilities() {
                 abilityResends++;
             }
-        });
+        }, menu);
     }
 
     @AfterEach
@@ -90,9 +145,10 @@ class SpectatorCameraTrackerTest {
 
     @Test
     void waitsUntilTargetWasSentToJavaClient() {
-        final Entity target = this.entity(10L, 40, new Position3f(1F, 2F, 3F));
+        final Entity target = this.entity(10L, 40, TARGET_ID, new Position3f(1F, 2F, 3F));
+        this.beginSession();
 
-        this.tracker.attach(target.runtimeId());
+        this.tracker.attach(SESSION_ID, 2L, target.runtimeId());
         assertEquals(SpectatorCameraTracker.State.PENDING_TARGET, this.tracker.state());
         assertTrue(this.cameraPackets.isEmpty());
         assertEquals(List.of(GameMode.SPECTATOR), this.gameModes);
@@ -101,102 +157,116 @@ class SpectatorCameraTrackerTest {
         assertEquals(SpectatorCameraTracker.State.ATTACHED, this.tracker.state());
         assertEquals(List.of(40), this.cameraPackets);
 
-        this.tracker.attach(target.runtimeId());
+        this.tracker.attach(SESSION_ID, 2L, target.runtimeId());
         assertEquals(List.of(40), this.cameraPackets);
+    }
 
-        this.tracker.detach();
-        this.tracker.detach();
+    @Test
+    void shiftDetachesTargetButKeepsSpectatorSession() {
+        final Entity target = this.entity(10L, 40, TARGET_ID, Position3f.ZERO);
+        this.beginSession();
+        this.tracker.onJavaPlayerSpawned(target);
+        this.tracker.attach(SESSION_ID, 2L, target.runtimeId());
+
+        assertTrue(this.tracker.handleShiftInput(true));
+        assertTrue(this.tracker.handleShiftInput(true));
+        assertEquals(List.of(new Request("sneak", SESSION_ID, 2L, null)), this.requests);
+
+        this.tracker.detachTarget(SESSION_ID, 2L);
         assertEquals(List.of(40, OWN_JAVA_ID), this.cameraPackets);
+        assertEquals(List.of(GameMode.SPECTATOR), this.gameModes);
+        assertEquals(GameMode.SPECTATOR, this.tracker.projectJavaGameMode(GameMode.ADVENTURE));
+        assertEquals(0, this.abilityResends);
+
+        assertTrue(this.tracker.handleShiftInput(true));
+        assertFalse(this.tracker.handleShiftInput(false));
+        assertFalse(this.tracker.handleShiftInput(true));
+
+        this.tracker.endSession(SESSION_ID);
         assertEquals(List.of(GameMode.SPECTATOR, GameMode.CREATIVE), this.gameModes);
         assertEquals(1, this.abilityResends);
-        assertEquals(SpectatorCameraTracker.State.DETACHED, this.tracker.state());
+        assertEquals(GameMode.ADVENTURE, this.tracker.projectJavaGameMode(GameMode.ADVENTURE));
     }
 
     @Test
-    void restoresOwnCameraBeforeWaitingForANewTarget() {
-        final Entity first = this.entity(10L, 40, Position3f.ZERO);
-        final Entity second = this.entity(11L, 41, Position3f.ZERO);
-        this.tracker.onJavaPlayerSpawned(first);
-        this.tracker.attach(first.runtimeId());
-
-        this.tracker.attach(second.runtimeId());
-        assertEquals(SpectatorCameraTracker.State.PENDING_TARGET, this.tracker.state());
-        assertEquals(List.of(40, OWN_JAVA_ID), this.cameraPackets);
-
-        this.tracker.onJavaPlayerSpawned(second);
-        assertEquals(SpectatorCameraTracker.State.ATTACHED, this.tracker.state());
-        assertEquals(List.of(40, OWN_JAVA_ID, 41), this.cameraPackets);
-    }
-
-    @Test
-    void detachesWhenTargetIsRemovedOrDimensionChanges() {
-        final Entity target = this.entity(10L, 40, Position3f.ZERO);
+    void ignoresStaleGenerationAndUnauthorizedTargets() {
+        final Entity target = this.entity(10L, 40, TARGET_ID, Position3f.ZERO);
+        this.beginSession();
         this.tracker.onJavaPlayerSpawned(target);
-        this.tracker.attach(target.runtimeId());
+        this.tracker.attach(SESSION_ID, 2L, target.runtimeId());
+
+        this.tracker.detachTarget(SESSION_ID, 1L);
+        assertEquals(SpectatorCameraTracker.State.ATTACHED, this.tracker.state());
+        assertFalse(this.tracker.requestTarget(UUID.randomUUID()));
+        assertTrue(this.tracker.requestTarget(TARGET_ID));
+        assertEquals(new Request("target", SESSION_ID, 2L, TARGET_ID), this.requests.getFirst());
+    }
+
+    @Test
+    void targetRemovalKeepsSessionAndReportsCurrentGeneration() {
+        final Entity target = this.entity(10L, 40, TARGET_ID, Position3f.ZERO);
+        this.beginSession();
+        this.tracker.onJavaPlayerSpawned(target);
+        this.tracker.attach(SESSION_ID, 2L, target.runtimeId());
         this.tracker.onEntityRemoved(target);
 
         assertEquals(List.of(40, OWN_JAVA_ID), this.cameraPackets);
-        assertEquals(List.of("target_removed"), this.detachRequests);
+        assertEquals(List.of(new Request("target_removed", SESSION_ID, 2L, null)), this.requests);
         assertEquals(SpectatorCameraTracker.State.DETACHED, this.tracker.state());
-
-        this.tracker.attach(99L);
-        this.tracker.onDimensionChange();
-        assertEquals(List.of(40, OWN_JAVA_ID), this.cameraPackets);
-        assertEquals(List.of("target_removed", "dimension_change"), this.detachRequests);
+        assertEquals(List.of(GameMode.SPECTATOR), this.gameModes);
     }
 
     @Test
-    void consumesShiftUntilReleaseWithoutLeavingSneakState() {
-        final Entity target = this.entity(10L, 40, Position3f.ZERO);
+    void legacyModeRemainsAvailableUntilVersionedSessionBegins() {
+        final Entity target = this.entity(10L, 40, TARGET_ID, Position3f.ZERO);
         this.tracker.onJavaPlayerSpawned(target);
-        this.tracker.attach(target.runtimeId());
+        this.tracker.attachLegacy(target.runtimeId());
+        assertEquals(List.of(40), this.cameraPackets);
+        assertEquals(List.of(GameMode.SPECTATOR), this.gameModes);
 
         assertTrue(this.tracker.handleShiftInput(true));
-        assertTrue(this.tracker.handleShiftInput(true));
-        assertEquals(List.of("sneak"), this.detachRequests);
-        assertEquals(SpectatorCameraTracker.State.DETACH_REQUESTED, this.tracker.state());
+        assertEquals(List.of(new Request("sneak", null, -1L, null)), this.requests);
+        this.tracker.detachLegacy();
+        assertEquals(List.of(40, OWN_JAVA_ID), this.cameraPackets);
+        assertEquals(List.of(GameMode.SPECTATOR, GameMode.CREATIVE), this.gameModes);
 
-        this.tracker.detach();
-        assertTrue(this.tracker.handleShiftInput(true));
-        assertFalse(this.tracker.handleShiftInput(false));
-        assertFalse(this.tracker.suppressShiftUntilRelease());
-        assertFalse(this.tracker.handleShiftInput(true));
-        assertEquals(List.of("sneak"), this.detachRequests);
+        this.beginSession();
+        this.tracker.attachLegacy(target.runtimeId());
+        assertEquals(SpectatorCameraTracker.State.DETACHED, this.tracker.state());
     }
 
     @Test
     void usesAttachedTargetAsJavaSoundListener() {
         final Position3f position = new Position3f(4F, 5F, 6F);
-        final Entity target = this.entity(10L, 40, position);
+        final Entity target = this.entity(10L, 40, TARGET_ID, position);
 
         assertNull(this.tracker.javaListenerPosition());
+        this.beginSession();
         this.tracker.onJavaPlayerSpawned(target);
-        this.tracker.attach(target.runtimeId());
+        this.tracker.attach(SESSION_ID, 2L, target.runtimeId());
         assertEquals(position, this.tracker.javaListenerPosition());
 
-        this.tracker.detach();
+        this.tracker.detachTarget(SESSION_ID, 2L);
         assertNull(this.tracker.javaListenerPosition());
     }
 
-    @Test
-    void keepsIncomingGameModeUpdatesInSpectatorProjectionUntilDetach() {
-        final Entity target = this.entity(10L, 40, Position3f.ZERO);
-
-        assertEquals(GameMode.ADVENTURE, this.tracker.projectJavaGameMode(GameMode.ADVENTURE));
-        this.tracker.onJavaPlayerSpawned(target);
-        this.tracker.attach(target.runtimeId());
-        assertEquals(GameMode.SPECTATOR, this.tracker.projectJavaGameMode(GameMode.ADVENTURE));
-
-        this.tracker.detach();
-        assertEquals(GameMode.ADVENTURE, this.tracker.projectJavaGameMode(GameMode.ADVENTURE));
+    private void beginSession() {
+        this.tracker.beginSession(
+                SESSION_ID,
+                1L,
+                List.of(new SpectatorCameraPackets.Target(TARGET_ID, "Target")),
+                List.of()
+        );
     }
 
-    private Entity entity(final long runtimeId, final int javaId, final Position3f position) {
+    private Entity entity(final long runtimeId, final int javaId, final UUID uuid, final Position3f position) {
         final Entity entity = new Entity(this.user, runtimeId, runtimeId, "minecraft:player", javaId,
-                UUID.randomUUID(), EntityTypes1_21_11.PLAYER);
+                uuid, EntityTypes1_21_11.PLAYER);
         entity.setPosition(position);
         this.entities.put(runtimeId, entity);
         return entity;
     }
 
+    private record Request(String action, UUID sessionId, long generation, UUID targetId) {
+    }
 }
