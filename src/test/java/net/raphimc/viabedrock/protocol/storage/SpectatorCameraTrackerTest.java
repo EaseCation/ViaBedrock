@@ -77,6 +77,10 @@ class SpectatorCameraTrackerTest {
                     }
 
                     @Override
+                    public void updateGameMode(final UUID uuid, final GameMode gameMode) {
+                    }
+
+                    @Override
                     public void addTeam(final SpectatorMenuProjection.ProjectedTeam team) {
                     }
 

@@ -85,6 +85,11 @@ public final class SpectatorMenuProjection extends StoredObject {
             }
 
             @Override
+            public void updateGameMode(final UUID uuid, final GameMode gameMode) {
+                sendGameMode(user, uuid, gameMode);
+            }
+
+            @Override
             public void addTeam(final ProjectedTeam team) {
                 sendTeam(user, team);
             }
@@ -183,8 +188,10 @@ public final class SpectatorMenuProjection extends StoredObject {
         this.ownSpectatorPresentation = spectator;
         final UUID ownUuid = this.profileSource.ownUuid();
         if (ownUuid == null) return;
-        this.packetSink.remove(new UUID[]{ownUuid});
-        this.restoreOwnProfileIfPresent(List.of(ownUuid));
+        final PlayerListStorage.JavaProfile base = this.profileSource.profile(ownUuid);
+        if (base != null) {
+            this.packetSink.updateGameMode(ownUuid, this.effectiveOwnGameMode(ownUuid, base.gameMode()));
+        }
     }
 
     public void beforeEntitySpawn(final UUID uuid) {
@@ -328,7 +335,7 @@ public final class SpectatorMenuProjection extends StoredObject {
                         base.uuid(),
                         base.name(),
                         base.properties(),
-                        this.ownSpectatorPresentation ? GameMode.SPECTATOR : base.gameMode(),
+                        this.effectiveOwnGameMode(base.uuid(), base.gameMode()),
                         false,
                         base.latency(),
                         base.displayName()
@@ -336,6 +343,13 @@ public final class SpectatorMenuProjection extends StoredObject {
             }
             return;
         }
+    }
+
+    private GameMode effectiveOwnGameMode(final UUID uuid, final GameMode baseGameMode) {
+        final UUID ownUuid = this.profileSource.ownUuid();
+        return this.active && this.ownSpectatorPresentation && uuid.equals(ownUuid)
+                ? GameMode.SPECTATOR
+                : baseGameMode;
     }
 
     private void addProjected(final Iterable<UUID> uuids) {
@@ -442,6 +456,16 @@ public final class SpectatorMenuProjection extends StoredObject {
         packet.send(BedrockProtocol.class);
     }
 
+    private static void sendGameMode(final UserConnection user, final UUID uuid, final GameMode gameMode) {
+        final PacketWrapper packet = PacketWrapper.create(ClientboundPackets26_1.PLAYER_INFO_UPDATE, user);
+        packet.write(Types.PROFILE_ACTIONS_ENUM1_21_4,
+                BitSets.create(8, PlayerInfoUpdateAction.UPDATE_GAME_MODE));
+        packet.write(Types.VAR_INT, 1);
+        packet.write(Types.UUID, uuid);
+        packet.write(Types.VAR_INT, gameMode.ordinal());
+        packet.send(BedrockProtocol.class);
+    }
+
     private static void sendTeam(final UserConnection user, final ProjectedTeam team) {
         final TextFormatting color = team.color() >= 0
                 ? TextFormatting.getByOrdinal(team.color())
@@ -472,6 +496,7 @@ public final class SpectatorMenuProjection extends StoredObject {
     interface PacketSink {
         void remove(UUID[] uuids);
         void add(List<PlayerListStorage.JavaProfile> profiles);
+        void updateGameMode(UUID uuid, GameMode gameMode);
         void addTeam(ProjectedTeam team);
         void removeTeam(String teamId);
     }

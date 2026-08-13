@@ -78,6 +78,12 @@ class SpectatorMenuProjectionTest {
                     }
 
                     @Override
+                    public void updateGameMode(final UUID uuid, final GameMode gameMode) {
+                        operations.add(new Operation("mode", List.of(uuid),
+                                List.of(SpectatorMenuProjectionTest.this.profile(uuid, gameMode, false))));
+                    }
+
+                    @Override
                     public void addTeam(final SpectatorMenuProjection.ProjectedTeam team) {
                         teamOperations.add(new TeamOperation("add", team));
                     }
@@ -147,12 +153,28 @@ class SpectatorMenuProjectionTest {
         this.operations.clear();
 
         this.projection.setOwnSpectatorPresentation(true);
-        assertEquals(new Operation("remove", List.of(OWN_ID), List.of()), this.operations.get(0));
-        assertEquals(GameMode.SPECTATOR, this.operations.get(1).profiles().getFirst().gameMode());
+        assertEquals("mode", this.operations.getFirst().type());
+        assertEquals(List.of(OWN_ID), this.operations.getFirst().uuids());
+        assertEquals(GameMode.SPECTATOR, this.operations.getFirst().profiles().getFirst().gameMode());
 
         this.operations.clear();
         this.projection.setOwnSpectatorPresentation(false);
-        assertEquals(GameMode.ADVENTURE, this.operations.get(1).profiles().getFirst().gameMode());
+        assertEquals("mode", this.operations.getFirst().type());
+        assertEquals(GameMode.ADVENTURE, this.operations.getFirst().profiles().getFirst().gameMode());
+    }
+
+    @Test
+    void keepsOwnProfileSpectatorWhenBaseProfileRefreshesWhileAttached() {
+        this.projection.begin(List.of(new SpectatorCameraPackets.Target(TARGET_ID, "Visible")), List.of());
+        this.projection.setOwnSpectatorPresentation(true);
+        this.operations.clear();
+
+        this.profiles.put(OWN_ID, this.profile(OWN_ID, GameMode.SURVIVAL, true));
+        this.projection.refreshProfile(OWN_ID);
+
+        assertEquals("remove", this.operations.get(0).type());
+        assertEquals(GameMode.SPECTATOR, this.operations.get(1).profiles().getFirst().gameMode());
+        assertEquals(GameMode.SURVIVAL, this.profiles.get(OWN_ID).gameMode());
     }
 
     @Test
