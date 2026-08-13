@@ -351,12 +351,14 @@ public final class SpectatorCameraTracker extends StoredObject {
     private void showSpectatorPresentation() {
         if (this.spectatorPresentation) return;
         this.spectatorPresentation = true;
+        this.menuProjection.setOwnSpectatorPresentation(true);
         this.packetSink.sendGameMode(GameMode.SPECTATOR);
     }
 
     private void restoreOwnPresentation() {
         if (!this.spectatorPresentation) return;
         this.spectatorPresentation = false;
+        this.menuProjection.setOwnSpectatorPresentation(false);
         this.packetSink.sendGameMode(this.entityLookup.ownJavaGameMode());
         this.packetSink.resendAbilities();
     }

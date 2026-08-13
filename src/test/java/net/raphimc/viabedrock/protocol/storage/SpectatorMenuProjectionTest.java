@@ -129,7 +129,7 @@ class SpectatorMenuProjectionTest {
 
         final PlayerListStorage.JavaProfile own = this.operations.get(1).profiles().getFirst();
         assertEquals(OWN_ID, own.uuid());
-        assertEquals(GameMode.SPECTATOR, own.gameMode());
+        assertEquals(GameMode.ADVENTURE, own.gameMode());
         assertFalse(own.listed());
 
         final PlayerListStorage.JavaProfile target = this.operations.get(2).profiles().getFirst();
@@ -139,6 +139,20 @@ class SpectatorMenuProjectionTest {
         assertTrue(this.projection.contains(TARGET_ID));
         assertFalse(this.projection.contains(OTHER_ID));
         assertTrue(this.teamOperations.isEmpty());
+    }
+
+    @Test
+    void switchesOwnProfileModeOnlyWhileAttached() {
+        this.projection.begin(List.of(new SpectatorCameraPackets.Target(TARGET_ID, "Visible")), List.of());
+        this.operations.clear();
+
+        this.projection.setOwnSpectatorPresentation(true);
+        assertEquals(new Operation("remove", List.of(OWN_ID), List.of()), this.operations.get(0));
+        assertEquals(GameMode.SPECTATOR, this.operations.get(1).profiles().getFirst().gameMode());
+
+        this.operations.clear();
+        this.projection.setOwnSpectatorPresentation(false);
+        assertEquals(GameMode.ADVENTURE, this.operations.get(1).profiles().getFirst().gameMode());
     }
 
     @Test

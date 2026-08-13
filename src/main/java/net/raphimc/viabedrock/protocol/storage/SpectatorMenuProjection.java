@@ -50,6 +50,7 @@ public final class SpectatorMenuProjection extends StoredObject {
     private final Set<UUID> unavailableTargets = new HashSet<>();
     private List<SpectatorCameraPackets.Team> requestedTeams = List.of();
     private boolean active;
+    private boolean ownSpectatorPresentation;
 
     public SpectatorMenuProjection(final UserConnection user) {
         this(user, new ProfileSource() {
@@ -140,6 +141,7 @@ public final class SpectatorMenuProjection extends StoredObject {
         this.removeProjectedTeams();
         this.removeKnownProfiles(uuids);
         this.active = false;
+        this.ownSpectatorPresentation = false;
         this.projectedNames.clear();
         this.projectedBaseNames.clear();
         this.requestedTeams = List.of();
@@ -174,6 +176,15 @@ public final class SpectatorMenuProjection extends StoredObject {
         this.visibleProjected.remove(uuid);
         this.restoreOwnProfileIfPresent(List.of(uuid));
         this.addProjected(List.of(uuid));
+    }
+
+    public void setOwnSpectatorPresentation(final boolean spectator) {
+        if (!this.active || this.ownSpectatorPresentation == spectator) return;
+        this.ownSpectatorPresentation = spectator;
+        final UUID ownUuid = this.profileSource.ownUuid();
+        if (ownUuid == null) return;
+        this.packetSink.remove(new UUID[]{ownUuid});
+        this.restoreOwnProfileIfPresent(List.of(ownUuid));
     }
 
     public void beforeEntitySpawn(final UUID uuid) {
@@ -317,7 +328,7 @@ public final class SpectatorMenuProjection extends StoredObject {
                         base.uuid(),
                         base.name(),
                         base.properties(),
-                        GameMode.SPECTATOR,
+                        this.ownSpectatorPresentation ? GameMode.SPECTATOR : base.gameMode(),
                         false,
                         base.latency(),
                         base.displayName()
