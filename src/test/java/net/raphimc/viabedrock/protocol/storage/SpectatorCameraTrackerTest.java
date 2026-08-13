@@ -283,6 +283,17 @@ class SpectatorCameraTrackerTest {
     }
 
     @Test
+    void syntheticSpectatorPresentationRejectsJavaGameModeChanges() {
+        assertTrue(this.tracker.acceptsJavaGameModeChange());
+
+        this.beginSession();
+        assertFalse(this.tracker.acceptsJavaGameModeChange());
+
+        this.tracker.detachTarget(SESSION_ID, 1L);
+        assertTrue(this.tracker.acceptsJavaGameModeChange());
+    }
+
+    @Test
     void legacyModeRemainsAvailableUntilVersionedSessionBegins() {
         final Entity target = this.entity(10L, 40, TARGET_ID, Position3f.ZERO);
         this.tracker.onJavaPlayerSpawned(target);

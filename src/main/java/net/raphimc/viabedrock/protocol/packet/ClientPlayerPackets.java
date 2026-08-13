@@ -714,6 +714,10 @@ public class ClientPlayerPackets {
             @Override
             protected void register() {
                 handler(wrapper -> {
+                    if (!wrapper.user().get(SpectatorCameraTracker.class).acceptsJavaGameModeChange()) {
+                        wrapper.cancel();
+                        return;
+                    }
                     final GameMode gameMode = GameMode.values()[wrapper.read(Types.VAR_INT)]; // game mode
                     final GameType gameType = switch (gameMode) {
                         case SURVIVAL -> GameType.Survival;

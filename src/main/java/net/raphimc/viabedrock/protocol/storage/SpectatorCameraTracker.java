@@ -291,6 +291,10 @@ public final class SpectatorCameraTracker extends StoredObject {
         return this.spectatorPresentation ? GameMode.SPECTATOR : gameMode;
     }
 
+    public boolean acceptsJavaGameModeChange() {
+        return !this.spectatorPresentation;
+    }
+
     public void restorePresentationAfterClientReset() {
         if (this.spectatorPresentation) {
             this.packetSink.sendGameMode(GameMode.SPECTATOR);
