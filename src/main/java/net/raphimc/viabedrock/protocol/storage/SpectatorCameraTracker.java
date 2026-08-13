@@ -142,7 +142,6 @@ public final class SpectatorCameraTracker extends StoredObject {
         this.state = State.DETACHED;
         this.clearTarget();
         this.menuProjection.begin(targets, teams);
-        this.showSpectatorPresentation();
     }
 
     public void confirmSession() {
@@ -179,8 +178,6 @@ public final class SpectatorCameraTracker extends StoredObject {
     }
 
     private void attachCamera(final long runtimeId) {
-        this.showSpectatorPresentation();
-
         final Entity target = this.entityLookup.findByRuntimeId(runtimeId);
         if (target == null || !this.spawnedPlayerRuntimeIds.contains(runtimeId)) {
             if (this.hasActiveCamera() && this.targetRuntimeId != runtimeId) {
@@ -192,6 +189,7 @@ public final class SpectatorCameraTracker extends StoredObject {
             return;
         }
 
+        this.showSpectatorPresentation();
         if (this.hasActiveCamera() && this.targetRuntimeId == runtimeId && this.targetJavaId == target.javaId()) {
             this.state = State.ATTACHED;
             return;

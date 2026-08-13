@@ -151,11 +151,12 @@ class SpectatorCameraTrackerTest {
         this.tracker.attach(SESSION_ID, 2L, target.runtimeId());
         assertEquals(SpectatorCameraTracker.State.PENDING_TARGET, this.tracker.state());
         assertTrue(this.cameraPackets.isEmpty());
-        assertEquals(List.of(GameMode.SPECTATOR), this.gameModes);
+        assertTrue(this.gameModes.isEmpty());
 
         this.tracker.onJavaPlayerSpawned(target);
         assertEquals(SpectatorCameraTracker.State.ATTACHED, this.tracker.state());
         assertEquals(List.of(40), this.cameraPackets);
+        assertEquals(List.of(GameMode.SPECTATOR), this.gameModes);
 
         this.tracker.attach(SESSION_ID, 2L, target.runtimeId());
         assertEquals(List.of(40), this.cameraPackets);
@@ -241,37 +242,37 @@ class SpectatorCameraTrackerTest {
     }
 
     @Test
-    void dimensionChangeRestoresDetachedSessionPresentation() {
+    void dimensionChangeKeepsDetachedSessionInRealPresentation() {
         this.beginSession();
 
         this.tracker.onDimensionChange();
 
         assertTrue(this.cameraPackets.isEmpty());
         assertTrue(this.requests.isEmpty());
-        assertEquals(List.of(GameMode.SPECTATOR, GameMode.CREATIVE), this.gameModes);
-        assertEquals(1, this.abilityResends);
+        assertTrue(this.gameModes.isEmpty());
+        assertEquals(0, this.abilityResends);
         assertEquals(GameMode.ADVENTURE, this.tracker.projectJavaGameMode(GameMode.ADVENTURE));
     }
 
     @Test
-    void reusedSessionCanRestoreSpectatorPresentation() {
+    void reusedSessionKeepsRealPresentationUntilAttach() {
         this.beginSession();
         this.tracker.onDimensionChange();
 
         this.beginSession();
 
-        assertEquals(List.of(GameMode.SPECTATOR, GameMode.CREATIVE, GameMode.SPECTATOR), this.gameModes);
-        assertEquals(GameMode.SPECTATOR, this.tracker.projectJavaGameMode(GameMode.ADVENTURE));
+        assertTrue(this.gameModes.isEmpty());
+        assertEquals(GameMode.ADVENTURE, this.tracker.projectJavaGameMode(GameMode.ADVENTURE));
     }
 
     @Test
-    void clientResetRestoresSpectatorPresentationWithoutRealAbilities() {
+    void clientResetRestoresRealAbilitiesForDetachedSession() {
         this.beginSession();
 
         this.tracker.restorePresentationAfterClientReset();
 
-        assertEquals(List.of(GameMode.SPECTATOR, GameMode.SPECTATOR), this.gameModes);
-        assertEquals(0, this.abilityResends);
+        assertTrue(this.gameModes.isEmpty());
+        assertEquals(1, this.abilityResends);
     }
 
     @Test
@@ -287,9 +288,14 @@ class SpectatorCameraTrackerTest {
         assertTrue(this.tracker.acceptsJavaGameModeChange());
 
         this.beginSession();
+        assertTrue(this.tracker.acceptsJavaGameModeChange());
+
+        final Entity target = this.entity(10L, 40, TARGET_ID, Position3f.ZERO);
+        this.tracker.onJavaPlayerSpawned(target);
+        this.tracker.attach(SESSION_ID, 2L, target.runtimeId());
         assertFalse(this.tracker.acceptsJavaGameModeChange());
 
-        this.tracker.detachTarget(SESSION_ID, 1L);
+        this.tracker.detachTarget(SESSION_ID, 2L);
         assertTrue(this.tracker.acceptsJavaGameModeChange());
     }
 
