@@ -162,7 +162,7 @@ class SpectatorCameraTrackerTest {
     }
 
     @Test
-    void shiftDetachesTargetButKeepsSpectatorSession() {
+    void shiftRestoresPresentationButKeepsSessionForReattach() {
         final Entity target = this.entity(10L, 40, TARGET_ID, Position3f.ZERO);
         this.beginSession();
         this.tracker.onJavaPlayerSpawned(target);
@@ -174,17 +174,23 @@ class SpectatorCameraTrackerTest {
 
         this.tracker.detachTarget(SESSION_ID, 2L);
         assertEquals(List.of(40, OWN_JAVA_ID), this.cameraPackets);
-        assertEquals(List.of(GameMode.SPECTATOR), this.gameModes);
-        assertEquals(GameMode.SPECTATOR, this.tracker.projectJavaGameMode(GameMode.ADVENTURE));
-        assertEquals(0, this.abilityResends);
+        assertEquals(List.of(GameMode.SPECTATOR, GameMode.CREATIVE), this.gameModes);
+        assertEquals(GameMode.ADVENTURE, this.tracker.projectJavaGameMode(GameMode.ADVENTURE));
+        assertEquals(1, this.abilityResends);
 
         assertTrue(this.tracker.handleShiftInput(true));
         assertFalse(this.tracker.handleShiftInput(false));
         assertFalse(this.tracker.handleShiftInput(true));
 
+        this.tracker.attach(SESSION_ID, 3L, target.runtimeId());
+        assertEquals(List.of(40, OWN_JAVA_ID, 40), this.cameraPackets);
+        assertEquals(List.of(GameMode.SPECTATOR, GameMode.CREATIVE, GameMode.SPECTATOR), this.gameModes);
+        assertEquals(GameMode.SPECTATOR, this.tracker.projectJavaGameMode(GameMode.ADVENTURE));
+
         this.tracker.endSession(SESSION_ID);
-        assertEquals(List.of(GameMode.SPECTATOR, GameMode.CREATIVE), this.gameModes);
-        assertEquals(1, this.abilityResends);
+        assertEquals(List.of(40, OWN_JAVA_ID, 40, OWN_JAVA_ID), this.cameraPackets);
+        assertEquals(List.of(GameMode.SPECTATOR, GameMode.CREATIVE, GameMode.SPECTATOR, GameMode.CREATIVE), this.gameModes);
+        assertEquals(2, this.abilityResends);
         assertEquals(GameMode.ADVENTURE, this.tracker.projectJavaGameMode(GameMode.ADVENTURE));
     }
 
@@ -213,7 +219,49 @@ class SpectatorCameraTrackerTest {
         assertEquals(List.of(40, OWN_JAVA_ID), this.cameraPackets);
         assertEquals(List.of(new Request("target_removed", SESSION_ID, 2L, null)), this.requests);
         assertEquals(SpectatorCameraTracker.State.DETACHED, this.tracker.state());
-        assertEquals(List.of(GameMode.SPECTATOR), this.gameModes);
+        assertEquals(List.of(GameMode.SPECTATOR, GameMode.CREATIVE), this.gameModes);
+        assertEquals(1, this.abilityResends);
+        assertEquals(GameMode.ADVENTURE, this.tracker.projectJavaGameMode(GameMode.ADVENTURE));
+    }
+
+    @Test
+    void dimensionChangeRestoresPresentationAndReportsAttachedTarget() {
+        final Entity target = this.entity(10L, 40, TARGET_ID, Position3f.ZERO);
+        this.beginSession();
+        this.tracker.onJavaPlayerSpawned(target);
+        this.tracker.attach(SESSION_ID, 2L, target.runtimeId());
+
+        this.tracker.onDimensionChange();
+
+        assertEquals(List.of(40, OWN_JAVA_ID), this.cameraPackets);
+        assertEquals(List.of(new Request("dimension_change", SESSION_ID, 2L, null)), this.requests);
+        assertEquals(List.of(GameMode.SPECTATOR, GameMode.CREATIVE), this.gameModes);
+        assertEquals(1, this.abilityResends);
+        assertEquals(GameMode.ADVENTURE, this.tracker.projectJavaGameMode(GameMode.ADVENTURE));
+    }
+
+    @Test
+    void dimensionChangeRestoresDetachedSessionPresentation() {
+        this.beginSession();
+
+        this.tracker.onDimensionChange();
+
+        assertTrue(this.cameraPackets.isEmpty());
+        assertTrue(this.requests.isEmpty());
+        assertEquals(List.of(GameMode.SPECTATOR, GameMode.CREATIVE), this.gameModes);
+        assertEquals(1, this.abilityResends);
+        assertEquals(GameMode.ADVENTURE, this.tracker.projectJavaGameMode(GameMode.ADVENTURE));
+    }
+
+    @Test
+    void reusedSessionCanRestoreSpectatorPresentation() {
+        this.beginSession();
+        this.tracker.onDimensionChange();
+
+        this.beginSession();
+
+        assertEquals(List.of(GameMode.SPECTATOR, GameMode.CREATIVE, GameMode.SPECTATOR), this.gameModes);
+        assertEquals(GameMode.SPECTATOR, this.tracker.projectJavaGameMode(GameMode.ADVENTURE));
     }
 
     @Test

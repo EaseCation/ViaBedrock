@@ -40,6 +40,7 @@ public final class SpectatorCameraTracker extends StoredObject {
     private long generation = -1L;
     private long targetRuntimeId = -1L;
     private int targetJavaId = -1;
+    private boolean spectatorPresentation;
     private boolean suppressShiftUntilRelease;
     private boolean invalidPayloadLogged;
 
@@ -136,15 +137,12 @@ public final class SpectatorCameraTracker extends StoredObject {
         if (this.sessionId != null && !this.sessionId.equals(sessionId)) {
             this.detachCamera(false);
         }
-        final boolean startingSession = this.sessionId == null || !this.sessionId.equals(sessionId);
         this.sessionId = sessionId;
         this.generation = generation;
         this.state = State.DETACHED;
         this.clearTarget();
         this.menuProjection.begin(targets, teams);
-        if (startingSession) {
-            this.packetSink.sendGameMode(GameMode.SPECTATOR);
-        }
+        this.showSpectatorPresentation();
     }
 
     public void confirmSession() {
@@ -181,9 +179,7 @@ public final class SpectatorCameraTracker extends StoredObject {
     }
 
     private void attachCamera(final long runtimeId) {
-        if (this.state == State.DETACHED && this.sessionId == null) {
-            this.packetSink.sendGameMode(GameMode.SPECTATOR);
-        }
+        this.showSpectatorPresentation();
 
         final Entity target = this.entityLookup.findByRuntimeId(runtimeId);
         if (target == null || !this.spawnedPlayerRuntimeIds.contains(runtimeId)) {
@@ -209,17 +205,15 @@ public final class SpectatorCameraTracker extends StoredObject {
 
     public void detachTarget(final UUID sessionId, final long generation) {
         if (!this.matches(sessionId, generation)) return;
-        this.detachCamera(false);
+        this.detachCamera(true);
     }
 
     public void endSession(final UUID sessionId) {
         if (!this.matchesSession(sessionId)) return;
-        this.detachCamera(false);
+        this.detachCamera(true);
         this.menuProjection.clear();
         this.sessionId = null;
         this.generation = -1L;
-        this.packetSink.sendGameMode(this.entityLookup.ownJavaGameMode());
-        this.packetSink.resendAbilities();
     }
 
     public boolean requestTarget(final UUID targetId) {
@@ -239,7 +233,7 @@ public final class SpectatorCameraTracker extends StoredObject {
         this.spawnedPlayerRuntimeIds.remove(entity.runtimeId());
         if (this.state == State.DETACHED || this.targetRuntimeId != entity.runtimeId()) return;
 
-        this.detachCamera(this.sessionId == null);
+        this.detachCamera(true);
         if (this.sessionId != null) {
             this.packetSink.sendDetachRequest(this.sessionId, this.generation, "target_removed");
         } else {
@@ -249,8 +243,10 @@ public final class SpectatorCameraTracker extends StoredObject {
 
     public void onDimensionChange() {
         this.spawnedPlayerRuntimeIds.clear();
-        if (this.state != State.DETACHED) {
-            this.detachCamera(this.sessionId == null);
+        final boolean hadTarget = this.state != State.DETACHED;
+        if (hadTarget || this.spectatorPresentation) {
+            this.detachCamera(true);
+            if (!hadTarget) return;
             if (this.sessionId != null) {
                 this.packetSink.sendDetachRequest(this.sessionId, this.generation, "dimension_change");
             } else {
@@ -292,7 +288,7 @@ public final class SpectatorCameraTracker extends StoredObject {
     }
 
     public GameMode projectJavaGameMode(final GameMode gameMode) {
-        return this.sessionId == null && this.state == State.DETACHED ? gameMode : GameMode.SPECTATOR;
+        return this.spectatorPresentation ? GameMode.SPECTATOR : gameMode;
     }
 
     State state() {
@@ -323,9 +319,8 @@ public final class SpectatorCameraTracker extends StoredObject {
         if (this.hasActiveCamera()) {
             this.sendOwnCamera();
         }
-        if (restorePresentation && (this.state != State.DETACHED || this.sessionId != null)) {
-            this.packetSink.sendGameMode(this.entityLookup.ownJavaGameMode());
-            this.packetSink.resendAbilities();
+        if (restorePresentation) {
+            this.restoreOwnPresentation();
         }
         this.state = State.DETACHED;
         this.clearTarget();
@@ -341,6 +336,19 @@ public final class SpectatorCameraTracker extends StoredObject {
         if (ownJavaId >= 0) {
             this.packetSink.sendCamera(ownJavaId);
         }
+    }
+
+    private void showSpectatorPresentation() {
+        if (this.spectatorPresentation) return;
+        this.spectatorPresentation = true;
+        this.packetSink.sendGameMode(GameMode.SPECTATOR);
+    }
+
+    private void restoreOwnPresentation() {
+        if (!this.spectatorPresentation) return;
+        this.spectatorPresentation = false;
+        this.packetSink.sendGameMode(this.entityLookup.ownJavaGameMode());
+        this.packetSink.resendAbilities();
     }
 
     private static void sendRequest(final UserConnection user, final String messageId, final String payload) {
