@@ -202,7 +202,8 @@ public class ClientPlayerPackets {
                         wrapper.write(Types.VAR_INT, chunkTracker.getDimension().ordinal()); // dimension id
                         wrapper.write(Types.STRING, chunkTracker.getDimensionKey()); // dimension name
                         wrapper.write(Types.LONG, 0L); // hashed seed
-                        wrapper.write(Types.BYTE, (byte) clientPlayer.javaGameMode().ordinal()); // game mode
+                        final SpectatorCameraTracker spectatorCamera = wrapper.user().get(SpectatorCameraTracker.class);
+                        wrapper.write(Types.BYTE, (byte) spectatorCamera.projectJavaGameMode(clientPlayer.javaGameMode()).ordinal()); // game mode
                         wrapper.write(Types.BYTE, (byte) -1); // previous game mode
                         wrapper.write(Types.BOOLEAN, false); // is debug
                         wrapper.write(Types.BOOLEAN, gameSession.isFlatGenerator()); // is flat
@@ -213,11 +214,11 @@ public class ClientPlayerPackets {
                         wrapper.send(BedrockProtocol.class);
                         clientPlayer.sendAttribute("minecraft:health"); // Ensure health is synced
                         wrapper.user().get(PlayerArmorHudTracker.class).forceSync();
-                        clientPlayer.setAbilities(clientPlayer.abilities()); // Java client always resets abilities on respawn. Resend them
                         chunkTracker.resetJavaChunkLoading();
                         clientPlayer.setDimensionChangeInfo(null);
                         PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getInventoryContainer()); // Java client always resets inventory on respawn. Resend it
                         inventoryTracker.getInventoryContainer().sendSelectedHotbarSlotToClient(); // Java client always resets selected hotbar slot on respawn. Resend it
+                        spectatorCamera.restorePresentationAfterClientReset();
                     }
                     wrapper.cancel();
 

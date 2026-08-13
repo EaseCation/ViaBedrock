@@ -265,6 +265,24 @@ class SpectatorCameraTrackerTest {
     }
 
     @Test
+    void clientResetRestoresSpectatorPresentationWithoutRealAbilities() {
+        this.beginSession();
+
+        this.tracker.restorePresentationAfterClientReset();
+
+        assertEquals(List.of(GameMode.SPECTATOR, GameMode.SPECTATOR), this.gameModes);
+        assertEquals(0, this.abilityResends);
+    }
+
+    @Test
+    void clientResetRestoresRealAbilitiesOutsideSpectatorPresentation() {
+        this.tracker.restorePresentationAfterClientReset();
+
+        assertTrue(this.gameModes.isEmpty());
+        assertEquals(1, this.abilityResends);
+    }
+
+    @Test
     void legacyModeRemainsAvailableUntilVersionedSessionBegins() {
         final Entity target = this.entity(10L, 40, TARGET_ID, Position3f.ZERO);
         this.tracker.onJavaPlayerSpawned(target);

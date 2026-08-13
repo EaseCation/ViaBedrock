@@ -205,7 +205,8 @@ public class WorldPackets {
             wrapper.write(Types.VAR_INT, dimension.ordinal()); // dimension type id
             wrapper.write(Types.STRING, dimensionKey); // dimension name
             wrapper.write(Types.LONG, 0L); // hashed seed
-            wrapper.write(Types.BYTE, (byte) clientPlayer.javaGameMode().ordinal()); // game mode
+            final SpectatorCameraTracker spectatorCamera = wrapper.user().get(SpectatorCameraTracker.class);
+            wrapper.write(Types.BYTE, (byte) spectatorCamera.projectJavaGameMode(clientPlayer.javaGameMode()).ordinal()); // game mode
             wrapper.write(Types.BYTE, (byte) -1); // previous game mode
             wrapper.write(Types.BOOLEAN, false); // is debug
             wrapper.write(Types.BOOLEAN, gameSession.isFlatGenerator()); // is flat
@@ -220,7 +221,6 @@ public class WorldPackets {
             clientPlayer.sendAttribute("minecraft:health"); // Java client always resets health on respawn, but Bedrock client keeps health when switching dimensions
             wrapper.user().get(PlayerArmorHudTracker.class).forceSync();
             clientPlayer.sendEffects(); // Java client always resets effects on respawn. Resend them
-            clientPlayer.setAbilities(clientPlayer.abilities()); // Java client always resets abilities on respawn. Resend them
 
             final PacketWrapper initializeBorder = PacketWrapper.create(ClientboundPackets26_1.INITIALIZE_BORDER, wrapper.user());
             initializeBorder.write(Types.DOUBLE, 0D); // center x
@@ -235,6 +235,7 @@ public class WorldPackets {
 
             PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getInventoryContainer()); // Java client always resets inventory on respawn. Resend it
             inventoryTracker.getInventoryContainer().sendSelectedHotbarSlotToClient(); // Java client always resets selected hotbar slot on respawn. Resend it
+            spectatorCamera.restorePresentationAfterClientReset();
         });
         protocol.registerClientbound(ClientboundBedrockPackets.LEVEL_CHUNK, null, wrapper -> {
             wrapper.cancel();
