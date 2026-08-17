@@ -40,6 +40,8 @@ import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.api.util.TextUtil;
 import net.raphimc.viabedrock.experimental.custommapping.CustomMappingAccess;
 import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
+import net.raphimc.viabedrock.experimental.storage.BlockBreakingProgressTracker;
+import net.raphimc.viabedrock.experimental.storage.BlockPlacementAckTracker;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.BedrockMappingData;
@@ -190,6 +192,16 @@ public class WorldEffectPackets {
             wrapper.read(BedrockTypes.LONG_LE); // entity unique id
             wrapper.read(BedrockTypes.OPTIONAL_POSITION_3F); // fire at position
 
+            // Java 操作者已本地播放放置声音，只抑制同坐标操作的一次服务端回显。
+            if (soundEvent == SharedTypes_Legacy_LevelSoundEvent.Place) {
+                final BlockPlacementAckTracker tracker = wrapper.user().get(BlockPlacementAckTracker.class);
+                final BlockPosition blockPosition = new BlockPosition(MathUtil.floor(position.x()), MathUtil.floor(position.y()), MathUtil.floor(position.z()));
+                if (tracker != null && tracker.consumeLocalPlaceSound(blockPosition)) {
+                    wrapper.cancel();
+                    return;
+                }
+            }
+
             final boolean globalSound = isGlobal || Float.isNaN(position.x()) || Float.isNaN(position.y()) || Float.isNaN(position.z());
             SoundDefinitions.ConfiguredSound configuredSound;
             switch (soundEvent) {
@@ -323,6 +335,15 @@ public class WorldEffectPackets {
                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown LevelEvent: " + rawLevelEvent);
                 wrapper.cancel();
                 return;
+            }
+            // 2001 同时包含声音和粒子；只抑制当前 Java 操作者同坐标的一次权威回显。
+            if (levelEvent == LevelEvent.ParticlesDestroyBlock) {
+                final BlockBreakingProgressTracker tracker = wrapper.user().get(BlockBreakingProgressTracker.class);
+                final BlockPosition blockPosition = new BlockPosition(MathUtil.floor(position.x()), MathUtil.floor(position.y()), MathUtil.floor(position.z()));
+                if (tracker != null && tracker.consumeLocalBreakEffect(blockPosition)) {
+                    wrapper.cancel();
+                    return;
+                }
             }
             switch (levelEvent) {
                 case ParticleSoundGuardianGhost -> {

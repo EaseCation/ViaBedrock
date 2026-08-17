@@ -19,27 +19,36 @@ package net.raphimc.viabedrock.experimental.task;
 
 import com.viaversion.viaversion.api.Via;
 import com.viaversion.viaversion.api.connection.UserConnection;
+import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.experimental.storage.BlockBreakingProgressTracker;
+import net.raphimc.viabedrock.experimental.storage.BlockPlacementAckTracker;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 
 /**
- * Drives block breaking cleanup every tick: stale crack overlays, Java break cooldown,
- * and delayed block-changed acknowledgements after Bedrock server confirmation.
+ * 每 tick 清理方块预测状态：破坏进度、延迟 ACK，以及未收到回显的本地效果标记。
  */
 public class BlockBreakingProgressTickTask implements Runnable {
 
     @Override
     public void run() {
         for (UserConnection info : Via.getManager().getConnectionManager().getConnections()) {
-            final BlockBreakingProgressTracker tracker = info.get(BlockBreakingProgressTracker.class);
-            if (tracker != null) {
+            final BlockBreakingProgressTracker breakTracker = info.get(BlockBreakingProgressTracker.class);
+            final BlockPlacementAckTracker placementTracker = info.get(BlockPlacementAckTracker.class);
+            if (breakTracker != null || placementTracker != null) {
                 info.getChannel().eventLoop().submit(() -> {
                     if (!info.getChannel().isActive()) return;
 
                     try {
-                        tracker.tick();
+                        if (breakTracker != null) {
+                            breakTracker.tick();
+                        }
+                        if (placementTracker != null) {
+                            for (final int sequence : placementTracker.flushExpired()) {
+                                PacketFactory.sendJavaBlockChangedAck(info, sequence);
+                            }
+                        }
                     } catch (Throwable e) {
-                        BedrockProtocol.kickForIllegalState(info, "Error ticking block breaking progress tracker. See console for details.", e);
+                        BedrockProtocol.kickForIllegalState(info, "Error ticking block prediction trackers. See console for details.", e);
                     }
                 });
             }

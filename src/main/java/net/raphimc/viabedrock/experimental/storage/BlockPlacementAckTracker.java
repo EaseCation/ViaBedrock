@@ -41,9 +41,26 @@ public class BlockPlacementAckTracker extends StoredObject {
         this.pendingAcks.put(position, new PendingAck(sequence, System.currentTimeMillis()));
     }
 
+    // 权威方块 ACK 与本地放置声音回显独立完成，二者都处理后才删除记录。
     public Integer consumeAck(final BlockPosition position) {
-        final PendingAck ack = this.pendingAcks.remove(position);
-        return ack != null ? ack.sequence : null;
+        final PendingAck ack = this.pendingAcks.get(position);
+        if (ack == null || !ack.ackPending) {
+            return null;
+        }
+        ack.ackPending = false;
+        this.removeCompletedAck(position, ack);
+        return ack.sequence;
+    }
+
+    // Java 客户端已播放本地放置声音，仅允许同坐标回显命中一次。
+    public boolean consumeLocalPlaceSound(final BlockPosition position) {
+        final PendingAck ack = this.pendingAcks.get(position);
+        if (ack == null || !ack.soundPending) {
+            return false;
+        }
+        ack.soundPending = false;
+        this.removeCompletedAck(position, ack);
+        return true;
     }
 
     public List<Integer> flushExpired() {
@@ -52,15 +69,33 @@ public class BlockPlacementAckTracker extends StoredObject {
         final Iterator<Map.Entry<BlockPosition, PendingAck>> it = this.pendingAcks.entrySet().iterator();
         while (it.hasNext()) {
             final Map.Entry<BlockPosition, PendingAck> entry = it.next();
-            if (now - entry.getValue().timestamp > TIMEOUT_MS) {
-                expired.add(entry.getValue().sequence);
+            final PendingAck ack = entry.getValue();
+            if (now - ack.timestamp > TIMEOUT_MS) {
+                if (ack.ackPending) {
+                    expired.add(ack.sequence);
+                }
                 it.remove();
             }
         }
         return expired;
     }
 
-    private record PendingAck(int sequence, long timestamp) {
+    private void removeCompletedAck(final BlockPosition position, final PendingAck ack) {
+        if (!ack.ackPending && !ack.soundPending) {
+            this.pendingAcks.remove(position, ack);
+        }
+    }
+
+    private static final class PendingAck {
+        private final int sequence;
+        private final long timestamp;
+        private boolean ackPending = true;
+        private boolean soundPending = true;
+
+        private PendingAck(final int sequence, final long timestamp) {
+            this.sequence = sequence;
+            this.timestamp = timestamp;
+        }
     }
 
 }
