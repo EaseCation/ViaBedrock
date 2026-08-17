@@ -149,11 +149,30 @@ public final class BlockBreakingProgressTracker extends StoredObject {
     }
 
     public void handleBlockUpdate(final BlockPosition position) {
+        // prepend 阶段只清除裂纹，ACK 必须等待权威方块状态发送完成。
         this.clearProgress(position);
-        final PendingBreakAck ack = this.pendingBreakAcks.remove(position);
-        if (ack != null) {
-            PacketFactory.sendJavaBlockChangedAck(this.user(), ack.sequence);
+    }
+
+    // ACK 与本地视听回显分别消费，避免服务端包到达顺序互相抢占状态。
+    public Integer consumeAck(final BlockPosition position) {
+        final PendingBreakAck ack = this.pendingBreakAcks.get(position);
+        if (ack == null || !ack.ackPending) {
+            return null;
         }
+        ack.ackPending = false;
+        this.removeCompletedAck(position, ack);
+        return ack.sequence;
+    }
+
+    // Java 客户端已生成本地破坏声音和粒子，仅允许同坐标回显命中一次。
+    public boolean consumeLocalBreakEffect(final BlockPosition position) {
+        final PendingBreakAck ack = this.pendingBreakAcks.get(position);
+        if (ack == null || !ack.effectPending) {
+            return false;
+        }
+        ack.effectPending = false;
+        this.removeCompletedAck(position, ack);
+        return true;
     }
 
     public void tick() {
@@ -185,11 +204,19 @@ public final class BlockBreakingProgressTracker extends StoredObject {
             final Map.Entry<BlockPosition, PendingBreakAck> entry = it.next();
             final PendingBreakAck ack = entry.getValue();
             if (now - ack.timestamp > BREAK_ACK_TIMEOUT_MS) {
-                timedOut.add(new TimedOutBreakAck(entry.getKey(), ack.sequence, ack.javaBlockStateId));
+                if (ack.ackPending) {
+                    timedOut.add(new TimedOutBreakAck(entry.getKey(), ack.sequence, ack.javaBlockStateId));
+                }
                 it.remove();
             }
         }
         return timedOut;
+    }
+
+    private void removeCompletedAck(final BlockPosition position, final PendingBreakAck ack) {
+        if (!ack.ackPending && !ack.effectPending) {
+            this.pendingBreakAcks.remove(position, ack);
+        }
     }
 
     private int breakerIdFor(final BlockPosition position) {
@@ -241,7 +268,18 @@ public final class BlockBreakingProgressTracker extends StoredObject {
         }
     }
 
-    private record PendingBreakAck(int sequence, int javaBlockStateId, long timestamp) {
+    private static final class PendingBreakAck {
+        private final int sequence;
+        private final int javaBlockStateId;
+        private final long timestamp;
+        private boolean ackPending = true;
+        private boolean effectPending = true;
+
+        private PendingBreakAck(final int sequence, final int javaBlockStateId, final long timestamp) {
+            this.sequence = sequence;
+            this.javaBlockStateId = javaBlockStateId;
+            this.timestamp = timestamp;
+        }
     }
 
     record TimedOutBreakAck(BlockPosition position, int sequence, int javaBlockStateId) {
