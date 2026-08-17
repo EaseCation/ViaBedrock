@@ -28,7 +28,10 @@ import net.raphimc.viabedrock.api.util.InstantBreakBlocks;
 import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.experimental.FeatureModule;
 import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
+import net.raphimc.viabedrock.experimental.model.PlayerAuthInputContext;
 import net.raphimc.viabedrock.experimental.storage.BlockBreakingProgressTracker;
+import net.raphimc.viabedrock.experimental.storage.BlockBreakingProgressTracker.CancelledBreak;
+import net.raphimc.viabedrock.experimental.storage.BlockBreakingProgressTracker.FinishingStep;
 import net.raphimc.viabedrock.experimental.storage.BlockBreakingProgressTracker.MiningPhase;
 import net.raphimc.viabedrock.experimental.storage.BlockBreakingProgressTracker.MiningTarget;
 import net.raphimc.viabedrock.experimental.util.ProtocolUtil;
@@ -42,6 +45,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.AnimatePacke
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.LevelEvent;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerActionType;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAuthInputPacket_InputData;
+import net.raphimc.viabedrock.protocol.data.enums.java.generated.ClientCommandAction;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.PlayerActionAction;
 import net.raphimc.viabedrock.protocol.model.BlockChangeEntry;
@@ -55,8 +59,6 @@ import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
 import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Locale;
 
 public final class BlockBreakingProgressModule implements FeatureModule {
@@ -74,9 +76,19 @@ public final class BlockBreakingProgressModule implements FeatureModule {
         ProtocolUtil.prependClientbound(protocol, ClientboundBedrockPackets.UPDATE_BLOCK, this::handleBlockUpdate);
         ProtocolUtil.prependClientbound(protocol, ClientboundBedrockPackets.UPDATE_BLOCK_SYNCED, this::handleBlockUpdate);
         ProtocolUtil.prependClientbound(protocol, ClientboundBedrockPackets.UPDATE_SUB_CHUNK_BLOCKS, this::handleSubChunkBlockUpdates);
+        ProtocolUtil.prependClientbound(protocol, ClientboundBedrockPackets.CHANGE_DIMENSION, wrapper ->
+                wrapper.user().get(BlockBreakingProgressTracker.class).clearForLifecycleChange());
         ProtocolUtil.prependServerbound(protocol, ServerboundPackets26_1.PLAYER_ACTION, this::handlePlayerAction);
+        ProtocolUtil.prependServerbound(protocol, ServerboundPackets26_1.CLIENT_COMMAND, wrapper -> {
+            final ClientCommandAction action = ClientCommandAction.values()[wrapper.passthrough(Types.VAR_INT)];
+            if (action == ClientCommandAction.PERFORM_RESPAWN) {
+                wrapper.user().get(BlockBreakingProgressTracker.class).clearForLifecycleChange();
+            }
+        });
         ProtocolUtil.prependServerbound(protocol, ServerboundPackets26_1.SWING, this::handleSwing);
         ProtocolUtil.prependServerbound(protocol, ServerboundPackets26_1.CLIENT_TICK_END, this::handleClientTickEnd);
+        ProtocolUtil.prependServerbound(protocol, ServerboundPackets26_1.SET_CARRIED_ITEM, wrapper ->
+                this.cancelFinishing(wrapper.user()));
     }
 
     private void handleLevelEvent(final PacketWrapper wrapper) {
@@ -109,22 +121,25 @@ public final class BlockBreakingProgressModule implements FeatureModule {
 
     private void handleBlockUpdate(final PacketWrapper wrapper) {
         final BlockPosition position = wrapper.passthrough(BedrockTypes.BLOCK_POSITION);
-        wrapper.user().get(BlockBreakingProgressTracker.class).handleBlockUpdate(position);
+        final int blockState = wrapper.passthrough(BedrockTypes.UNSIGNED_VAR_INT);
+        wrapper.passthrough(BedrockTypes.UNSIGNED_VAR_INT); // flags
+        final int layer = wrapper.passthrough(BedrockTypes.UNSIGNED_VAR_INT);
+        final boolean air = layer == 0 && blockState == wrapper.user().get(ChunkTracker.class).bedrockAirId();
+        wrapper.user().get(BlockBreakingProgressTracker.class).handleBlockUpdate(position, air);
     }
 
     private void handleSubChunkBlockUpdates(final PacketWrapper wrapper) {
         wrapper.passthrough(BedrockTypes.BLOCK_POSITION);
-        final List<BlockPosition> positions = new ArrayList<>();
-        for (BlockChangeEntry entry : wrapper.passthrough(BedrockTypes.BLOCK_CHANGE_ENTRY_ARRAY)) {
-            positions.add(entry.position());
-        }
-        for (BlockChangeEntry entry : wrapper.passthrough(BedrockTypes.BLOCK_CHANGE_ENTRY_ARRAY)) {
-            positions.add(entry.position());
-        }
+        final BlockChangeEntry[] standardBlocks = wrapper.passthrough(BedrockTypes.BLOCK_CHANGE_ENTRY_ARRAY);
+        final BlockChangeEntry[] extraBlocks = wrapper.passthrough(BedrockTypes.BLOCK_CHANGE_ENTRY_ARRAY);
 
         final BlockBreakingProgressTracker tracker = wrapper.user().get(BlockBreakingProgressTracker.class);
-        for (BlockPosition position : positions) {
-            tracker.handleBlockUpdate(position);
+        final int bedrockAirId = wrapper.user().get(ChunkTracker.class).bedrockAirId();
+        for (BlockChangeEntry entry : standardBlocks) {
+            tracker.handleBlockUpdate(entry.position(), entry.blockState() == bedrockAirId);
+        }
+        for (BlockChangeEntry entry : extraBlocks) {
+            tracker.handleBlockUpdate(entry.position(), false);
         }
     }
 
@@ -169,6 +184,7 @@ public final class BlockBreakingProgressModule implements FeatureModule {
         final MiningTarget oldTarget = tracker.miningTarget();
         if (oldTarget != null && !oldTarget.position().equals(position)) {
             this.abortBedrockMining(user, clientPlayer, oldTarget);
+            this.rollbackCancelledBreak(tracker, tracker.cancelFinishing(oldTarget.position()));
         }
 
         tracker.startMining(position, direction);
@@ -184,7 +200,38 @@ public final class BlockBreakingProgressModule implements FeatureModule {
 
     private void suspendMining(final ClientPlayerEntity clientPlayer, final BlockBreakingProgressTracker tracker, final BlockPosition position) {
         clientPlayer.setBlockBreakingInfo(null);
+        final CancelledBreak cancelled = tracker.cancelFinishing(position);
+        if (cancelled != null) {
+            clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(
+                    PlayerActionType.AbortDestroyBlock, position, 0));
+            this.rollbackCancelledBreak(tracker, cancelled);
+            return;
+        }
         tracker.suspendMining(position);
+    }
+
+    private void cancelFinishing(final UserConnection user) {
+        final BlockBreakingProgressTracker tracker = user.get(BlockBreakingProgressTracker.class);
+        final MiningTarget target = tracker.miningTarget();
+        if (target == null) {
+            return;
+        }
+        user.get(EntityTracker.class).getClientPlayer().addAuthInputBlockAction(
+                new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.AbortDestroyBlock, target.position(), 0));
+        final CancelledBreak cancelled = tracker.cancelFinishing(target.position());
+        if (cancelled == null) {
+            tracker.cancelCurrentTarget();
+        } else {
+            this.rollbackCancelledBreak(tracker, cancelled);
+        }
+    }
+
+    private void rollbackCancelledBreak(final BlockBreakingProgressTracker tracker, final CancelledBreak cancelled) {
+        if (cancelled == null) {
+            return;
+        }
+        PacketFactory.sendJavaBlockUpdate(tracker.user(), cancelled.position(), cancelled.javaBlockStateId());
+        tracker.afterJavaBlockUpdate(cancelled.position());
     }
 
     private void finishMining(final UserConnection user, final GameSessionStorage gameSession, final ClientPlayerEntity clientPlayer, final BlockBreakingProgressTracker tracker, final ChunkTracker chunkTracker, final BlockPosition position, final Direction direction, final int sequence) {
@@ -199,12 +246,50 @@ public final class BlockBreakingProgressModule implements FeatureModule {
             clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.StopDestroyBlock));
             clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.CrackBlock, position, direction.ordinal()));
             clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.AbortDestroyBlock, position, 0));
-        } else {
-            clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.ContinueDestroyBlock, position, direction.ordinal()));
-            clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.PredictDestroyBlock, position, direction.ordinal()));
-            clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.AbortDestroyBlock, position, 0));
         }
-        tracker.finishMining(position, sequence, chunkTracker.getJavaBlockState(position));
+        tracker.finishMining(position, sequence, chunkTracker.getJavaBlockState(position), gameSession.isBlockBreakingServerAuthoritative());
+    }
+
+    @Override
+    public void onPlayerAuthInput(final UserConnection user, final ClientPlayerEntity clientPlayer, final PlayerAuthInputContext context) {
+        final FinishingStep finishing = user.get(BlockBreakingProgressTracker.class).advanceAuthInput();
+        if (finishing == null) {
+            return;
+        }
+
+        final MiningTarget target = finishing.target();
+        if (finishing.silentSuccess()) {
+            this.completeSilentSuccess(user, target.position());
+            return;
+        }
+        clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(
+                PlayerActionType.ContinueDestroyBlock, target.position(), target.direction().ordinal()));
+        if (finishing.predict()) {
+            clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(
+                    PlayerActionType.PredictDestroyBlock, target.position(), target.direction().ordinal()));
+        }
+    }
+
+    private void completeSilentSuccess(final UserConnection user, final BlockPosition position) {
+        final ChunkTracker chunkTracker = user.get(ChunkTracker.class);
+        final var remappedBlock = chunkTracker.handleBlockChange(position, 0, chunkTracker.bedrockAirId());
+        if (remappedBlock == null) {
+            final int javaAirId = BedrockProtocol.MAPPINGS.getJavaBlockStates().get(BlockState.fromString("minecraft:air"));
+            PacketFactory.sendJavaBlockUpdate(user, position, javaAirId);
+            final BlockBreakingProgressTracker tracker = user.get(BlockBreakingProgressTracker.class);
+            tracker.completeSilentSuccess(position);
+            tracker.afterJavaBlockUpdate(position);
+            return;
+        }
+
+        final BlockNeighborView view = new TrackerNeighborView(chunkTracker);
+        final var updates = BedrockProtocol.MAPPINGS.getNeighborRewriter().resolveUpdate(view, position, remappedBlock.keyInt());
+        for (final var update : updates.entrySet()) {
+            PacketFactory.sendJavaBlockUpdate(user, update.getKey(), update.getValue());
+        }
+        final BlockBreakingProgressTracker tracker = user.get(BlockBreakingProgressTracker.class);
+        tracker.completeSilentSuccess(position);
+        tracker.afterJavaBlockUpdate(position);
     }
 
     private void handleSwing(final PacketWrapper wrapper) {

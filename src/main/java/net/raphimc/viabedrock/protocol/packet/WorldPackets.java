@@ -47,6 +47,7 @@ import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
+import net.raphimc.viabedrock.experimental.storage.BlockBreakingProgressTracker;
 import net.raphimc.viabedrock.experimental.storage.BlockPlacementAckTracker;
 import net.raphimc.viabedrock.protocol.data.enums.Dimension;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ServerboundLoadingScreenPacketType;
@@ -115,6 +116,11 @@ public class WorldPackets {
 
         if (remappedBlock.value() != null) {
             PacketFactory.sendJavaBlockEntityData(wrapper.user(), position, remappedBlock.value());
+        }
+
+        final BlockBreakingProgressTracker breakingTracker = wrapper.user().get(BlockBreakingProgressTracker.class);
+        if (breakingTracker != null) {
+            breakingTracker.afterJavaBlockUpdate(position);
         }
 
         // Send deferred BlockChangedAck for block placement (experimental feature).
@@ -549,6 +555,12 @@ public class WorldPackets {
             }
             for (Map.Entry<BlockPosition, BlockEntity> entry : blockEntities.entrySet()) {
                 PacketFactory.sendJavaBlockEntityData(wrapper.user(), entry.getKey(), entry.getValue());
+            }
+            final BlockBreakingProgressTracker breakingTracker = wrapper.user().get(BlockBreakingProgressTracker.class);
+            if (breakingTracker != null) {
+                for (BlockPosition position : remappedBlockStates.keySet()) {
+                    breakingTracker.afterJavaBlockUpdate(position);
+                }
             }
         });
         protocol.registerClientbound(ClientboundBedrockPackets.BLOCK_ENTITY_DATA, ClientboundPackets26_1.BLOCK_ENTITY_DATA, new PacketHandlers() {
