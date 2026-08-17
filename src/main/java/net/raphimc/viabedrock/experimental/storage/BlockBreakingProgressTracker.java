@@ -149,11 +149,13 @@ public final class BlockBreakingProgressTracker extends StoredObject {
     }
 
     public void handleBlockUpdate(final BlockPosition position) {
+        // prepend 阶段只清除裂纹，ACK 必须等待权威方块状态发送完成。
         this.clearProgress(position);
+    }
+
+    public Integer consumeAck(final BlockPosition position) {
         final PendingBreakAck ack = this.pendingBreakAcks.remove(position);
-        if (ack != null) {
-            PacketFactory.sendJavaBlockChangedAck(this.user(), ack.sequence);
-        }
+        return ack != null ? ack.sequence : null;
     }
 
     public void tick() {

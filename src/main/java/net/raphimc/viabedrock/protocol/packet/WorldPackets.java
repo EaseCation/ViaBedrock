@@ -47,6 +47,7 @@ import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
+import net.raphimc.viabedrock.experimental.storage.BlockBreakingProgressTracker;
 import net.raphimc.viabedrock.experimental.storage.BlockPlacementAckTracker;
 import net.raphimc.viabedrock.protocol.data.enums.Dimension;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ServerboundLoadingScreenPacketType;
@@ -115,6 +116,17 @@ public class WorldPackets {
 
         if (remappedBlock.value() != null) {
             PacketFactory.sendJavaBlockEntityData(wrapper.user(), position, remappedBlock.value());
+        }
+
+        // Java 客户端必须先收到主层权威状态，再结束本次破坏预测。
+        if (layer == 0) {
+            final BlockBreakingProgressTracker breakTracker = wrapper.user().get(BlockBreakingProgressTracker.class);
+            if (breakTracker != null) {
+                final Integer seq = breakTracker.consumeAck(position);
+                if (seq != null) {
+                    PacketFactory.sendJavaBlockChangedAck(wrapper.user(), seq);
+                }
+            }
         }
 
         // Send deferred BlockChangedAck for block placement (experimental feature).
@@ -508,11 +520,15 @@ public class WorldPackets {
             final Map<BlockPosition, List<BlockChangeRecord>> blockChanges = new HashMap<>();
             final Map<BlockPosition, BlockEntity> blockEntities = new HashMap<>();
             final Map<BlockPosition, Integer> remappedBlockStates = new LinkedHashMap<>();
+            final List<BlockPosition> updatedStandardBlocks = new ArrayList<>();
             for (int layer = 0; layer < blockUpdatesArray.length; layer++) {
                 for (BlockChangeEntry entry : blockUpdatesArray[layer]) {
                     final IntObjectPair<BlockEntity> remappedBlock = chunkTracker.handleBlockChange(entry.position(), layer, entry.blockState());
                     if (remappedBlock == null) {
                         continue;
+                    }
+                    if (layer == 0) {
+                        updatedStandardBlocks.add(entry.position());
                     }
                     if (remappedBlock.value() != null) {
                         blockEntities.put(entry.position(), remappedBlock.value());
@@ -549,6 +565,17 @@ public class WorldPackets {
             }
             for (Map.Entry<BlockPosition, BlockEntity> entry : blockEntities.entrySet()) {
                 PacketFactory.sendJavaBlockEntityData(wrapper.user(), entry.getKey(), entry.getValue());
+            }
+
+            // 批量主层更新全部发出后，才能确认其中对应的破坏 sequence。
+            final BlockBreakingProgressTracker breakTracker = wrapper.user().get(BlockBreakingProgressTracker.class);
+            if (breakTracker != null) {
+                for (BlockPosition position : updatedStandardBlocks) {
+                    final Integer seq = breakTracker.consumeAck(position);
+                    if (seq != null) {
+                        PacketFactory.sendJavaBlockChangedAck(wrapper.user(), seq);
+                    }
+                }
             }
         });
         protocol.registerClientbound(ClientboundBedrockPackets.BLOCK_ENTITY_DATA, ClientboundPackets26_1.BLOCK_ENTITY_DATA, new PacketHandlers() {
