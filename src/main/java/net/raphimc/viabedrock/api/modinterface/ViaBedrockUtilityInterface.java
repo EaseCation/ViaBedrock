@@ -43,7 +43,7 @@ public class ViaBedrockUtilityInterface {
 
     public static final String CHANNEL = "viabedrockutility:data";
     public static final String PLAYER_STATE_CHANNEL = "viabedrockutility:player_state";
-    /** Client capability: all Bedrock particle effects are delivered as V2 requests. */
+    /** Client capability: unmapped Bedrock particle effects can use anchor-aware V2 requests. */
     public static final String PARTICLE_RUNTIME_V2_CAPABILITY = "viabedrockutility:particle_runtime_v2";
     private static final int MAX_PAYLOAD_SIZE = 1048576;
 

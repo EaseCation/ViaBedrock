@@ -70,10 +70,20 @@ import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
 
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.logging.Level;
 
 public class WorldEffectPackets {
+
+    static final long WORLD_PARTICLE_ENTITY_ID = -1L;
+
+    enum ParticleRoute {
+        JAVA,
+        VBU_V2,
+        VBU_LEGACY,
+        DROP
+    }
 
     // Only log warnings about missing mappings if explicitly enabled for debugging
     // The Bedrock Dedicated Server sends a lot of unknown sound events which are expected to be ignored in most cases (Resource packs could add custom sounds for certain events)
@@ -150,31 +160,40 @@ public class WorldEffectPackets {
 
             ViaBedrock.getPlatform().getLogger().log(Level.FINE, "[Particle:L1] SpawnParticleEffect received: " + effectIdentifier + " at (" + position.x() + ", " + position.y() + ", " + position.z() + ") molang=" + (molangVarsJson != null));
 
+            final BedrockMappingData.JavaParticle javaParticle = BedrockProtocol.MAPPINGS.getBedrockToJavaParticles().get(effectIdentifier);
             final ChannelStorage channelStorage = wrapper.user().get(ChannelStorage.class);
-            if (channelStorage != null && channelStorage.hasChannel(ViaBedrockUtilityInterface.PARTICLE_RUNTIME_V2_CAPABILITY)) {
-                final net.raphimc.viabedrock.api.model.entity.Entity host = wrapper.user().get(EntityTracker.class).getEntityByUid(entityUniqueId);
-                final java.util.UUID ownerUuid = host == null ? null : host.javaUuid();
-                final int anchorKind = ownerUuid == null ? 0 : 1;
-                if (host == null) {
-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING,
-                            "[Particle:L1] Entity anchor unresolved for Bedrock unique id " + entityUniqueId
-                                    + " (effect=" + effectIdentifier + "); sending world anchor fallback");
+            // Keep stable Java projections first; V2 handles effects that Java cannot represent.
+            final ParticleRoute route = selectParticleRoute(
+                    javaParticle != null,
+                    channelStorage != null && channelStorage.hasChannel(ViaBedrockUtilityInterface.PARTICLE_RUNTIME_V2_CAPABILITY),
+                    channelStorage != null && channelStorage.hasChannel(ViaBedrockUtilityInterface.CONFIRM_CHANNEL)
+            );
+            if (route == ParticleRoute.VBU_V2) {
+                if (isWorldParticle(entityUniqueId)) {
+                    ViaBedrockUtilityInterface.spawnParticleV2(wrapper.user(), effectIdentifier, 0, null,
+                            position.x(), position.y(), position.z(), molangVarsJson);
+                } else {
+                    final Entity host = wrapper.user().get(EntityTracker.class).getEntityByUid(entityUniqueId);
+                    final UUID ownerUuid = host == null ? null : host.javaUuid();
+                    if (ownerUuid == null) {
+                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING,
+                                "[Particle:L1] Dropping entity-bound particle because Bedrock unique id "
+                                        + entityUniqueId + " cannot be resolved (effect=" + effectIdentifier + ")");
+                        wrapper.cancel();
+                        return;
+                    }
+                    ViaBedrockUtilityInterface.spawnParticleV2(wrapper.user(), effectIdentifier, 1, ownerUuid,
+                            position.x(), position.y(), position.z(), molangVarsJson);
                 }
-                ViaBedrockUtilityInterface.spawnParticleV2(wrapper.user(), effectIdentifier, anchorKind, ownerUuid,
-                        position.x(), position.y(), position.z(), molangVarsJson);
                 wrapper.cancel();
                 return;
-            }
-
-            final BedrockMappingData.JavaParticle javaParticle = BedrockProtocol.MAPPINGS.getBedrockToJavaParticles().get(effectIdentifier);
-            if (javaParticle == null) {
-                // Try forwarding to VBU for custom particle rendering
-                if (channelStorage != null && channelStorage.hasChannel(ViaBedrockUtilityInterface.CONFIRM_CHANNEL)) {
-                    ViaBedrock.getPlatform().getLogger().log(Level.FINE, "[Particle:L1] No Java mapping, forwarding to VBU: " + effectIdentifier);
-                    ViaBedrockUtilityInterface.spawnParticle(wrapper.user(), effectIdentifier, position.x(), position.y(), position.z(), molangVarsJson);
-                } else {
-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "[Particle:L1] No Java mapping AND VBU channel not registered: " + effectIdentifier);
-                }
+            } else if (route == ParticleRoute.VBU_LEGACY) {
+                ViaBedrock.getPlatform().getLogger().log(Level.FINE, "[Particle:L1] No Java mapping, forwarding to VBU: " + effectIdentifier);
+                ViaBedrockUtilityInterface.spawnParticle(wrapper.user(), effectIdentifier, position.x(), position.y(), position.z(), molangVarsJson);
+                wrapper.cancel();
+                return;
+            } else if (route == ParticleRoute.DROP) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "[Particle:L1] No Java mapping AND VBU channel not registered: " + effectIdentifier);
                 wrapper.cancel();
                 return;
             }
@@ -728,6 +747,24 @@ public class WorldEffectPackets {
             }
             wrapper.write(Types.VAR_INT, BedrockProtocol.MAPPINGS.getJavaBlocks().get(javaBlock.namespacedIdentifier())); // block
         });
+    }
+
+    static ParticleRoute selectParticleRoute(final boolean hasJavaMapping, final boolean supportsV2,
+                                             final boolean supportsLegacyVbu) {
+        if (hasJavaMapping) {
+            return ParticleRoute.JAVA;
+        }
+        if (supportsV2) {
+            return ParticleRoute.VBU_V2;
+        }
+        if (supportsLegacyVbu) {
+            return ParticleRoute.VBU_LEGACY;
+        }
+        return ParticleRoute.DROP;
+    }
+
+    static boolean isWorldParticle(final long entityUniqueId) {
+        return entityUniqueId == WORLD_PARTICLE_ENTITY_ID;
     }
 
     private static CustomMappingAccess.JavaBlockStateResolution resolveJavaBlockState(final UserConnection user, final int bedrockRuntimeId, final String context) {
