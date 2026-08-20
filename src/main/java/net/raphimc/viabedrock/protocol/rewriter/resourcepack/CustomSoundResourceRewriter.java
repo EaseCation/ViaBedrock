@@ -24,10 +24,12 @@ import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 import net.raphimc.viabedrock.api.resourcepack.content.Content;
 import net.raphimc.viabedrock.api.resourcepack.definition.SoundDefinitions;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
+import net.raphimc.viabedrock.protocol.data.BedrockMappingData;
 import net.raphimc.viabedrock.protocol.rewriter.ResourcePackRewriter;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -57,31 +59,30 @@ public class CustomSoundResourceRewriter implements ResourcePackRewriter.Rewrite
 
     @Override
     public String artifactFingerprint() {
-        return "2"; // Version 2 preserves Bedrock sound variant weights in Java sounds.json.
+        return "3"; // Version 3 also exposes mapped Bedrock sounds as Java event aliases.
     }
 
     private Set<String> collectCustomSoundNames(final ResourcePackStorage resourcePackStorage, final Content javaContent) {
         final SoundDefinitions sounds = resourcePackStorage.getSounds();
+        final Map<String, BedrockMappingData.JavaSound> mappedSoundFiles = mappedSoundFiles(sounds);
         final Set<String> customSoundNames = new HashSet<>();
         final JsonObject javaSoundsJson = new JsonObject();
 
         for (Map.Entry<String, SoundDefinitions.SoundDefinition> entry : sounds.soundDefinitions().entrySet()) {
             final String soundName = entry.getKey();
 
-            // Skip sounds that already have a Java mapping
-            if (BedrockProtocol.MAPPINGS.getBedrockToJavaSounds() != null
-                    && BedrockProtocol.MAPPINGS.getBedrockToJavaSounds().containsKey(soundName)) {
-                continue;
-            }
-
             final SoundDefinitions.SoundDefinition definition = entry.getValue();
             if (definition.soundFiles().isEmpty()) {
                 continue;
             }
 
-            // Copy .ogg files from Bedrock packs and build Java sounds.json entry
+            // Every playable Bedrock identifier gets a stable bedrock:<identifier> Java event.
+            // Custom OGGs stay files; definitions that reuse a vanilla Bedrock sample point at
+            // the existing mapped Java event with type=event instead of copying native FSB data.
             final JsonArray javaSoundEntries = new JsonArray();
-            boolean hasAnyFile = false;
+            final BedrockMappingData.JavaSound directMapping =
+                    soundMappings().get(soundName);
+            boolean hasCustomOgg = false;
 
             for (SoundDefinitions.SoundFile soundFile : definition.soundFiles()) {
                 final String bedrockOggPath = soundFile.path() + ".ogg";
@@ -100,63 +101,141 @@ public class CustomSoundResourceRewriter implements ResourcePackRewriter.Rewrite
                 }
 
                 if (!found) {
+                    if (directMapping == null) {
+                        final BedrockMappingData.JavaSound mappedVariant = resolveMappedVariant(
+                                soundFile.path(), mappedSoundFiles);
+                        if (mappedVariant != null && javaContent != null) {
+                            javaSoundEntries.add(javaSoundEntry(mappedVariant.identifier(), soundFile, true));
+                        } else if (mappedVariant != null) {
+                            javaSoundEntries.add(new JsonObject());
+                        }
+                    }
                     continue;
                 }
 
-                hasAnyFile = true;
+                hasCustomOgg = true;
                 if (javaContent != null) {
-                    final JsonObject soundEntry = new JsonObject();
-                    // Java sounds.json references sounds relative to assets/<namespace>/sounds/
-                    // The "name" field is <namespace>:<path_without_sounds_prefix_and_extension>
-                    soundEntry.addProperty("name", "bedrock:" + soundFile.path());
-                    if (soundFile.volume() != 1F) {
-                        soundEntry.addProperty("volume", soundFile.volume());
-                    }
-                    if (soundFile.pitch() != 1F) {
-                        soundEntry.addProperty("pitch", soundFile.pitch());
-                    }
-                    if (soundFile.weight() != 1) {
-                        soundEntry.addProperty("weight", soundFile.weight());
-                    }
-                    javaSoundEntries.add(soundEntry);
+                    javaSoundEntries.add(javaSoundEntry("bedrock:" + soundFile.path(), soundFile, false));
+                } else {
+                    javaSoundEntries.add(new JsonObject());
                 }
             }
 
-            if (hasAnyFile) {
+            // A directly mapped Bedrock event is already responsible for its own variants. Add one
+            // event reference only when no custom OGG overrode the definition.
+            if (javaSoundEntries.isEmpty() && directMapping != null) {
+                if (javaContent != null) {
+                    javaSoundEntries.add(javaSoundEntry(directMapping.identifier(), null, true));
+                } else {
+                    javaSoundEntries.add(new JsonObject());
+                }
+            }
+
+            if (!javaSoundEntries.isEmpty()) {
                 if (javaContent != null) {
                     final JsonObject soundDef = new JsonObject();
                     soundDef.add("sounds", javaSoundEntries);
                     javaSoundsJson.add(soundName, soundDef);
                 }
-                customSoundNames.add(soundName);
+                if (directMapping == null || hasCustomOgg) {
+                    customSoundNames.add(soundName);
+                }
             }
         }
 
+        // Publish aliases for all authoritative Bedrock-to-Java mappings even when the downloaded
+        // stack omits vanilla sound_definitions.json. In-process consumers can therefore always
+        // address the same bedrock:<identifier> event names as resource-pack custom sounds.
+        soundMappings().forEach((bedrockName, javaSound) -> {
+            if (javaContent != null && !javaSoundsJson.has(bedrockName)) {
+                final JsonArray aliases = new JsonArray();
+                aliases.add(javaSoundEntry(javaSound.identifier(), null, true));
+                final JsonObject soundDef = new JsonObject();
+                soundDef.add("sounds", aliases);
+                javaSoundsJson.add(bedrockName, soundDef);
+            }
+        });
+
         if (javaContent != null && !javaSoundsJson.isEmpty()) {
             javaContent.putJson("assets/bedrock/sounds.json", javaSoundsJson);
-            ViaBedrock.getPlatform().getLogger().log(Level.INFO, "Added " + customSoundNames.size() + " custom sound(s) to Java resource pack");
+            ViaBedrock.getPlatform().getLogger().log(Level.INFO,
+                    "Added " + javaSoundsJson.size() + " Bedrock sound alias(es) to Java resource pack");
         }
 
         return customSoundNames;
+    }
+
+    private static JsonObject javaSoundEntry(final String name,
+                                             final SoundDefinitions.SoundFile soundFile,
+                                             final boolean eventReference) {
+        final JsonObject soundEntry = new JsonObject();
+        soundEntry.addProperty("name", name);
+        if (eventReference) {
+            soundEntry.addProperty("type", "event");
+        }
+        if (soundFile != null) {
+            if (soundFile.volume() != 1F) soundEntry.addProperty("volume", soundFile.volume());
+            if (soundFile.pitch() != 1F) soundEntry.addProperty("pitch", soundFile.pitch());
+            if (soundFile.weight() != 1) soundEntry.addProperty("weight", soundFile.weight());
+        }
+        return soundEntry;
+    }
+
+    private static Map<String, BedrockMappingData.JavaSound> mappedSoundFiles(final SoundDefinitions sounds) {
+        final Map<String, BedrockMappingData.JavaSound> result = new HashMap<>();
+        soundMappings().forEach((bedrockName, javaSound) -> {
+            final SoundDefinitions.SoundDefinition definition = sounds.soundDefinitions().get(bedrockName);
+            if (definition != null) {
+                definition.soundFiles().forEach(file -> result.putIfAbsent(file.path(), javaSound));
+            }
+        });
+        return result;
+    }
+
+    private static BedrockMappingData.JavaSound resolveMappedVariant(
+            final String path, final Map<String, BedrockMappingData.JavaSound> mappedSoundFiles) {
+        final BedrockMappingData.JavaSound exact = mappedSoundFiles.get(path);
+        if (exact != null) return exact;
+
+        // Vanilla definitions conventionally map sounds/foo/bar to the event foo.bar. This also
+        // covers references to native FSB samples when the vanilla definition is not in the
+        // downloaded pack stack (for example sounds/note/pling -> note.pling).
+        final String candidate = path.startsWith("sounds/") ? path.substring("sounds/".length()) : path;
+        return soundMappings().get(candidate.replace('/', '.'));
+    }
+
+    private static Map<String, BedrockMappingData.JavaSound> soundMappings() {
+        final Map<String, BedrockMappingData.JavaSound> mappings =
+                BedrockProtocol.MAPPINGS.getBedrockToJavaSounds();
+        return mappings != null ? mappings : Map.of();
     }
 
     /** Computes stack-derived sound names while runtime construction still owns its temporary pack stack. */
     public static Set<String> findCustomSoundNames(final SoundDefinitions sounds,
                                                    final Collection<ResourcePack> packsTopToBottom) {
         final Set<String> customSoundNames = new HashSet<>();
-        soundDefinitions:
+        final Map<String, BedrockMappingData.JavaSound> mappedSoundFiles = mappedSoundFiles(sounds);
         for (Map.Entry<String, SoundDefinitions.SoundDefinition> entry : sounds.soundDefinitions().entrySet()) {
-            if (BedrockProtocol.MAPPINGS.getBedrockToJavaSounds() != null
-                    && BedrockProtocol.MAPPINGS.getBedrockToJavaSounds().containsKey(entry.getKey())) continue;
+            final boolean directlyMapped =
+                    soundMappings().containsKey(entry.getKey());
+            boolean playable = false;
+            boolean hasCustomOgg = false;
             for (SoundDefinitions.SoundFile soundFile : entry.getValue().soundFiles()) {
                 final String path = soundFile.path() + ".ogg";
                 for (ResourcePack pack : packsTopToBottom) {
                     if (pack.content().contains(path)) {
-                        customSoundNames.add(entry.getKey());
-                        continue soundDefinitions;
+                        playable = true;
+                        hasCustomOgg = true;
+                        break;
                     }
                 }
+                if (!playable && !directlyMapped
+                        && resolveMappedVariant(soundFile.path(), mappedSoundFiles) != null) {
+                    playable = true;
+                }
+                if (playable) break;
             }
+            if (playable && (!directlyMapped || hasCustomOgg)) customSoundNames.add(entry.getKey());
         }
         return Set.copyOf(customSoundNames);
     }

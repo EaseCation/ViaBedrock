@@ -43,6 +43,8 @@ public class ViaBedrockUtilityInterface {
 
     public static final String CHANNEL = "viabedrockutility:data";
     public static final String PLAYER_STATE_CHANNEL = "viabedrockutility:player_state";
+    /** Client capability: all Bedrock particle effects are delivered as V2 requests. */
+    public static final String PARTICLE_RUNTIME_V2_CAPABILITY = "viabedrockutility:particle_runtime_v2";
     private static final int MAX_PAYLOAD_SIZE = 1048576;
 
     public static void confirmPresence(final UserConnection user) {
@@ -199,7 +201,13 @@ public class ViaBedrockUtilityInterface {
     }
 
     private static void writeString(final PacketWrapper wrapper, final String s) {
+        if (s == null) {
+            throw new IllegalArgumentException("ViaBedrockUtility strings cannot be null");
+        }
         final byte[] bytes = s.getBytes(StandardCharsets.UTF_8);
+        if (bytes.length > MAX_PAYLOAD_SIZE) {
+            throw new IllegalArgumentException("ViaBedrockUtility string exceeds " + MAX_PAYLOAD_SIZE + " bytes");
+        }
         wrapper.write(Types.INT, bytes.length);
         wrapper.write(Types.REMAINING_BYTES, bytes);
     }
@@ -208,7 +216,7 @@ public class ViaBedrockUtilityInterface {
         CONFIRM, MODEL_REQUEST, ANIMATE,
         CAPE, SKIN_INFORMATION, SKIN_DATA,
         SKIN_ANIMATION_INFO, SKIN_ANIMATION_DATA,
-        SPAWN_PARTICLE
+        SPAWN_PARTICLE, SPAWN_PARTICLE_V2
     }
 
     public static void spawnParticle(final UserConnection user, final String identifier, final float x, final float y, final float z) {
@@ -221,6 +229,42 @@ public class ViaBedrockUtilityInterface {
         pluginMessage.write(Types.STRING, CHANNEL);
         pluginMessage.write(Types.INT, PayloadType.SPAWN_PARTICLE.ordinal());
         writeString(pluginMessage, identifier);
+        pluginMessage.write(Types.FLOAT, x);
+        pluginMessage.write(Types.FLOAT, y);
+        pluginMessage.write(Types.FLOAT, z);
+        if (molangVarsJson != null && !molangVarsJson.isEmpty()) {
+            pluginMessage.write(Types.BOOLEAN, true);
+            writeString(pluginMessage, molangVarsJson);
+        } else {
+            pluginMessage.write(Types.BOOLEAN, false);
+        }
+        pluginMessage.scheduleSend(BedrockProtocol.class);
+    }
+
+    /**
+     * Sends a V2 particle request without reinterpreting SpawnParticleEffect coordinates. XYZ is
+     * absolute for a world anchor and an entity-local offset for an entity anchor.
+     */
+    public static void spawnParticleV2(final UserConnection user, final String identifier,
+                                       final int anchorKind, final UUID ownerUuid,
+                                       final float x, final float y, final float z,
+                                       final String molangVarsJson) {
+        if (anchorKind < 0 || anchorKind > 1) {
+            throw new IllegalArgumentException("Unsupported particle anchor kind: " + anchorKind);
+        }
+        if ((anchorKind == 0) != (ownerUuid == null)) {
+            throw new IllegalArgumentException("Particle anchor kind and owner UUID are inconsistent");
+        }
+        if (!Float.isFinite(x) || !Float.isFinite(y) || !Float.isFinite(z)) {
+            throw new IllegalArgumentException("Particle position contains a non-finite component");
+        }
+        final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets26_1.CUSTOM_PAYLOAD, user);
+        pluginMessage.write(Types.STRING, CHANNEL);
+        pluginMessage.write(Types.INT, PayloadType.SPAWN_PARTICLE_V2.ordinal());
+        writeString(pluginMessage, identifier);
+        pluginMessage.write(Types.UNSIGNED_BYTE, (short) anchorKind);
+        pluginMessage.write(Types.BOOLEAN, ownerUuid != null);
+        if (ownerUuid != null) pluginMessage.write(Types.UUID, ownerUuid);
         pluginMessage.write(Types.FLOAT, x);
         pluginMessage.write(Types.FLOAT, y);
         pluginMessage.write(Types.FLOAT, z);
