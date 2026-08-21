@@ -1,0 +1,122 @@
+/*
+ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
+ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+package net.raphimc.viabedrock.protocol.packet;
+
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
+import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class EntityPacketLayoutTest {
+
+    @Test
+    void netease860OmitsPost860EntityTrailers() {
+        assertFalse(EntityPacketLayout.usesAmbient(true, 860));
+        assertFalse(EntityPacketLayout.usesSwingSource(true, 860));
+        assertFalse(EntityPacketLayout.usesEntityEventFireAtPosition(true, 860));
+        assertTrue(EntityPacketLayout.usesAmbient(false, 860));
+        assertTrue(EntityPacketLayout.usesAmbient(true, 897));
+        assertTrue(EntityPacketLayout.usesSwingSource(true, 897));
+        assertTrue(EntityPacketLayout.usesEntityEventFireAtPosition(true, 974));
+    }
+
+    @Test
+    void parsesNetease860MobEffectTrailerWithoutReadingAmbient() {
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            EntityPacketLayout.writeMobEffectTrailer(buffer, 0L, true, true, 860);
+            assertEquals(0L, BedrockTypes.UNSIGNED_VAR_LONG.read(buffer));
+            assertFalse(buffer.isReadable(), "NetEase 860 effect trailer must end after tick");
+            assertFalse(EntityPacketLayout.readAmbient(buffer, true, 860));
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
+    void treatingNetease860MobEffectTrailerAs897ReadsPastThePacket() {
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            EntityPacketLayout.writeMobEffectTrailer(buffer, 0L, true, true, 860);
+            assertEquals(0L, BedrockTypes.UNSIGNED_VAR_LONG.read(buffer));
+            assertThrows(IndexOutOfBoundsException.class,
+                    () -> EntityPacketLayout.readAmbient(buffer, true, 897));
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
+    void officialMobEffectTrailerStillReadsAmbient() {
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            EntityPacketLayout.writeMobEffectTrailer(buffer, 0L, true, false, 860);
+            assertEquals(0L, BedrockTypes.UNSIGNED_VAR_LONG.read(buffer));
+            assertTrue(EntityPacketLayout.readAmbient(buffer, false, 860));
+            assertFalse(buffer.isReadable());
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
+    void netease860AnimateAndEntityEventTrailersAreEmpty() {
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            EntityPacketLayout.writeAnimateTrailer(buffer, "attack", true, 860);
+            EntityPacketLayout.writeEntityEventTrailer(buffer, true, 860);
+            assertEquals(0, buffer.readableBytes());
+            EntityPacketLayout.skipSwingSource(buffer, true, 860);
+            EntityPacketLayout.skipEntityEventFireAtPosition(buffer, true, 860);
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
+    void netease860WritesVarIntAnimateActionWithoutSwingSource() {
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            EntityPacketLayout.writeAnimateAction(buffer, 1, true, 860);
+            EntityPacketLayout.writeAnimateTrailer(buffer, "attack", true, 860);
+            assertEquals(1, EntityPacketLayout.readAnimateAction(buffer, true, 860));
+            assertFalse(buffer.isReadable());
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
+    void officialAnimateStillWritesByteActionAndSwingSource() {
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            EntityPacketLayout.writeAnimateAction(buffer, 1, false, 975);
+            EntityPacketLayout.writeAnimateTrailer(buffer, "attack", false, 975);
+            assertEquals(1, EntityPacketLayout.readAnimateAction(buffer, false, 975));
+            EntityPacketLayout.skipSwingSource(buffer, false, 975);
+            assertFalse(buffer.isReadable());
+        } finally {
+            buffer.release();
+        }
+    }
+}

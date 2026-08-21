@@ -48,10 +48,11 @@ public class BlockDefinitions {
                 final JsonObject blocksJson = pack.content().getJson("blocks.json");
                 for (Map.Entry<String, JsonElement> entry : blocksJson.entrySet()) {
                     if (entry.getKey().equals("format_version")) continue;
+                    if (!entry.getValue().isJsonObject()) continue;
                     final JsonObject block = entry.getValue().getAsJsonObject();
                     final String sound = block.has("sound") ? block.get("sound").getAsString() : null;
                     final String identifier = Key.namespaced(entry.getKey());
-                    blocks.put(identifier, new BlockDefinition(identifier, sound));
+                    blocks.put(identifier, new BlockDefinition(identifier, sound, textures(block.get("textures"))));
                 }
             } catch (Throwable e) {
                 DefinitionLogger.warning("Failed to parse blocks.json in pack " + pack.key(), e);
@@ -76,6 +77,32 @@ public class BlockDefinitions {
         return blocks;
     }
 
+    private static BlockTextures textures(final JsonElement textures) {
+        if (textures == null || textures.isJsonNull()) {
+            return BlockTextures.EMPTY;
+        }
+        if (textures.isJsonPrimitive() && textures.getAsJsonPrimitive().isString()) {
+            return BlockTextures.uniform(textures.getAsString());
+        }
+        if (!textures.isJsonObject()) {
+            return BlockTextures.EMPTY;
+        }
+        final JsonObject object = textures.getAsJsonObject();
+        return new BlockTextures(
+                stringOrNull(object, "up"),
+                stringOrNull(object, "down"),
+                stringOrNull(object, "north"),
+                stringOrNull(object, "south"),
+                stringOrNull(object, "west"),
+                stringOrNull(object, "east"),
+                stringOrNull(object, "side")
+        );
+    }
+
+    private static String stringOrNull(final JsonObject object, final String key) {
+        return object.has(key) && object.get(key).isJsonPrimitive() ? object.get(key).getAsString() : null;
+    }
+
     public BlockDefinition get(final String identifier) {
         return this.blocks.get(identifier);
     }
@@ -84,7 +111,52 @@ public class BlockDefinitions {
         return Collections.unmodifiableMap(this.blocks);
     }
 
-    public record BlockDefinition(String identifier, String sound) {
+    public record BlockDefinition(String identifier, String sound, BlockTextures textures) {
+        public BlockDefinition(final String identifier, final String sound) {
+            this(identifier, sound, BlockTextures.EMPTY);
+        }
+
+        public boolean hasTextures() {
+            return this.textures != null && this.textures.hasAny();
+        }
+    }
+
+    public record BlockTextures(String up, String down, String north, String south, String west, String east, String side) {
+        static final BlockTextures EMPTY = new BlockTextures(null, null, null, null, null, null, null);
+
+        static BlockTextures uniform(final String texture) {
+            return new BlockTextures(texture, texture, texture, texture, texture, texture, texture);
+        }
+
+        public boolean hasAny() {
+            return this.up != null || this.down != null || this.north != null || this.south != null
+                    || this.west != null || this.east != null || this.side != null;
+        }
+
+        public String face(final String face) {
+            return switch (face) {
+                case "up" -> first(this.up, this.side);
+                case "down" -> first(this.down, this.side);
+                case "north" -> first(this.north, this.side);
+                case "south" -> first(this.south, this.side);
+                case "west" -> first(this.west, this.side);
+                case "east" -> first(this.east, this.side);
+                default -> this.side;
+            };
+        }
+
+        public String firstName() {
+            return first(this.up, this.down, this.north, this.south, this.west, this.east, this.side);
+        }
+
+        private static String first(final String... values) {
+            for (String value : values) {
+                if (value != null && !value.isBlank()) {
+                    return value;
+                }
+            }
+            return null;
+        }
     }
 
 }

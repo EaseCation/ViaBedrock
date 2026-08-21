@@ -100,6 +100,7 @@ public class InventoryTracker extends StoredObject {
     private Container pendingCloseContainer = null;
     private IntObjectPair<Form> currentForm = null;
     private NpcDialogueState currentNpcDialogue = null;
+    private int nextItemStackRequestId = -1;
 
     public InventoryTracker(final UserConnection user) {
         this(user, PACKET_FACTORY_CLOSE_SINK, CLIENT_AUTH_CLOSE_PREPARATION);
@@ -267,6 +268,15 @@ public class InventoryTracker extends StoredObject {
 
     public boolean isAnyScreenOpen() {
         return this.isContainerOpen() || this.currentForm != null || this.currentNpcDialogue != null;
+    }
+
+    public int nextItemStackRequestId() {
+        final int requestId = this.nextItemStackRequestId;
+        this.nextItemStackRequestId -= 2;
+        if (this.nextItemStackRequestId >= 0) {
+            this.nextItemStackRequestId = -1;
+        }
+        return requestId;
     }
 
     public InventoryContainer getInventoryContainer() {

@@ -19,12 +19,8 @@ package net.raphimc.viabedrock.protocol.types.model;
 
 import com.viaversion.viaversion.api.type.Type;
 import io.netty.buffer.ByteBuf;
-import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.CommandOriginType;
 import net.raphimc.viabedrock.protocol.model.CommandOriginData;
-import net.raphimc.viabedrock.protocol.types.BedrockTypes;
-
-import java.util.Locale;
-import java.util.UUID;
+import net.raphimc.viabedrock.protocol.packet.CommandPacketLayout;
 
 public class CommandOriginDataType extends Type<CommandOriginData> {
 
@@ -34,25 +30,12 @@ public class CommandOriginDataType extends Type<CommandOriginData> {
 
     @Override
     public CommandOriginData read(ByteBuf buffer) {
-        final String rawType = BedrockTypes.STRING.read(buffer);
-        final CommandOriginType type = CommandOriginType.getByName(rawType);
-        if (type == null) { // Bedrock client disconnects if the type is not valid
-            throw new IllegalStateException("Unknown CommandOriginType: " + rawType);
-        }
-
-        final UUID uuid = BedrockTypes.UUID.read(buffer);
-        final String requestId = BedrockTypes.STRING.read(buffer);
-        final long uniquePlayerId = buffer.readLongLE();
-
-        return new CommandOriginData(type, uuid, requestId, uniquePlayerId);
+        return CommandPacketLayout.readOrigin(buffer, CommandPacketLayout.usesStringLayout(), true);
     }
 
     @Override
     public void write(ByteBuf buffer, CommandOriginData value) {
-        BedrockTypes.STRING.write(buffer, value.type().name().toLowerCase(Locale.ROOT));
-        BedrockTypes.UUID.write(buffer, value.uuid());
-        BedrockTypes.STRING.write(buffer, value.requestId());
-        buffer.writeLongLE(value.uniquePlayerId());
+        CommandPacketLayout.writeOrigin(buffer, value, CommandPacketLayout.usesStringLayout(), false);
     }
 
 }

@@ -27,6 +27,7 @@ import net.raphimc.viabedrock.experimental.model.inventory.LegacySetItemSlotData
 import net.raphimc.viabedrock.experimental.types.ExperimentalBedrockTypes;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.ItemUseInventoryTransaction_TriggerType;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
+import net.raphimc.viabedrock.protocol.packet.InventoryTransactionLayout;
 import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
@@ -70,7 +71,7 @@ public class InventoryTransactionPacketType extends Type<BedrockInventoryTransac
                     BedrockTypes.POSITION_3F.read(buffer),
                     BedrockTypes.UNSIGNED_VAR_INT.read(buffer),
                     ItemUseInventoryTransaction_PredictedResult.getByValue(BedrockTypes.UNSIGNED_VAR_INT.read(buffer)),
-                    buffer.readByte()
+                    InventoryTransactionLayout.readClientCooldownState(buffer)
             );
             case ItemUseOnEntityTransaction -> new InventoryTransactionData.UseItemOnEntityTransactionData(
                     BedrockTypes.VAR_LONG.read(buffer),
@@ -162,7 +163,7 @@ public class InventoryTransactionPacketType extends Type<BedrockInventoryTransac
         BedrockTypes.POSITION_3F.write(buffer, data.clickPosition());
         BedrockTypes.UNSIGNED_VAR_INT.write(buffer, data.blockRuntimeId());
         BedrockTypes.UNSIGNED_VAR_INT.write(buffer, data.predictedResult().getValue());
-        buffer.writeByte(data.clientCooldownState());
+        InventoryTransactionLayout.writeClientCooldownState(buffer, data.clientCooldownState());
     }
 
     private static int readBlockFace(final ByteBuf buffer) {

@@ -55,6 +55,7 @@ import net.raphimc.viabedrock.protocol.model.ItemEntry;
 import net.raphimc.viabedrock.protocol.rewriter.item.BundleItemRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomAttachableResourceRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomItemTextureResourceRewriter;
+import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomBlockTextureResourceRewriter;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 import net.raphimc.viabedrock.protocol.types.array.ArrayType;
@@ -125,7 +126,13 @@ public class ItemRewriter extends StoredObject {
         this.itemType = new BedrockItemType(this.items.getOrDefault("minecraft:shield", 0), this.blockItemValidBlockStates, false);
         this.optionalItemType = new OptionalType<>(this.itemType);
         this.itemArrayType = new ArrayType<>(this.itemType, BedrockTypes.UNSIGNED_VAR_INT);
-        this.newItemType = new NetworkItemStackDescriptorType(this.items.getOrDefault("minecraft:shield", 0), this.blockItemValidBlockStates, false);
+        // NetEase 860 still serializes NetworkItemStackDescriptor slots with the legacy item layout (varint id)
+        final boolean netEaseLegacyItemLayout = ViaBedrock.getConfig().shouldEmulateNetEaseClient()
+                && ViaBedrock.getConfig().getNetEaseProtocolVersion() > 0
+                && ViaBedrock.getConfig().getNetEaseProtocolVersion() < 898;
+        this.newItemType = netEaseLegacyItemLayout
+                ? this.itemType
+                : new NetworkItemStackDescriptorType(this.items.getOrDefault("minecraft:shield", 0), this.blockItemValidBlockStates, false);
         this.optionalNewItemType = new OptionalType<>(this.newItemType);
         this.newItemArrayType = new ArrayType<>(this.newItemType, BedrockTypes.UNSIGNED_VAR_INT);
     }
@@ -214,6 +221,10 @@ public class ItemRewriter extends StoredObject {
                     } else if (itemDefinition.iconComponent() != null && resourcePackStorage.isLoadedOnJavaClient()) {
                         data.set(StructuredDataKey.ITEM_MODEL, CustomItemTextureResourceRewriter.getItemModel(itemDefinition.iconComponent()));
                         data.set(StructuredDataKey.CUSTOM_MODEL_DATA1_21_4, CustomItemTextureResourceRewriter.getCustomModelData("0"));
+                    } else if (CustomBlockTextureResourceRewriter.hasConvertedTexture(resourcePackStorage, identifier)
+                            && resourcePackStorage.isLoadedOnJavaClient()) {
+                        data.set(StructuredDataKey.ITEM_MODEL, CustomBlockTextureResourceRewriter.getItemModel(identifier));
+                        data.set(StructuredDataKey.CUSTOM_MODEL_DATA1_21_4, CustomBlockTextureResourceRewriter.getCustomModelData("0"));
                     } else {
                         data.set(StructuredDataKey.LORE, new Tag[]{TextUtil.stringToNbt("§7[ViaBedrock] Custom item: " + identifier)});
                     }

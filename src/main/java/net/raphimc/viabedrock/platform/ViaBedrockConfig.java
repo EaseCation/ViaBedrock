@@ -214,6 +214,36 @@ public interface ViaBedrockConfig extends Config {
     String getViaProxyAuthSecret();
 
     /**
+     * @return If true, ViaBedrock pretends to be a NetEase / China Edition Bedrock client.
+     */
+    default boolean shouldEmulateNetEaseClient() {
+        return false;
+    }
+
+    /**
+     * @return Bedrock protocol version written into REQUEST_NETWORK_SETTINGS and LOGIN.
+     *         0 keeps the Java handshake protocol number (upstream behaviour).
+     */
+    default int getNetEaseProtocolVersion() {
+        return 0;
+    }
+
+    /**
+     * @return GameVersion string written into the skin JWT when NetEase emulation is enabled.
+     */
+    default String getNetEaseGameVersion() {
+        return "1.21.124";
+    }
+
+    /**
+     * @return RakNet protocol version used when connecting to a Bedrock / NetEase server.
+     *         0 keeps ProtocolConstants.BEDROCK_RAKNET_PROTOCOL_VERSION.
+     */
+    default int getNetEaseRakNetProtocolVersion() {
+        return 0;
+    }
+
+    /**
      * @return If true, enables server-side entity animation using Display Entities when ViaBedrockUtility mod is not present.
      * When disabled, custom entities will only show as invisible interaction boxes (upstream behavior).
      * This setting has no effect when ViaBedrockUtility mod is installed (client-side rendering is always used).

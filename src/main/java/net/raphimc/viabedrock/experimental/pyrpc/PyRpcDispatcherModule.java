@@ -28,7 +28,7 @@ import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
-import java.util.concurrent.atomic.AtomicInteger;
+
 
 /**
  * Shared JE PY_RPC transport. Bedrock PY_RPC bytes are forwarded unchanged
@@ -36,40 +36,173 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class PyRpcDispatcherModule implements FeatureModule {
 
-    public static final String CHANNEL = "floodgate:netease";
+    // ModUIClient payload channel handshake: the client registers "moduiclient:confirm"
+    // (minecraft:register) and exchanges data on "moduiclient:data". The old
+    // "floodgate:netease" name matched nothing in the client jar, so both directions
+    // of the bridge were dead.
+    public static final String CONFIRM_CHANNEL = "moduiclient:confirm";
+    public static final String DATA_CHANNEL = "moduiclient:data";
 
-    private static final AtomicInteger MSG_ID_COUNTER = new AtomicInteger(1);
+    // NukkitMaster's PyRpcMessageListener only accepts this magic msgId (the NetEase client
+    // always sends it). S2C uses PyRpcPacket.DEFAULT_MSG_ID = 9753608 instead.
+    private static final int MSG_ID = 98247598;
+
+    private static void sendPyRpc(final com.viaversion.viaversion.api.connection.UserConnection user, final byte[] msgpackData) {
+        try {
+            final PacketWrapper pyRpc = PacketWrapper.create(ServerboundBedrockPackets.PY_RPC, user);
+            // Layout per Nukkit-MOT PyRpcPacket.decode(): [BYTE_ARRAY payload][uint32 LE msgId].
+            // msgId must be the magic 98247598 — anything else is logged as "invalid PyRpc msgId"
+            // and the batch containing it fails to decode ("Sent malformed packet").
+            pyRpc.write(BedrockTypes.BYTE_ARRAY, msgpackData);
+            pyRpc.write(BedrockTypes.INT_LE, MSG_ID);
+            pyRpc.scheduleSendToServer(BedrockProtocol.class);
+        } catch (final Exception e) {
+            ViaBedrock.getPlatform().getLogger().warning("[PY_RPC] Failed to send C2S event: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Builds ["ModEventC2S", [modName, systemName, eventName, {}], nil] exactly like the
+     * reference ModUIClient packer: fixarray(3), MsgPack StringValue strings (NOT bin8 —
+     * the server decodes via Value.toJson() and binary values base64-encode, breaking
+     * string matching), fixmap(0) for empty event data, and a trailing nil.
+     */
+    private static byte[] buildC2sEvent(final String modName, final String systemName, final String eventName, final byte[] ignoredEventData) {
+        final java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(128);
+        out.write(0x93); // fixarray(3)
+        writeFixStr(out, "ModEventC2S");
+        out.write(0x94); // fixarray(4)
+        writeFixStr(out, modName);
+        writeFixStr(out, systemName);
+        writeFixStr(out, eventName);
+        out.write(0x80); // fixmap(0)
+        out.write(0xc0); // nil
+        return out.toByteArray();
+    }
+
+    /**
+     * ScreenInfoEvent C2S mirroring the reference ModUIClient packer:
+     * {screen: {width, height}, view: {width, height, offsetX, offsetY}} with 1920x1080
+     * logical and 2x physical, typical NetEase PC client geometry. HUD systems
+     * wait for screen info before they will serve HUD node data.
+     */
+    private static byte[] buildScreenInfoC2s() {
+        final java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(128);
+        out.write(0x93); // fixarray(3)
+        writeFixStr(out, "ModEventC2S");
+        out.write(0x94); // fixarray(4)
+        writeFixStr(out, "ECNukkitClientMod");
+        writeFixStr(out, "ECNukkitClientSystem");
+        writeFixStr(out, "ScreenInfoEvent");
+        out.write(0x82); // fixmap(2)
+        writeFixStr(out, "screen");
+        out.write(0x82); // fixmap(2)
+        writeFixStr(out, "width"); writeInt(out, 1920);
+        writeFixStr(out, "height"); writeInt(out, 1080);
+        writeFixStr(out, "view");
+        out.write(0x84); // fixmap(4)
+        writeFixStr(out, "width"); writeInt(out, 3840);
+        writeFixStr(out, "height"); writeInt(out, 2160);
+        writeFixStr(out, "offsetX"); writeInt(out, 0);
+        writeFixStr(out, "offsetY"); writeInt(out, 0);
+        out.write(0xc0); // nil
+        return out.toByteArray();
+    }
+
+    private static void writeInt(final java.io.ByteArrayOutputStream out, final int value) {
+        // MsgPack int32 big-endian
+        out.write(0xd2);
+        out.write(value >>> 24);
+        out.write(value >>> 16);
+        out.write(value >>> 8);
+        out.write(value);
+    }
+
+    private static void writeFixStr(final java.io.ByteArrayOutputStream out, final String s) {
+        final byte[] b = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        if (b.length > 31) throw new IllegalArgumentException("fixstr max 31 bytes: " + s);
+        out.write(0xa0 | b.length);
+        out.writeBytes(b);
+    }
+
+    private static boolean isModEventS2C(final byte[] data) {
+        // MsgPack fixarray(3) + fixstr/bin8 "ModEventS2C"
+        return data.length > 14 && data[0] == (byte) 0x93
+                && data[1] == (byte) 0xc4 && data[2] == 0x0b
+                && new String(data, 3, 11, java.nio.charset.StandardCharsets.US_ASCII).equals("ModEventS2C");
+    }
+
 
     @Override
     public void onPacketRegistration(final BedrockProtocol protocol) {
         protocol.registerClientbound(ClientboundBedrockPackets.PY_RPC, null, wrapper -> {
             wrapper.cancel();
+            // S2C layout is [payload][int32 LE msgId] (payload-first), the opposite of C2S.
+            // msgId-first decoding strips 4 bytes and breaks isModEventS2C().
             final byte[] data = wrapper.read(BedrockTypes.BYTE_ARRAY); // MsgPack data
-            wrapper.read(BedrockTypes.INT_LE); // msgId (not needed for S2C forwarding)
+            final int msgId = wrapper.read(BedrockTypes.INT_LE); // msgId (not needed for S2C forwarding)
+            if (ViaBedrock.getConfig().shouldEmulateNetEaseClient() && isModEventS2C(data)) {
+                // NetEase HUD systems push VertexHudUpdate over ModEventS2C and expect the client
+                // to participate in the ModUI protocol. Drive the lifecycle from the proxy itself
+                // (ScreenInfoEvent then RequestHudNodeDataEvent) so join no longer depends on the
+                // Java client having ModUIClient installed.
+                if (!wrapper.user().has(ModUiLifecycleStorage.class)) {
+                    wrapper.user().put(new ModUiLifecycleStorage());
+                    sendPyRpc(wrapper.user(), buildScreenInfoC2s());
+                    final byte[] request = buildC2sEvent("ECNukkitClientMod", "ECNukkitClientSystem", "RequestHudNodeDataEvent", new byte[0]);
+                    sendPyRpc(wrapper.user(), request);
+                }
+            }
 
             final ChannelStorage channels = wrapper.user().get(ChannelStorage.class);
-            if (!channels.hasChannel(CHANNEL)) {
+            if (!channels.hasChannel(CONFIRM_CHANNEL)) {
                 return;
             }
 
+            // ModUIClient payload format: int32 type ordinal prefix, then the raw bytes.
+            // 0=CONFIRM, 1=PY_RPC_DATA, 2=ENTITY_MAPPING. Without the prefix the client's
+            // STREAM_CODEC decoder throws and the payload is silently dropped.
             final PacketWrapper msg = PacketWrapper.create(ClientboundPackets26_1.CUSTOM_PAYLOAD, wrapper.user());
-            msg.write(Types.STRING, CHANNEL);
+            msg.write(Types.STRING, DATA_CHANNEL);
+            msg.write(Types.INT, 1); // PayloadType.PY_RPC_DATA
             msg.write(Types.REMAINING_BYTES, data);
             msg.scheduleSend(BedrockProtocol.class);
         });
     }
 
     @Override
+    public void onChannelRegistered(final com.viaversion.viaversion.api.connection.UserConnection user, final java.util.Set<String> channels) {
+        // ModUIClient only registers "moduiclient:confirm" (minecraft:register). Fabric's
+        // payload registration then makes "moduiclient:data" usable, so treat confirm as the
+        // capability signal and answer the handshake with an empty CONFIRM payload — the
+        // client's UIManager.setConnected(true) will not run without it.
+        if (!channels.contains(CONFIRM_CHANNEL) || user.get(ChannelStorage.class).hasChannel(DATA_CHANNEL)) {
+            return;
+        }
+
+        final PacketWrapper confirm = PacketWrapper.create(ClientboundPackets26_1.CUSTOM_PAYLOAD, user);
+        confirm.write(Types.STRING, DATA_CHANNEL);
+        confirm.write(Types.INT, 0); // PayloadType.CONFIRM
+        confirm.write(Types.REMAINING_BYTES, new byte[0]);
+        confirm.scheduleSend(BedrockProtocol.class);
+        ViaBedrock.getPlatform().getLogger().info("[PY_RPC] ModUIClient confirm channel seen; sent CONFIRM handshake");
+    }
+
+    @Override
     public boolean handleCustomPayload(final String channel, final PacketWrapper wrapper) {
-        if (!channel.equals(CHANNEL)) {
+        if (!channel.equals(DATA_CHANNEL)) {
             return false;
         }
 
         try {
+            final int payloadType = wrapper.read(Types.INT); // PayloadType ordinal
+            if (payloadType != 1) { // PY_RPC_DATA; CONFIRM/ENTITY_MAPPING are client-internal
+                return true;
+            }
             final byte[] msgpackData = wrapper.read(Types.REMAINING_BYTES);
             final PacketWrapper pyRpc = PacketWrapper.create(ServerboundBedrockPackets.PY_RPC, wrapper.user());
-            pyRpc.write(BedrockTypes.BYTE_ARRAY, msgpackData);
-            pyRpc.write(BedrockTypes.INT_LE, MSG_ID_COUNTER.getAndIncrement());
+            pyRpc.write(BedrockTypes.BYTE_ARRAY, msgpackData); // payload first, msgId last — see sendPyRpc
+            pyRpc.write(BedrockTypes.INT_LE, MSG_ID);
             pyRpc.sendToServer(BedrockProtocol.class);
         } catch (final Exception e) {
             ViaBedrock.getPlatform().getLogger().severe("[PY_RPC] Failed to forward JE C2S payload: " + e.getMessage());

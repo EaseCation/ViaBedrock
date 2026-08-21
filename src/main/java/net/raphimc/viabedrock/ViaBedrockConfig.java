@@ -72,6 +72,10 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
     private boolean disableServerBlacklist;
     private String language;
     private String viaProxyAuthSecret;
+    private boolean emulateNetEaseClient;
+    private int netEaseProtocolVersion;
+    private String netEaseGameVersion;
+    private int netEaseRakNetProtocolVersion;
     private boolean enableServerEntityAnimation;
     private int javaSkinFetchTimeout;
     private boolean sendTabList;
@@ -153,6 +157,11 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
         this.disableServerBlacklist = this.getBoolean("disable-server-blacklist", false);
         this.language = this.getString("language", "");
         this.viaProxyAuthSecret = this.getString("viaproxy-auth-secret", "");
+        final ConfigSection netease = this.getSection("netease");
+        this.emulateNetEaseClient = getBoolean(netease, "enabled", false);
+        this.netEaseProtocolVersion = getInt(netease, "protocol-version", 860);
+        this.netEaseGameVersion = getString(netease, "game-version", "1.21.124");
+        this.netEaseRakNetProtocolVersion = getInt(netease, "raknet-protocol-version", 8);
         this.enableServerEntityAnimation = this.getBoolean("enable-server-entity-animation", true);
         this.javaSkinFetchTimeout = this.getInt("java-skin-fetch-timeout", 1000);
         final ConfigSection tabList = this.getSection("tab-list");
@@ -398,6 +407,26 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
     @Override
     public String getViaProxyAuthSecret() {
         return this.viaProxyAuthSecret;
+    }
+
+    @Override
+    public boolean shouldEmulateNetEaseClient() {
+        return this.emulateNetEaseClient;
+    }
+
+    @Override
+    public int getNetEaseProtocolVersion() {
+        return this.netEaseProtocolVersion;
+    }
+
+    @Override
+    public String getNetEaseGameVersion() {
+        return this.netEaseGameVersion;
+    }
+
+    @Override
+    public int getNetEaseRakNetProtocolVersion() {
+        return this.netEaseRakNetProtocolVersion;
     }
 
     @Override

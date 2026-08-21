@@ -32,6 +32,8 @@ import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
 import net.raphimc.viabedrock.api.util.TextUtil;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
+import net.raphimc.viabedrock.protocol.data.enums.Dimension;
+import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.GameType;
 import net.raphimc.viabedrock.protocol.model.Position2f;
 import net.raphimc.viabedrock.protocol.model.Position3f;
 import net.raphimc.viabedrock.protocol.storage.ClientLightStorage;
@@ -39,6 +41,7 @@ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;

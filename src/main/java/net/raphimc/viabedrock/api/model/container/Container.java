@@ -149,11 +149,14 @@ public abstract class Container {
     }
 
     public boolean isValidBlockTag(final String tag) {
+        if (this.validBlockTags.isEmpty()) {
+            // Vehicle chests / hoppers still send a block position, but they have no block tag.
+            return true;
+        }
         if (tag == null) {
             return false;
-        } else {
-            return this.validBlockTags.contains(tag);
         }
+        return this.validBlockTags.contains(tag);
     }
 
     protected void onSlotChanged(final int slot, final BedrockItem oldItem, final BedrockItem newItem) {

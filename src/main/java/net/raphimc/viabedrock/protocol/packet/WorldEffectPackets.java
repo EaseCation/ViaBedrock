@@ -85,7 +85,16 @@ public class WorldEffectPackets {
             final BlockPosition position = wrapper.read(BedrockTypes.BLOCK_POSITION); // position
             final float volume = wrapper.read(BedrockTypes.FLOAT_LE); // volume
             final float pitch = wrapper.read(BedrockTypes.FLOAT_LE); // pitch
-            wrapper.read(BedrockTypes.OPTIONAL_UNSIGNED_LONG_LE); // server sound handle
+            // NetEase 860 never grew the v827+ server sound handle tail. Reading the optional long
+            // consumes the presence boolean only when it is absent, leaving the boolean byte in the
+            // buffer and throwing when the clientbound writer hits the trailing byte; probabilistic
+            // because it only fires when the server actually plays a positional sound.
+            // Official 974+ and NetEase 974+ append an optional server sound handle.
+            // NetEase 860 still ends after pitch, so skip the handle only on that layout.
+            if (!ViaBedrock.getConfig().shouldEmulateNetEaseClient()
+                    || ViaBedrock.getConfig().getNetEaseProtocolVersion() >= 974) {
+                wrapper.read(BedrockTypes.OPTIONAL_UNSIGNED_LONG_LE); // server sound handle
+            }
 
             final BedrockMappingData.JavaSound javaSound = BedrockProtocol.MAPPINGS.getBedrockToJavaSounds().get(name);
             final Position3f sourcePosition = new Position3f(position.x() / 8F, position.y() / 8F, position.z() / 8F);
@@ -189,8 +198,7 @@ public class WorldEffectPackets {
             final String entityIdentifier = wrapper.read(BedrockTypes.STRING); // entity identifier
             final boolean isBabyMob = wrapper.read(Types.BOOLEAN); // is baby mob
             final boolean isGlobal = wrapper.read(Types.BOOLEAN); // is global sound
-            wrapper.read(BedrockTypes.LONG_LE); // entity unique id
-            wrapper.read(BedrockTypes.OPTIONAL_POSITION_3F); // fire at position
+            LevelSoundEventLayout.skipTrailer(wrapper);
 
             // Java 操作者已本地播放放置声音，只抑制同坐标操作的一次服务端回显。
             if (soundEvent == SharedTypes_Legacy_LevelSoundEvent.Place) {

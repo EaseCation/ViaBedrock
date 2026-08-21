@@ -52,6 +52,7 @@ import net.raphimc.viabedrock.protocol.rewriter.neighbor.TrackerNeighborView;
 import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
+import net.raphimc.viabedrock.protocol.packet.EntityPacketLayout;
 import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
@@ -273,10 +274,10 @@ public final class BlockBreakingProgressModule implements FeatureModule {
 
     private void sendBedrockSwing(final UserConnection user, final ClientPlayerEntity clientPlayer) {
         final PacketWrapper animate = PacketWrapper.create(ServerboundBedrockPackets.ANIMATE, user);
-        animate.write(Types.UNSIGNED_BYTE, (short) AnimatePacketPayload_Action.Swing.getValue());
+        EntityPacketLayout.writeAnimateAction(animate, AnimatePacketPayload_Action.Swing.getValue());
         animate.write(BedrockTypes.UNSIGNED_VAR_LONG, clientPlayer.runtimeId());
         animate.write(BedrockTypes.FLOAT_LE, 0F);
-        animate.write(BedrockTypes.OPTIONAL_STRING, ActorSwingSource.Attack.name().toLowerCase(Locale.ROOT));
+        EntityPacketLayout.writeAnimateTrailer(animate, ActorSwingSource.Attack.name().toLowerCase(Locale.ROOT));
         animate.sendToServer(BedrockProtocol.class);
     }
 

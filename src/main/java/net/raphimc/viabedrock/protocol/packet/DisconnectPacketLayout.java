@@ -1,0 +1,82 @@
+/*
+ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
+ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+package net.raphimc.viabedrock.protocol.packet;
+
+import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
+import com.viaversion.viaversion.api.type.Types;
+import io.netty.buffer.ByteBuf;
+import net.raphimc.viabedrock.ViaBedrock;
+import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+
+/**
+ * Wire-layout helpers for Bedrock DISCONNECT (packet 0x05).
+ * <p>
+ * Official Bedrock 974+ encodes hide-disconnection-screen as an unsigned varint.
+ * NetEase 860 still uses a boolean. Reading the varint on a boolean payload
+ * consumes the hide-screen flag plus the first byte of the message string and
+ * then aborts Java DISCONNECT as extra / truncated data.
+ */
+public final class DisconnectPacketLayout {
+
+    public static final int UNSIGNED_HIDE_SCREEN_PROTOCOL = 974;
+
+    private DisconnectPacketLayout() {
+    }
+
+    public static boolean usesUnsignedHideScreen() {
+        return usesUnsignedHideScreen(emulateNetEase(), netEaseProtocol());
+    }
+
+    public static boolean usesUnsignedHideScreen(final boolean emulateNetEase, final int protocol) {
+        return !emulateNetEase || protocol >= UNSIGNED_HIDE_SCREEN_PROTOCOL;
+    }
+
+    /**
+     * @return true when a kick message / filtered message follow the hide-screen flag
+     */
+    public static boolean readHasMessage(final PacketWrapper wrapper) {
+        if (usesUnsignedHideScreen()) {
+            return wrapper.read(BedrockTypes.UNSIGNED_VAR_INT) == 0;
+        }
+        return !wrapper.read(Types.BOOLEAN);
+    }
+
+    public static boolean readHasMessage(final ByteBuf buffer, final boolean emulateNetEase, final int protocol) {
+        if (usesUnsignedHideScreen(emulateNetEase, protocol)) {
+            return BedrockTypes.UNSIGNED_VAR_INT.read(buffer) == 0;
+        }
+        return !buffer.readBoolean();
+    }
+
+    public static void writeHideScreen(final ByteBuf buffer, final boolean hideScreen,
+                                       final boolean emulateNetEase, final int protocol) {
+        if (usesUnsignedHideScreen(emulateNetEase, protocol)) {
+            BedrockTypes.UNSIGNED_VAR_INT.write(buffer, hideScreen ? 1 : 0);
+        } else {
+            buffer.writeBoolean(hideScreen);
+        }
+    }
+
+    private static boolean emulateNetEase() {
+        return ViaBedrock.getConfig().shouldEmulateNetEaseClient();
+    }
+
+    private static int netEaseProtocol() {
+        return ViaBedrock.getConfig().getNetEaseProtocolVersion();
+    }
+}

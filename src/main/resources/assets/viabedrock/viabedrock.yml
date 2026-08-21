@@ -71,6 +71,16 @@ translate-show-coordinates-game-rule: false
 disable-server-blacklist: false
 # The language code to send to the bedrock server (e.g. "en_us", "zh_cn"). Empty = "en_us"
 language: ""
+# NetEase / China Edition client emulation.
+# enabled: pretend to be a NetEase client (RakNet 8 + protocol 860 + NetEase login fields).
+# protocol-version: written into REQUEST_NETWORK_SETTINGS and LOGIN. 0 keeps the Java handshake version.
+# game-version: GameVersion claim in the skin JWT.
+# raknet-protocol-version: used by ViaProxy when connecting to the Bedrock server. 0 keeps the international default.
+netease:
+  enabled: false
+  protocol-version: 860
+  game-version: "1.21.124"
+  raknet-protocol-version: 8
 # Shared secret for ViaProxy authentication bridge.
 # When set, generates HMAC-signed identity tokens in the skin JWT.
 # Must match the secret configured in the Nemisys ViaProxyAuth plugin.

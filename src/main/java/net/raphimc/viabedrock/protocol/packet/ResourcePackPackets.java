@@ -179,6 +179,10 @@ public class ResourcePackPackets {
             }
 
             final boolean resourcePackRequired = wrapper.read(Types.BOOLEAN);
+            if (ViaBedrock.getConfig().shouldEmulateNetEaseClient()) {
+                // NetEase / protocol 860 still serializes the behaviour-pack stack first.
+                skipPackStackEntries(wrapper);
+            }
             final ResourcePack.Key[] keys = new ResourcePack.Key[wrapper.read(BedrockTypes.UNSIGNED_VAR_INT)]; // resource packs size
             final String[] subpacks = new String[keys.length];
             for (int i = 0; i < keys.length; i++) {
@@ -275,7 +279,7 @@ public class ResourcePackPackets {
             final ResourcePackLoadStateTracker.Info info;
             try {
                 ResourcePackDownloadTracker.validateMetadata(size, chunkSize, hash);
-                if (sharedCacheEnabled && type == PackType.Resources) {
+                if (sharedCacheEnabled && isCountedTransferPack(type)) {
                     if (loadStateTracker == null) {
                         throw new IllegalStateException("Resource pack transfer has no active announcement tracker");
                     }
@@ -306,14 +310,25 @@ public class ResourcePackPackets {
             final ResourcePackArchiveStore.Claim archiveClaim = shouldClaimRawArchive(
                     sharedCacheEnabled, type, info)
                     ? ViaBedrock.getResourcePackArchiveStore().claim(hash) : null;
+            if (archiveClaim != null && archiveClaim.leader()) {
+                tryLegacyPackBeforeChunks(wrapper.user(), loadStateTracker, key, packKey, info,
+                        size, chunkSize, hash, premium, type, archiveClaim);
+                return;
+            }
+            if (archiveClaim != null && archiveClaim.path().isDone()
+                    && !archiveClaim.path().isCompletedExceptionally()) {
+                // Raw CAS hit: attach the shared archive immediately, but still run this
+                // connection's protocol transfer. The Downloading response listed every
+                // announced pack, and sequential senders (e.g. WaterdogPE) only advance to
+                // the next DATA_INFO after the current pack's chunk requests complete.
+                loadClaimedPack(wrapper.user(), loadStateTracker, packKey, info, archiveClaim);
+                startResourcePackDownload(wrapper.user(), key, packKey,
+                        size, chunkSize, hash, premium, type, null);
+                return;
+            }
             if (archiveClaim != null) {
-                if (!archiveClaim.leader()) {
-                    loadClaimedPackOrTakeOver(wrapper.user(), loadStateTracker, key, packKey, info,
-                            size, chunkSize, hash, premium, type, archiveClaim);
-                } else {
-                    tryLegacyPackBeforeChunks(wrapper.user(), loadStateTracker, key, packKey, info,
-                            size, chunkSize, hash, premium, type, archiveClaim);
-                }
+                loadClaimedPackOrTakeOver(wrapper.user(), loadStateTracker, key, packKey, info,
+                        size, chunkSize, hash, premium, type, archiveClaim);
                 return;
             }
             startResourcePackDownload(wrapper.user(), key, packKey,
@@ -581,7 +596,24 @@ public class ResourcePackPackets {
 
     static boolean shouldClaimRawArchive(final boolean sharedCacheEnabled, final PackType type,
                                          final ResourcePackLoadStateTracker.Info info) {
-        return sharedCacheEnabled && type == PackType.Resources && info != null;
+        return sharedCacheEnabled && isCountedTransferPack(type) && info != null;
+    }
+
+    static boolean isCountedTransferPack(final PackType type) {
+        return type == PackType.Resources || type == PackType.Behavior;
+    }
+
+    private static void skipPackStackEntries(final PacketWrapper wrapper) {
+        final int count = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
+        for (int i = 0; i < count; i++) {
+            wrapper.read(BedrockTypes.STRING); // id
+            wrapper.read(BedrockTypes.STRING); // version
+            wrapper.read(BedrockTypes.STRING); // subpack name
+        }
+        if (count > 0) {
+            ViaBedrock.getPlatform().getLogger().log(Level.INFO,
+                    "Skipped " + count + " NetEase behaviour pack stack entries");
+        }
     }
 
     static <T> CompletableFuture<T> detachedCancellation(final CompletionStage<T> source,
@@ -1137,6 +1169,13 @@ public class ResourcePackPackets {
                         user, "Failed to resolve a downloaded server resource pack", failure);
                 return;
             }
+            if (download.archiveClaim().path().isDone()
+                    && !download.archiveClaim().path().isCompletedExceptionally()) {
+                // CAS hit: the pack was already attached from the shared archive. Drop the redundant
+                // protocol transfer without republishing, so the already-attached pack stays intact.
+                downloadTracker.remove(key);
+                return;
+            }
             try {
                 final Path archive = downloadTracker.takeCompleted(key);
                 publishClaimedPack(user, loadStateTracker, packKey, info,
@@ -1150,7 +1189,7 @@ public class ResourcePackPackets {
         final WeakReference<UserConnection> userReference = new WeakReference<>(user);
         final WeakReference<ResourcePackDownloadTracker> downloadTrackerReference =
                 new WeakReference<>(downloadTracker);
-        if (download.type() == PackType.Resources) {
+        if (isCountedTransferPack(download.type())) {
             final WeakReference<ResourcePackLoadStateTracker> loadTrackerReference =
                     new WeakReference<>(user.get(ResourcePackLoadStateTracker.class));
             download.loadCompletedLegacyPackAsync(ViaBedrock.getResourcePackWorkScheduler())

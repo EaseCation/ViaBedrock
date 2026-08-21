@@ -249,7 +249,12 @@ public class SkinProvider implements Provider {
             claims.put("ThirdPartyName", user.getProtocolInfo().getUsername());
         }
         { // Client claims
-            claims.put("GameVersion", ProtocolConstants.BEDROCK_VERSION_NAME);
+            claims.put("GameVersion", ViaBedrock.getConfig().shouldEmulateNetEaseClient()
+                    ? ViaBedrock.getConfig().getNetEaseGameVersion()
+                    : ProtocolConstants.BEDROCK_VERSION_NAME);
+            if (ViaBedrock.getConfig().shouldEmulateNetEaseClient()) {
+                claims.put("IsReconnect", false);
+            }
             final ClientSettingsStorage clientSettings = user.get(ClientSettingsStorage.class);
             claims.put("LanguageCode", convertLocaleFormat(clientSettings != null ? clientSettings.locale() : "en_us"));
             claims.put("GraphicsMode", GraphicsMode.Fancy.getValue());

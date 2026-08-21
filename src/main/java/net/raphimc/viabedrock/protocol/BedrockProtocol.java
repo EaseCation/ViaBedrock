@@ -218,7 +218,18 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
                 wrapper.user().getProtocolInfo().setServerState(State.CONFIGURATION);
                 serverState = State.CONFIGURATION;
             }
+            // PLAY_STATUS lives in the login whitelist, so the whitelist check below would let
+            // NetEase's early PlayerSpawn through to the CONFIGURATION handler, which cancels it
+            // without initializing the player -> the client never sends PLAYER_AUTH_INPUT and the
+            // backend times it out. Defer it here, ahead of the whitelist, so it replays in PLAY.
+            if (serverState == State.CONFIGURATION && packet == ClientboundBedrockPackets.PLAY_STATUS
+                    && PlayStateTransitionQueue.deferIfNeeded(wrapper.user(), packet, wrapper)) {
+                throw CancelException.generate();
+            }
             if (serverState != State.PLAY && !BEFORE_PLAY_STATE_WHITELIST.contains(packet)) { // Bedrock client ignores most packets before receiving the START_GAME packet
+                if (serverState == State.CONFIGURATION && PlayStateTransitionQueue.deferIfNeeded(wrapper.user(), packet, wrapper)) {
+                    throw CancelException.generate();
+                }
                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received packet " + packet + " outside PLAY state. Ignoring it.");
                 throw CancelException.generate();
             }
@@ -240,6 +251,12 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
         }
         try {
             super.transform(direction, state, wrapper);
+            // PacketWrapper copies unread Bedrock bytes onto the rewritten Java packet.
+            // Drop any leftover trailer after the layout-aware remap so 1.21.11 is not
+            // kicked with extra data. Official packets with no trailer are a no-op.
+            if (direction == Direction.CLIENTBOUND && !wrapper.isCancelled()) {
+                PacketLeftoverLayout.discardUnreadInput(wrapper);
+            }
             if (direction == Direction.CLIENTBOUND && state == State.PLAY) {
                 final JoinGate joinGate = wrapper.user().get(JoinGate.class);
                 if (joinGate != null && !wrapper.isCancelled()) {

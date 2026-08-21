@@ -158,7 +158,10 @@ public class PacketFactory {
         if (loadingScreenId != null) {
             loadingScreen.write(BedrockTypes.UNSIGNED_INT_LE, loadingScreenId); // loading screen id
         }
-        loadingScreen.sendToServer(BedrockProtocol.class);
+        // scheduleSendToServer defers to the event loop tail: a synchronous sendToServer called
+        // from inside a clientbound transform re-enters the serverbound pipeline on the same
+        // thread and gets silently cancelled (sendToServer0 swallows CancelException).
+        loadingScreen.scheduleSendToServer(BedrockProtocol.class);
     }
 
     public static void writeJavaDisconnect(final PacketWrapper wrapper, final String reason) {

@@ -26,7 +26,7 @@ import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomBlockTags;
 public class ChestContainer extends Container {
 
     public ChestContainer(final UserConnection user, final byte containerId, final TextComponent title, final BlockPosition position, final int size) {
-        super(user, containerId, ContainerType.CONTAINER, title, position, size, CustomBlockTags.CHEST, CustomBlockTags.TRAPPED_CHEST);
+        super(user, containerId, ContainerType.CONTAINER, title, position, size, CustomBlockTags.CHEST, CustomBlockTags.TRAPPED_CHEST, CustomBlockTags.BARREL);
     }
 
 }

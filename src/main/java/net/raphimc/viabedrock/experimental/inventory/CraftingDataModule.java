@@ -30,6 +30,7 @@ import net.raphimc.viabedrock.experimental.types.inventory.RecipeIngredientType;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.CraftingDataEntryType;
+import net.raphimc.viabedrock.protocol.packet.CraftingDataLayout;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
@@ -70,14 +71,19 @@ public class CraftingDataModule implements FeatureModule {
             final CraftingDataEntryType type = CraftingDataEntryType.getByValue(rawType);
 
             if (type == null) {
-                // FurnaceRecipe(2) and FurnaceAuxRecipe(3) are missing from the generated enum. They appear
-                // interleaved in the recipe stream, so not consuming their bytes desyncs the reader and aborts
-                // parsing — dropping every recipe after the first furnace entry (e.g. log -> planks). Skip them.
-                if (rawType == 2) {
-                    skipFurnaceRecipe(wrapper);
-                    continue;
-                } else if (rawType == 3) {
-                    skipFurnaceAuxRecipe(wrapper);
+                // FurnaceRecipe(2) and FurnaceAuxRecipe(3) are missing from the generated enum.
+                // NetEase 860 still emits the old furnace payload. Official 974+ remaps them to
+                // shapeless, so only the 860 path skips the legacy layout.
+                if (CraftingDataLayout.isLegacyFurnaceType(rawType)) {
+                    if (CraftingDataLayout.usesShapelessFurnaceLayout(
+                            ViaBedrock.getConfig().shouldEmulateNetEaseClient(),
+                            ViaBedrock.getConfig().getNetEaseProtocolVersion())) {
+                        readShapelessRecipe(wrapper, parsedRecipes);
+                    } else if (rawType == CraftingDataLayout.FURNACE_RECIPE_TYPE) {
+                        skipFurnaceRecipe(wrapper);
+                    } else {
+                        skipFurnaceAuxRecipe(wrapper);
+                    }
                     continue;
                 }
                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown CraftingDataEntryType: " + rawType + ", stopping parse at recipe " + i + "/" + recipeCount);

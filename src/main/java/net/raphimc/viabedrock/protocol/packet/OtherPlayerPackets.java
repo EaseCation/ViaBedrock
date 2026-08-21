@@ -126,6 +126,7 @@ public class OtherPlayerPackets {
             wrapper.write(Types.BYTE, MathUtil.float2Byte(rotation.y())); // yaw
             wrapper.write(Types.BYTE, MathUtil.float2Byte(rotation.z())); // head yaw
             wrapper.write(Types.VAR_INT, 0); // data
+            PacketLeftoverLayout.discardUnreadInput(wrapper);
             wrapper.send(BedrockProtocol.class);
             wrapper.cancel();
             wrapper.user().get(SpectatorCameraTracker.class).onJavaPlayerSpawned(entity);

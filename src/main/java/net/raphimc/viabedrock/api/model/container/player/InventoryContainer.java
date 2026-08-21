@@ -31,6 +31,8 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InteractPacket_Action;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
+import net.raphimc.viabedrock.protocol.model.Position3f;
+import net.raphimc.viabedrock.protocol.packet.InteractPacketLayout;
 import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
@@ -126,7 +128,7 @@ public class InventoryContainer extends Container {
             final PacketWrapper interact = PacketWrapper.create(ServerboundBedrockPackets.INTERACT, this.user);
             interact.write(Types.UNSIGNED_BYTE, (short) InteractPacket_Action.InteractUpdate.getValue()); // action
             interact.write(BedrockTypes.UNSIGNED_VAR_LONG, 0L); // target entity runtime id
-            interact.write(BedrockTypes.OPTIONAL_POSITION_3F, null); // position
+            InteractPacketLayout.writePosition(interact, InteractPacket_Action.InteractUpdate, Position3f.ZERO);
             interact.sendToServer(BedrockProtocol.class);
         }
 

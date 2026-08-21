@@ -304,6 +304,9 @@ public class ExperimentalFeatures {
             return;
         }
 
+        // Resolve lock-policy helpers at startup so a later drop/click cannot fail with NoClassDefFoundError.
+        canDropLockedItem(BedrockItem.empty());
+
         registerModule(new PyRpcDispatcherModule());  // Must be first (owns PY_RPC handler)
         registerModule(new ModUIClientModule());      // PY_RPC consumer
         registerModule(new CameraModule());
@@ -828,7 +831,7 @@ public class ExperimentalFeatures {
                 if (currentItem.isEmpty()) {
                     return;
                 }
-                if (!BedrockItemLockPolicy.canDrop(currentItem)) {
+                if (!canDropLockedItem(currentItem)) {
                     PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getInventoryContainer());
                     return;
                 }
@@ -1358,6 +1361,15 @@ public class ExperimentalFeatures {
             } catch (final Throwable e) {
                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error in module onStorageRegistration", e);
             }
+        }
+    }
+
+    private static boolean canDropLockedItem(final BedrockItem item) {
+        try {
+            return BedrockItemLockPolicy.canDrop(item);
+        } catch (final NoClassDefFoundError | Exception e) {
+            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to evaluate Bedrock item lock policy; allowing drop", e);
+            return true;
         }
     }
 }

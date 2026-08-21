@@ -15,11 +15,13 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+
 package net.raphimc.viabedrock.protocol.types.position;
 
 import com.viaversion.viaversion.api.minecraft.BlockPosition;
 import com.viaversion.viaversion.api.type.Type;
 import io.netty.buffer.ByteBuf;
+import net.raphimc.viabedrock.protocol.packet.BlockPositionLayout;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 public class BlockPositionType extends Type<BlockPosition> {
@@ -31,17 +33,22 @@ public class BlockPositionType extends Type<BlockPosition> {
     @Override
     public BlockPosition read(ByteBuf buffer) {
         final int x = BedrockTypes.VAR_INT.readPrimitive(buffer);
-        final int y = BedrockTypes.VAR_INT.readPrimitive(buffer);
+        final int y = BlockPositionLayout.usesUnsignedY()
+                ? BedrockTypes.UNSIGNED_VAR_INT.readPrimitive(buffer)
+                : BedrockTypes.VAR_INT.readPrimitive(buffer);
         final int z = BedrockTypes.VAR_INT.readPrimitive(buffer);
-
         return new BlockPosition(x, y, z);
     }
 
     @Override
     public void write(ByteBuf buffer, BlockPosition value) {
         BedrockTypes.VAR_INT.writePrimitive(buffer, value.x());
-        BedrockTypes.VAR_INT.writePrimitive(buffer, value.y());
+        if (BlockPositionLayout.usesUnsignedY()) {
+            BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(buffer, value.y());
+        } else {
+            BedrockTypes.VAR_INT.writePrimitive(buffer, value.y());
+        }
         BedrockTypes.VAR_INT.writePrimitive(buffer, value.z());
     }
-
 }
+

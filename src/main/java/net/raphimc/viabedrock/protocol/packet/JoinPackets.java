@@ -34,6 +34,7 @@ import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.libs.fastutil.ints.IntIntImmutablePair;
 import com.viaversion.viaversion.protocols.base.ClientboundLoginPackets;
 import com.viaversion.viaversion.protocols.base.v1_7.ClientboundBaseProtocol1_7;
+import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import com.viaversion.viaversion.protocols.v1_21_7to1_21_9.packet.ClientboundConfigurationPackets1_21_9;
 import io.netty.buffer.ByteBuf;
@@ -131,6 +132,18 @@ public class JoinPackets {
         return template.replace("%version%", ViaBedrock.VERSION).replace("%level_name%", levelName);
     }
 
+    /**
+     * NetEase / Nukkit-MOT protocol 860 still uses the pre-v898 START_GAME tail:
+     * four leading IDs including ownerIdentifier, rewind + server-auth block breaking
+     * (no movement-mode varint), and tickDeathSystemsEnabled before serverAuthSounds.
+     * It does not send the later server join information tree or trailing ID strings.
+     */
+    private static boolean isNetEaseLegacyStartGame() {
+        return ViaBedrock.getConfig().shouldEmulateNetEaseClient()
+                && ViaBedrock.getConfig().getNetEaseProtocolVersion() > 0
+                && ViaBedrock.getConfig().getNetEaseProtocolVersion() < 898;
+    }
+
     public static void register(final BedrockProtocol protocol) {
         protocol.registerClientboundTransition(ClientboundBedrockPackets.PLAY_STATUS,
                 State.LOGIN, (PacketHandler) wrapper -> {
@@ -193,8 +206,8 @@ public class JoinPackets {
                         final PacketWrapper interact = PacketWrapper.create(ServerboundBedrockPackets.INTERACT, wrapper.user());
                         interact.write(Types.UNSIGNED_BYTE, (short) InteractPacket_Action.InteractUpdate.getValue()); // action
                         interact.write(BedrockTypes.UNSIGNED_VAR_LONG, 0L); // target entity runtime id
-                        interact.write(BedrockTypes.OPTIONAL_POSITION_3F, null); // position
-                        interact.sendToServer(BedrockProtocol.class);
+                        InteractPacketLayout.writePosition(interact, InteractPacket_Action.InteractUpdate, Position3f.ZERO);
+                        interact.scheduleSendToServer(BedrockProtocol.class);
 
                         clientPlayer.setRotation(new Position3f(clientPlayer.rotation().x(), clientPlayer.rotation().y(), clientPlayer.rotation().y()));
                         clientPlayer.setInitiallySpawned();
@@ -202,7 +215,8 @@ public class JoinPackets {
                         PacketFactory.sendBedrockLoadingScreen(wrapper.user(), ServerboundLoadingScreenPacketType.EndLoadingScreen, null);
                         final PacketWrapper setLocalPlayerAsInitialized = PacketWrapper.create(ServerboundBedrockPackets.SET_LOCAL_PLAYER_AS_INITIALIZED, wrapper.user());
                         setLocalPlayerAsInitialized.write(BedrockTypes.UNSIGNED_VAR_LONG, clientPlayer.runtimeId()); // entity runtime id
-                        setLocalPlayerAsInitialized.sendToServer(BedrockProtocol.class);
+                        setLocalPlayerAsInitialized.scheduleSendToServer(BedrockProtocol.class);
+                        startNetEaseLatencyHeartbeat(wrapper.user());
                     } else {
                         wrapper.setPacketType(ClientboundPackets26_1.DISCONNECT);
                         writePlayStatusKickMessage(wrapper, status);
@@ -219,6 +233,12 @@ public class JoinPackets {
                     if (status == PlayStatus.LoginSuccess) {
                         wrapper.cancel();
                         sendClientCacheStatus(wrapper.user());
+                    } else if (status == PlayStatus.PlayerSpawn) {
+                        // NetEase streams the spawn notification before the Java client finished its
+                        // configuration phase. Delay the initialization handshake until the replayed
+                        // packet is handled in PLAY state; otherwise the backend never sees
+                        // SET_LOCAL_PLAYER_AS_INITIALIZED and times the client out.
+                        wrapper.cancel();
                     } else {
                         wrapper.setPacketType(ClientboundConfigurationPackets1_21_9.DISCONNECT);
                         writePlayStatusKickMessage(wrapper, status);
@@ -320,108 +340,95 @@ public class JoinPackets {
                     }
                     final GameSessionStorage gameSession = user.get(GameSessionStorage.class);
 
-                    final long entityUniqueId = wrapper.read(BedrockTypes.VAR_LONG); // entity unique id
-                    final long entityRuntimeId = wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // entity runtime id
-                    final GameType playerGameType = GameType.getByValue(wrapper.read(BedrockTypes.VAR_INT), GameType.Undefined); // player game type
-                    final Position3f playerPosition = wrapper.read(BedrockTypes.POSITION_3F); // player position
-                    final Position2f playerRotation = wrapper.read(BedrockTypes.POSITION_2F); // player rotation
+                    final StartGameSharedPrefix sharedPrefix = readStartGameSharedPrefix(wrapper);
+                    final long entityUniqueId = sharedPrefix.entityUniqueId();
+                    final long entityRuntimeId = sharedPrefix.entityRuntimeId();
+                    final GameType playerGameType = sharedPrefix.playerGameType();
+                    final Position3f playerPosition = sharedPrefix.playerPosition();
+                    final Position2f playerRotation = sharedPrefix.playerRotation();
+                    final Dimension dimension = sharedPrefix.dimension();
+                    final GeneratorType generatorType = sharedPrefix.generatorType();
+                    final GameType levelGameType = sharedPrefix.levelGameType();
+                    final boolean hardcore = sharedPrefix.hardcore();
+                    final Difficulty difficulty = sharedPrefix.difficulty();
+                    final Editor_WorldType editorWorldType = sharedPrefix.editorWorldType();
+                    final int currentTime = sharedPrefix.currentTime();
+                    final float rainLevel = sharedPrefix.rainLevel();
+                    final float lightningLevel = sharedPrefix.lightningLevel();
+                    final boolean commandsEnabled = sharedPrefix.commandsEnabled();
+                    final GameRule[] gameRules = sharedPrefix.gameRules();
+                    final Experiment[] experiments = sharedPrefix.experiments();
+                    final int playerPermission = sharedPrefix.playerPermission();
+                    final int chunkTickRange = sharedPrefix.chunkTickRange();
+                    final String vanillaVersion = sharedPrefix.vanillaVersion();
+                    final ChatRestrictionLevel chatRestrictionLevel = sharedPrefix.chatRestrictionLevel();
 
-                    // Level settings
-                    wrapper.read(BedrockTypes.LONG_LE); // seed
-                    wrapper.read(BedrockTypes.SHORT_LE); // spawn biome type
-                    wrapper.read(BedrockTypes.STRING); // custom biome name
-                    final Dimension dimension = Dimension.values()[wrapper.read(BedrockTypes.VAR_INT)]; // dimension
-                    final GeneratorType generatorType = GeneratorType.getByValue(wrapper.read(BedrockTypes.VAR_INT), GeneratorType.Undefined); // generator id
-                    final GameType levelGameType = GameType.getByValue(wrapper.read(BedrockTypes.VAR_INT), GameType.Undefined); // level game type
-                    final boolean hardcore = wrapper.read(Types.BOOLEAN); // hardcore
-                    final Difficulty difficulty = Difficulty.getByValue(wrapper.read(BedrockTypes.VAR_INT), Difficulty.Unknown); // difficulty
-                    wrapper.read(BedrockTypes.BLOCK_POSITION); // default spawn position
-                    wrapper.read(Types.BOOLEAN); // achievements disabled
-                    final Editor_WorldType editorWorldType = Editor_WorldType.getByValue(wrapper.read(BedrockTypes.VAR_INT)); // world editor type
-                    wrapper.read(Types.BOOLEAN); // created in world editor
-                    wrapper.read(Types.BOOLEAN); // exported from world editor
-                    final int currentTime = wrapper.read(BedrockTypes.VAR_INT); // day cycle stop time
-                    wrapper.read(BedrockTypes.VAR_INT); // education edition offers
-                    wrapper.read(Types.BOOLEAN); // education features enabled
-                    wrapper.read(BedrockTypes.STRING); // education product id
-                    final float rainLevel = wrapper.read(BedrockTypes.FLOAT_LE); // rain level
-                    final float lightningLevel = wrapper.read(BedrockTypes.FLOAT_LE); // lightning level
-                    wrapper.read(Types.BOOLEAN); // platform locked content confirmed
-                    wrapper.read(Types.BOOLEAN); // multiplayer game
-                    wrapper.read(Types.BOOLEAN); // is broadcasting to lan
-                    wrapper.read(BedrockTypes.VAR_INT); // Xbox Live broadcast mode
-                    wrapper.read(BedrockTypes.VAR_INT); // platform broadcast mode
-                    final boolean commandsEnabled = wrapper.read(Types.BOOLEAN); // commands enabled
-                    wrapper.read(Types.BOOLEAN); // texture packs required
-                    final GameRule[] gameRules = wrapper.read(BedrockTypes.VAR_INT_GAME_RULE_ARRAY); // game rules
-                    final Experiment[] experiments = wrapper.read(BedrockTypes.EXPERIMENT_ARRAY); // experiments
-                    wrapper.read(Types.BOOLEAN); // experiments previously toggled
-                    wrapper.read(Types.BOOLEAN); // bonus chest enabled
-                    wrapper.read(Types.BOOLEAN); // start with map enabled
-                    final int playerPermission = wrapper.read(BedrockTypes.VAR_INT); // player permission
-                    final int chunkTickRange = wrapper.read(BedrockTypes.INT_LE); // server chunk tick range
-                    wrapper.read(Types.BOOLEAN); // behavior pack locked
-                    wrapper.read(Types.BOOLEAN); // resource pack locked
-                    wrapper.read(Types.BOOLEAN); // from locked world template
-                    wrapper.read(Types.BOOLEAN); // using msa gamer tags only
-                    wrapper.read(Types.BOOLEAN); // from world template
-                    wrapper.read(Types.BOOLEAN); // world template option locked
-                    wrapper.read(Types.BOOLEAN); // only spawn v1 villagers
-                    wrapper.read(Types.BOOLEAN); // disable personas
-                    wrapper.read(Types.BOOLEAN); // disable custom skins
-                    wrapper.read(Types.BOOLEAN); // mute emote chat
-                    final String vanillaVersion = wrapper.read(BedrockTypes.STRING); // vanilla version
-                    wrapper.read(BedrockTypes.INT_LE); // limited world width
-                    wrapper.read(BedrockTypes.INT_LE); // limited world height
-                    wrapper.read(Types.BOOLEAN); // nether type
-                    wrapper.read(BedrockTypes.EDUCATION_URI_RESOURCE); // education shared uri
-                    wrapper.read(Types.BOOLEAN); // enable experimental game play
-                    final ChatRestrictionLevel chatRestrictionLevel = ChatRestrictionLevel.getByValue(wrapper.read(Types.BYTE), ChatRestrictionLevel.Disabled); // chat restriction level
-                    wrapper.read(Types.BOOLEAN); // disabling player interactions
-
-                    // Continue reading start game packet
-                    wrapper.read(BedrockTypes.STRING); // level id
-                    final String levelName = wrapper.read(BedrockTypes.STRING); // level name
-                    wrapper.read(BedrockTypes.STRING); // premium world template id
-                    wrapper.read(Types.BOOLEAN); // is trial
-                    final int rewindHistorySize = wrapper.read(BedrockTypes.VAR_INT); // rewind history size
-                    final boolean blockBreakingServerAuthoritative = wrapper.read(Types.BOOLEAN); // server authoritative block breaking
-                    final long levelTime = wrapper.read(BedrockTypes.LONG_LE); // current level time
-                    wrapper.read(BedrockTypes.VAR_INT); // enchantment seed
-                    final BlockProperties[] blockProperties = wrapper.read(BedrockTypes.BLOCK_PROPERTIES_ARRAY); // block properties
-                    wrapper.read(BedrockTypes.STRING); // multiplayer correlation id
-                    final boolean inventoryServerAuthoritative = wrapper.read(Types.BOOLEAN); // server authoritative inventories
-                    final String serverEngine = wrapper.read(BedrockTypes.STRING); // server engine
-                    wrapper.read(BedrockTypes.NETWORK_TAG); // player property data
-                    wrapper.read(BedrockTypes.LONG_LE); // block registry checksum
-                    wrapper.read(BedrockTypes.UUID); // world template id
-                    wrapper.read(Types.BOOLEAN); // client side generation
-                    final boolean hashedRuntimeBlockIds = wrapper.read(Types.BOOLEAN); // use hashed block runtime ids
-                    wrapper.read(Types.BOOLEAN); // server authoritative sounds
-                    if (wrapper.read(Types.BOOLEAN)) { // has server join information
-                        if (wrapper.read(Types.BOOLEAN)) { // has gathering join information
-                            wrapper.read(BedrockTypes.UUID); // experience id
-                            wrapper.read(BedrockTypes.STRING); // experience name
-                            wrapper.read(BedrockTypes.UUID); // experience world id
-                            wrapper.read(BedrockTypes.STRING); // experience world name
-                            wrapper.read(BedrockTypes.STRING); // creator id
-                            wrapper.read(BedrockTypes.UUID); // target id
-                            wrapper.read(BedrockTypes.STRING); // scenario id
-                            wrapper.read(BedrockTypes.STRING); // server id
+                    final String gameLevelName;
+                    final int rewindHistorySize;
+                    final boolean blockBreakingServerAuthoritative;
+                    final long levelTime;
+                    final BlockProperties[] blockProperties;
+                    final boolean inventoryServerAuthoritative;
+                    final String serverEngine;
+                    final boolean hashedRuntimeBlockIds;
+                    if (isNetEaseLegacyStartGame()) {
+                        final NetEaseLegacyStartGameTail tail = readNetEaseLegacyStartGameTail(wrapper);
+                        if (tail.leftoverBytes() != 0) {
+                            ViaBedrock.getPlatform().getLogger().log(Level.WARNING,
+                                    "NetEase START_GAME had " + tail.leftoverBytes() + " leftover bytes after protocol 860 layout");
                         }
-                        if (wrapper.read(Types.BOOLEAN)) { // has store entry point info
-                            wrapper.read(BedrockTypes.STRING); // store id
-                            wrapper.read(BedrockTypes.STRING); // store name
+                        gameLevelName = tail.gameLevelName();
+                        rewindHistorySize = tail.rewindHistorySize();
+                        blockBreakingServerAuthoritative = tail.blockBreakingServerAuthoritative();
+                        levelTime = tail.levelTime();
+                        blockProperties = tail.blockProperties();
+                        inventoryServerAuthoritative = tail.inventoryServerAuthoritative();
+                        serverEngine = tail.serverEngine();
+                        hashedRuntimeBlockIds = tail.hashedRuntimeBlockIds();
+                    } else {
+                        wrapper.read(BedrockTypes.STRING); // level id
+                        gameLevelName = wrapper.read(BedrockTypes.STRING); // level name
+                        wrapper.read(BedrockTypes.STRING); // premium world template id
+                        wrapper.read(Types.BOOLEAN); // is trial
+                        rewindHistorySize = wrapper.read(BedrockTypes.VAR_INT); // rewind history size
+                        blockBreakingServerAuthoritative = wrapper.read(Types.BOOLEAN); // server authoritative block breaking
+                        levelTime = wrapper.read(BedrockTypes.LONG_LE); // current level time
+                        wrapper.read(BedrockTypes.VAR_INT); // enchantment seed
+                        blockProperties = wrapper.read(BedrockTypes.BLOCK_PROPERTIES_ARRAY); // block properties
+                        wrapper.read(BedrockTypes.STRING); // multiplayer correlation id
+                        inventoryServerAuthoritative = wrapper.read(Types.BOOLEAN); // server authoritative inventories
+                        serverEngine = wrapper.read(BedrockTypes.STRING); // server engine
+                        wrapper.read(BedrockTypes.NETWORK_TAG); // player property data
+                        wrapper.read(BedrockTypes.LONG_LE); // block registry checksum
+                        wrapper.read(BedrockTypes.UUID); // world template id
+                        wrapper.read(Types.BOOLEAN); // client side generation
+                        hashedRuntimeBlockIds = wrapper.read(Types.BOOLEAN); // use hashed block runtime ids
+                        wrapper.read(Types.BOOLEAN); // server authoritative sounds
+                        if (wrapper.read(Types.BOOLEAN)) { // has server join information
+                            if (wrapper.read(Types.BOOLEAN)) { // has gathering join information
+                                wrapper.read(BedrockTypes.UUID); // experience id
+                                wrapper.read(BedrockTypes.STRING); // experience name
+                                wrapper.read(BedrockTypes.UUID); // experience world id
+                                wrapper.read(BedrockTypes.STRING); // experience world name
+                                wrapper.read(BedrockTypes.STRING); // creator id
+                                wrapper.read(BedrockTypes.UUID); // target id
+                                wrapper.read(BedrockTypes.STRING); // scenario id
+                                wrapper.read(BedrockTypes.STRING); // server id
+                            }
+                            if (wrapper.read(Types.BOOLEAN)) { // has store entry point info
+                                wrapper.read(BedrockTypes.STRING); // store id
+                                wrapper.read(BedrockTypes.STRING); // store name
+                            }
+                            if (wrapper.read(Types.BOOLEAN)) { // has presence info
+                                wrapper.read(BedrockTypes.STRING); // experience name
+                                wrapper.read(BedrockTypes.STRING); // world name
+                            }
                         }
-                        if (wrapper.read(Types.BOOLEAN)) { // has presence info
-                            wrapper.read(BedrockTypes.STRING); // experience name
-                            wrapper.read(BedrockTypes.STRING); // world name
-                        }
+                        wrapper.read(BedrockTypes.STRING); // server id
+                        wrapper.read(BedrockTypes.STRING); // scenario id
+                        wrapper.read(BedrockTypes.STRING); // world id
+                        wrapper.read(BedrockTypes.STRING); // owner id
                     }
-                    wrapper.read(BedrockTypes.STRING); // server id
-                    wrapper.read(BedrockTypes.STRING); // scenario id
-                    wrapper.read(BedrockTypes.STRING); // world id
-                    wrapper.read(BedrockTypes.STRING); // owner id
 
                     if (editorWorldType == Editor_WorldType.EditorProject) {
                         final PacketWrapper disconnect = PacketWrapper.create(ClientboundConfigurationPackets1_21_9.DISCONNECT, wrapper.user());
@@ -478,7 +485,7 @@ public class JoinPackets {
                     clientPlayer.setName(wrapper.user().getProtocolInfo().getUsername());
 
                     wrapper.user().get(CustomMappingSyncStorage.class).onStartGame(new PendingStartGame(
-                            levelName,
+                            gameLevelName,
                             difficulty,
                             rainLevel,
                             lightningLevel,
@@ -520,7 +527,8 @@ public class JoinPackets {
                         final int maximumHeight = wrapper.read(BedrockTypes.VAR_INT); // maximum height
                         final int minimumHeight = wrapper.read(BedrockTypes.VAR_INT); // minimum height
                         wrapper.read(BedrockTypes.VAR_INT); // generator type
-                        wrapper.read(BedrockTypes.VAR_INT); // dimension type
+                        // Official 975+ appends dimension type. NetEase 860 still uses four fields per entry.
+                        DimensionDataLayout.skipDimensionType(wrapper);
                         if (dimensionIdentifier.equals(Dimension.OVERWORLD.getKey())) { // Bedrock client currently only supports overworld
                             gameSession.putBedrockDimensionDefinition(dimensionIdentifier, new IntIntImmutablePair(minimumHeight, maximumHeight));
                         }
@@ -791,12 +799,201 @@ public class JoinPackets {
         return "Bedrock" + (!serverEngine.isEmpty() ? " @" + serverEngine : "") + " v: " + vanillaVersion;
     }
 
+    private static void startNetEaseLatencyHeartbeat(final UserConnection user) {
+        if (!ViaBedrock.getConfig().shouldEmulateNetEaseClient()) return;
+        final Channel channel = user.getChannel();
+        if (channel == null || !channel.isActive()) return;
+        // NetEase drops the session about 10s after spawn unless the client keeps sending
+        // NETWORK_STACK_LATENCY; echo is not enough, so send an active heartbeat from PlayerSpawn.
+        channel.eventLoop().scheduleAtFixedRate(() -> {
+            if (!channel.isActive() || user.getProtocolInfo().getServerState() != State.PLAY) return;
+            try {
+                final PacketWrapper ping = PacketWrapper.create(ServerboundBedrockPackets.NETWORK_STACK_LATENCY, user);
+                ping.write(BedrockTypes.LONG_LE, System.currentTimeMillis()); // timestamp
+                ping.write(Types.BOOLEAN, false); // from server
+                ping.scheduleSendToServer(BedrockProtocol.class);
+            } catch (Throwable t) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to send NetEase NETWORK_STACK_LATENCY heartbeat", t);
+            }
+        }, 0, 2, TimeUnit.SECONDS);
+    }
+
+    static int remainingStartGameBytes(final PacketWrapper wrapper) {
+        if (wrapper instanceof PacketWrapperImpl packetWrapper && packetWrapper.getInputBuffer() != null) {
+            return packetWrapper.getInputBuffer().readableBytes();
+        }
+        return 0;
+    }
+
+    static StartGameSharedPrefix readStartGameSharedPrefix(final PacketWrapper wrapper) {
+        final long entityUniqueId = wrapper.read(BedrockTypes.VAR_LONG); // entity unique id
+        final long entityRuntimeId = wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // entity runtime id
+        final GameType playerGameType = GameType.getByValue(wrapper.read(BedrockTypes.VAR_INT), GameType.Undefined); // player game type
+        final Position3f playerPosition = wrapper.read(BedrockTypes.POSITION_3F); // player position
+        final Position2f playerRotation = wrapper.read(BedrockTypes.POSITION_2F); // player rotation
+        wrapper.read(BedrockTypes.LONG_LE); // seed
+        wrapper.read(BedrockTypes.SHORT_LE); // spawn biome type
+        wrapper.read(BedrockTypes.STRING); // custom biome name
+        final Dimension dimension = Dimension.values()[wrapper.read(BedrockTypes.VAR_INT)]; // dimension
+        final GeneratorType generatorType = GeneratorType.getByValue(wrapper.read(BedrockTypes.VAR_INT), GeneratorType.Undefined); // generator id
+        final GameType levelGameType = GameType.getByValue(wrapper.read(BedrockTypes.VAR_INT), GameType.Undefined); // level game type
+        final boolean hardcore = wrapper.read(Types.BOOLEAN); // hardcore
+        final Difficulty difficulty = Difficulty.getByValue(wrapper.read(BedrockTypes.VAR_INT), Difficulty.Unknown); // difficulty
+        wrapper.read(BedrockTypes.BLOCK_POSITION); // default spawn position
+        wrapper.read(Types.BOOLEAN); // achievements disabled
+        final Editor_WorldType editorWorldType = Editor_WorldType.getByValue(wrapper.read(BedrockTypes.VAR_INT)); // world editor type
+        wrapper.read(Types.BOOLEAN); // created in world editor
+        wrapper.read(Types.BOOLEAN); // exported from world editor
+        final int currentTime = wrapper.read(BedrockTypes.VAR_INT); // day cycle stop time
+        wrapper.read(BedrockTypes.VAR_INT); // education edition offers
+        wrapper.read(Types.BOOLEAN); // education features enabled
+        wrapper.read(BedrockTypes.STRING); // education product id
+        final float rainLevel = wrapper.read(BedrockTypes.FLOAT_LE); // rain level
+        final float lightningLevel = wrapper.read(BedrockTypes.FLOAT_LE); // lightning level
+        wrapper.read(Types.BOOLEAN); // platform locked content confirmed
+        wrapper.read(Types.BOOLEAN); // multiplayer game
+        wrapper.read(Types.BOOLEAN); // is broadcasting to lan
+        wrapper.read(BedrockTypes.VAR_INT); // Xbox Live broadcast mode
+        wrapper.read(BedrockTypes.VAR_INT); // platform broadcast mode
+        final boolean commandsEnabled = wrapper.read(Types.BOOLEAN); // commands enabled
+        wrapper.read(Types.BOOLEAN); // texture packs required
+        final GameRule[] gameRules = wrapper.read(BedrockTypes.VAR_INT_GAME_RULE_ARRAY); // game rules
+        final Experiment[] experiments = wrapper.read(BedrockTypes.EXPERIMENT_ARRAY); // experiments
+        wrapper.read(Types.BOOLEAN); // experiments previously toggled
+        wrapper.read(Types.BOOLEAN); // bonus chest enabled
+        wrapper.read(Types.BOOLEAN); // start with map enabled
+        final int playerPermission = wrapper.read(BedrockTypes.VAR_INT); // player permission
+        final int chunkTickRange = wrapper.read(BedrockTypes.INT_LE); // server chunk tick range
+        wrapper.read(Types.BOOLEAN); // behavior pack locked
+        wrapper.read(Types.BOOLEAN); // resource pack locked
+        wrapper.read(Types.BOOLEAN); // from locked world template
+        wrapper.read(Types.BOOLEAN); // using msa gamer tags only
+        wrapper.read(Types.BOOLEAN); // from world template
+        wrapper.read(Types.BOOLEAN); // world template option locked
+        wrapper.read(Types.BOOLEAN); // only spawn v1 villagers
+        wrapper.read(Types.BOOLEAN); // disable personas
+        wrapper.read(Types.BOOLEAN); // disable custom skins
+        wrapper.read(Types.BOOLEAN); // mute emote chat
+        final String vanillaVersion = wrapper.read(BedrockTypes.STRING); // vanilla version
+        wrapper.read(BedrockTypes.INT_LE); // limited world width
+        wrapper.read(BedrockTypes.INT_LE); // limited world height
+        wrapper.read(Types.BOOLEAN); // nether type
+        wrapper.read(BedrockTypes.EDUCATION_URI_RESOURCE); // education shared uri
+        wrapper.read(Types.BOOLEAN); // enable experimental game play
+        final ChatRestrictionLevel chatRestrictionLevel = ChatRestrictionLevel.getByValue(wrapper.read(Types.BYTE), ChatRestrictionLevel.Disabled); // chat restriction level
+        wrapper.read(Types.BOOLEAN); // disabling player interactions
+        return new StartGameSharedPrefix(
+                entityUniqueId,
+                entityRuntimeId,
+                playerGameType,
+                playerPosition,
+                playerRotation,
+                dimension,
+                generatorType,
+                levelGameType,
+                hardcore,
+                difficulty,
+                editorWorldType,
+                currentTime,
+                rainLevel,
+                lightningLevel,
+                commandsEnabled,
+                gameRules,
+                experiments,
+                playerPermission,
+                chunkTickRange,
+                vanillaVersion,
+                chatRestrictionLevel
+        );
+    }
+
+    static NetEaseLegacyStartGameTail readNetEaseLegacyStartGameTail(final PacketWrapper wrapper) {
+        // Nukkit-MOT / NetEase 860 (v1_21_0 .. v1_26_0, and >= v1_21_90):
+        // leading IDs including ownerIdentifier, then world block,
+        // then rewind + server-auth block breaking. No movement-mode varint.
+        wrapper.read(BedrockTypes.STRING); // server id
+        wrapper.read(BedrockTypes.STRING); // world id
+        wrapper.read(BedrockTypes.STRING); // scenario id
+        wrapper.read(BedrockTypes.STRING); // owner identifier
+        wrapper.read(BedrockTypes.STRING); // level id
+        final String gameLevelName = wrapper.read(BedrockTypes.STRING); // world name
+        wrapper.read(BedrockTypes.STRING); // premium world template id
+        wrapper.read(Types.BOOLEAN); // is trial
+        final int rewindHistorySize = wrapper.read(BedrockTypes.VAR_INT); // rewind history size
+        final boolean blockBreakingServerAuthoritative = wrapper.read(Types.BOOLEAN); // server authoritative block breaking
+        final long levelTime = wrapper.read(BedrockTypes.LONG_LE); // current tick
+        wrapper.read(BedrockTypes.VAR_INT); // enchantment seed
+        final BlockProperties[] blockProperties = wrapper.read(BedrockTypes.BLOCK_PROPERTIES_ARRAY); // no extra bool before/after
+        wrapper.read(BedrockTypes.STRING); // multiplayer correlation id
+        final boolean inventoryServerAuthoritative = wrapper.read(Types.BOOLEAN); // server authoritative inventories
+        final String serverEngine = wrapper.read(BedrockTypes.STRING); // server engine
+        wrapper.read(BedrockTypes.NETWORK_TAG); // player property data
+        wrapper.read(BedrockTypes.LONG_LE); // block registry checksum
+        wrapper.read(BedrockTypes.UUID); // world template id
+        wrapper.read(Types.BOOLEAN); // client side generation
+        final boolean hashedRuntimeBlockIds = wrapper.read(Types.BOOLEAN); // use hashed block runtime ids
+        wrapper.read(Types.BOOLEAN); // tick death systems enabled (827 <= proto < 898)
+        wrapper.read(Types.BOOLEAN); // server authoritative sounds
+        return new NetEaseLegacyStartGameTail(
+                gameLevelName,
+                rewindHistorySize,
+                blockBreakingServerAuthoritative,
+                levelTime,
+                blockProperties,
+                inventoryServerAuthoritative,
+                serverEngine,
+                hashedRuntimeBlockIds,
+                remainingStartGameBytes(wrapper)
+        );
+    }
+
+    record StartGameSharedPrefix(
+            long entityUniqueId,
+            long entityRuntimeId,
+            GameType playerGameType,
+            Position3f playerPosition,
+            Position2f playerRotation,
+            Dimension dimension,
+            GeneratorType generatorType,
+            GameType levelGameType,
+            boolean hardcore,
+            Difficulty difficulty,
+            Editor_WorldType editorWorldType,
+            int currentTime,
+            float rainLevel,
+            float lightningLevel,
+            boolean commandsEnabled,
+            GameRule[] gameRules,
+            Experiment[] experiments,
+            int playerPermission,
+            int chunkTickRange,
+            String vanillaVersion,
+            ChatRestrictionLevel chatRestrictionLevel
+    ) {
+    }
+
+    record NetEaseLegacyStartGameTail(
+            String gameLevelName,
+            int rewindHistorySize,
+            boolean blockBreakingServerAuthoritative,
+            long levelTime,
+            BlockProperties[] blockProperties,
+            boolean inventoryServerAuthoritative,
+            String serverEngine,
+            boolean hashedRuntimeBlockIds,
+            int leftoverBytes
+    ) {
+    }
+
     static void enterInitialConfiguration(final PacketWrapper wrapper) {
         final ProtocolInfo protocolInfo = wrapper.user().getProtocolInfo();
         // Java changes its inbound decoder as soon as LOGIN_FINISHED is handled. Advance the ViaBedrock
         // server-side state before exposing that packet so a following Bedrock pre-play packet cannot
         // synthesize a second login profile while the Java client is already in CONFIGURATION.
         protocolInfo.setServerState(State.CONFIGURATION);
+        // NetEase pushes world packets before the Java client finished its configuration phase. Capture
+        // them so they can be replayed once the PLAY state is entered (see sendJavaConfigurationOutputs).
+        wrapper.user().put(new PlayStateTransitionQueue(wrapper.user()));
         wrapper.setPacketType(ClientboundLoginPackets.LOGIN_FINISHED);
         wrapper.write(Types.UUID, protocolInfo.getUuid()); // uuid
         wrapper.write(Types.STRING, protocolInfo.getUsername()); // username
@@ -889,6 +1086,14 @@ public class JoinPackets {
                 user.getProtocolInfo().setClientState(State.PLAY); // Wrong, but needed because ViaBackwards expects this and would otherwise send the player loaded packet in configuration state.
             }
             user.get(InventoryBootstrapQueue.class).onPlayReady();
+            // Replay the world packets NetEase sent during the Java configuration phase. This must
+            // happen after the state transition (so the pre-play guard lets them through) and after
+            // the START_GAME storages above were installed (so the handlers can use them).
+            final PlayStateTransitionQueue transitionQueue = user.get(PlayStateTransitionQueue.class);
+            if (transitionQueue != null) {
+                transitionQueue.replayPackets();
+                user.remove(PlayStateTransitionQueue.class);
+            }
         }, afterFinish));
     }
 

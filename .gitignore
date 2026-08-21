@@ -17,3 +17,6 @@ build/
 out/
 bin/
 /run/
+# Local diagnostic leftovers (do not publish)
+_tmp_*.py
+start_game_dump.bin

@@ -107,10 +107,6 @@ public class ClientAuthInventoryModule implements FeatureModule {
 
     private void registerContainerClickHandler(final BedrockProtocol protocol) {
         ProtocolUtil.prependServerbound(protocol, ServerboundPackets26_1.CONTAINER_CLICK, wrapper -> {
-            if (wrapper.user().get(GameSessionStorage.class).isInventoryServerAuthoritative()) {
-                return; // The built-in handler will reject clicks until ItemStackRequest is implemented.
-            }
-
             final int containerId = wrapper.read(Types.VAR_INT); // container id
             final int revision = wrapper.read(Types.VAR_INT); // revision
             final short slot = wrapper.read(Types.SHORT); // slot
@@ -175,13 +171,17 @@ public class ClientAuthInventoryModule implements FeatureModule {
             if (actions.isEmpty()) {
                 return; // No-op, no packet needed
             }
-            if (!BedrockItemLockPolicy.allows(actions)) {
+            if (!allowsLockedActions(actions)) {
                 dragState.reset();
                 resyncAfterRejectedClick(wrapper.user(), inventoryTracker, containerId, container);
                 return;
             }
 
-            sendNormalTransaction(wrapper.user(), actions);
+            if (!sendPredictedActions(wrapper.user(), actions)) {
+                dragState.reset();
+                resyncAfterRejectedClick(wrapper.user(), inventoryTracker, containerId, container);
+                return;
+            }
 
             // Optimistically commit the predicted result to our mirror, then push it to Java. Previously we
             // reset Java to the pre-click state without committing the prediction, which made every action
@@ -200,10 +200,6 @@ public class ClientAuthInventoryModule implements FeatureModule {
     }
 
     public static boolean tryHandleSwapHands(final UserConnection user) {
-        if (user.get(GameSessionStorage.class).isInventoryServerAuthoritative()) {
-            return false;
-        }
-
         final InventoryTracker tracker = user.get(InventoryTracker.class);
         if (tracker.getPendingCloseContainer() != null) {
             PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
@@ -221,33 +217,34 @@ public class ClientAuthInventoryModule implements FeatureModule {
         if (actions.isEmpty()) {
             return true;
         }
-        if (!BedrockItemLockPolicy.allows(actions)) {
+        if (!allowsLockedActions(actions)) {
             PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
             return true;
         }
 
-        sendNormalTransaction(user, actions);
+        if (!sendPredictedActions(user, actions)) {
+            PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
+            return true;
+        }
         applyMirrorUpdates(actions, tracker);
         PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
         return true;
     }
 
     public static boolean returnCursorBeforeClose(final UserConnection user) {
-        if (user.get(GameSessionStorage.class).isInventoryServerAuthoritative()) {
-            return true;
-        }
-
         final InventoryTracker tracker = user.get(InventoryTracker.class);
         final List<InventoryActionData> actions = runOrRollback(
                 () -> ClickSimulator.simulateCursorReturn(
                         tracker, JavaItemStackLimits.forTracker(tracker)),
                 error -> ViaBedrock.getPlatform().getLogger().log(Level.WARNING,
                         "Failed to return the Java cursor before closing the Bedrock container", error));
-        if (actions == null || !BedrockItemLockPolicy.allows(actions)) {
+        if (actions == null || !allowsLockedActions(actions)) {
             return false;
         }
         if (!actions.isEmpty()) {
-            sendNormalTransaction(user, actions);
+            if (!sendPredictedActions(user, actions)) {
+                return false;
+            }
             applyMirrorUpdates(actions, tracker);
             sendChangedJavaInventorySlots(user, tracker, actions);
             scheduleJavaCursor(user, tracker);
@@ -262,6 +259,28 @@ public class ClientAuthInventoryModule implements FeatureModule {
         }
         PacketFactory.sendJavaContainerSetContent(user, container);
         sendJavaCursor(user, tracker);
+    }
+
+    private static boolean sendPredictedActions(final UserConnection user, final List<InventoryActionData> actions) {
+        if (user.get(GameSessionStorage.class).isInventoryServerAuthoritative()) {
+            final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encode(actions, user.get(InventoryTracker.class));
+            if (encoded.unsupported()) {
+                return false;
+            }
+            if (encoded.isEmpty()) {
+                return true;
+            }
+            sendItemStackRequest(user, encoded.payload());
+            return true;
+        }
+        sendNormalTransaction(user, actions);
+        return true;
+    }
+
+    private static void sendItemStackRequest(final UserConnection user, final byte[] payload) {
+        final PacketWrapper request = PacketWrapper.create(ServerboundBedrockPackets.ITEM_STACK_REQUEST, user);
+        request.write(Types.REMAINING_BYTES, payload);
+        request.sendToServer(BedrockProtocol.class);
     }
 
     private static void sendNormalTransaction(final UserConnection user, final List<InventoryActionData> actions) {
@@ -451,6 +470,17 @@ public class ClientAuthInventoryModule implements FeatureModule {
             return new ArrayList<>(dragSlots);
         }
 
+    }
+
+
+    private static boolean allowsLockedActions(final List<InventoryActionData> actions) {
+        try {
+            return BedrockItemLockPolicy.allows(actions);
+        } catch (final NoClassDefFoundError | Exception e) {
+            ViaBedrock.getPlatform().getLogger().log(Level.WARNING,
+                    "Failed to evaluate Bedrock item lock policy; allowing inventory action", e);
+            return true;
+        }
     }
 
 }

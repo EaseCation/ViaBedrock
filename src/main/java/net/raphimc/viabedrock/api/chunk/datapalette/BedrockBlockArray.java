@@ -86,6 +86,16 @@ public class BedrockBlockArray implements DataPalette, Cloneable {
     }
 
     @Override
+    public void forEachMatchingCoordinate(final java.util.function.IntPredicate idPredicate, final java.util.function.IntConsumer coordinateConsumer) {
+        final int len = this.size();
+        for (int idx = 0; idx < len; idx++) {
+            if (idPredicate.test(this.idAt(idx))) {
+                coordinateConsumer.accept(idx);
+            }
+        }
+    }
+
+    @Override
     public void clear() {
         throw new UnsupportedOperationException();
     }

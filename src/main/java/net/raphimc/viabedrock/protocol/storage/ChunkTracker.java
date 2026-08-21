@@ -905,7 +905,7 @@ public class ChunkTracker extends StoredObject {
 
             final PacketWrapper subChunkRequest = PacketWrapper.create(ServerboundBedrockPackets.SUB_CHUNK_REQUEST, this.user());
             subChunkRequest.write(BedrockTypes.VAR_INT, this.dimension.ordinal()); // dimension id
-            subChunkRequest.write(BedrockTypes.BLOCK_POSITION, basePosition); // base position
+            subChunkRequest.write(BedrockTypes.SIGNED_BLOCK_POSITION, basePosition); // signed base position
             subChunkRequest.write(BedrockTypes.INT_LE, group.size()); // sub chunk offset count
             for (SubChunkRequestTracker.Position subChunkPosition : group) {
                 final BlockPosition offset = new BlockPosition(subChunkPosition.chunkX() - basePosition.x(), subChunkPosition.subChunkY(), subChunkPosition.chunkZ() - basePosition.z());

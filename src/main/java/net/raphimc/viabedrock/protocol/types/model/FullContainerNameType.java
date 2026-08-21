@@ -19,7 +19,6 @@ package net.raphimc.viabedrock.protocol.types.model;
 
 import com.viaversion.viaversion.api.type.Type;
 import io.netty.buffer.ByteBuf;
-import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
 import net.raphimc.viabedrock.protocol.model.FullContainerName;
 
 public class FullContainerNameType extends Type<FullContainerName> {
@@ -30,12 +29,12 @@ public class FullContainerNameType extends Type<FullContainerName> {
 
     @Override
     public FullContainerName read(ByteBuf buffer) {
-        return new FullContainerName(ContainerEnumName.getByValue(buffer.readByte()), buffer.readBoolean() ? buffer.readIntLE() : null);
+        return new FullContainerName(ContainerSlotTypeLayout.fromWire(buffer.readUnsignedByte()), buffer.readBoolean() ? buffer.readIntLE() : null);
     }
 
     @Override
     public void write(ByteBuf buffer, FullContainerName value) {
-        buffer.writeByte(value.name().getValue());
+        buffer.writeByte(ContainerSlotTypeLayout.toWire(value.name()));
         buffer.writeBoolean(value.dynamicId() != null);
         if (value.dynamicId() != null) {
             buffer.writeIntLE(value.dynamicId());

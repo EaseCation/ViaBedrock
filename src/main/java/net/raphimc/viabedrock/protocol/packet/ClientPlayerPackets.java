@@ -211,6 +211,7 @@ public class ClientPlayerPackets {
                         wrapper.write(Types.VAR_INT, 0); // portal cooldown
                         wrapper.write(Types.VAR_INT, 64); // sea level
                         wrapper.write(Types.BYTE, (byte) (RespawnKeepFlag.ATTRIBUTE_MODIFIERS.getBit() | RespawnKeepFlag.ENTITY_DATA.getBit())); // keep data mask
+                        PacketLeftoverLayout.discardUnreadInput(wrapper);
                         wrapper.send(BedrockProtocol.class);
                         clientPlayer.sendAttribute("minecraft:health"); // Ensure health is synced
                         wrapper.user().get(PlayerArmorHudTracker.class).forceSync();
@@ -660,7 +661,7 @@ public class ClientPlayerPackets {
             wrapper.write(BedrockTypes.POSITION_3F, authInputContext.position()); // position
             wrapper.write(BedrockTypes.POSITION_2F, immobile ? new Position2f(0F, 0F) : MathUtil.calculateMovementDirections(clientPlayer.authInputData(), clientPlayer.isSneaking())); // move vector
             wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().z()); // head yaw
-            wrapper.write(BedrockTypes.UNSIGNED_VAR_BIG_INTEGER, EnumUtil.getBigBitmaskFromEnumSet(clientPlayer.authInputData(), PlayerAuthInputPacket_InputData::getValue)); // input flags
+            wrapper.write(BedrockTypes.UNSIGNED_VAR_BIG_INTEGER, PlayerAuthInputLayout.encodeBitmask(clientPlayer.authInputData())); // input flags
             wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, InputMode.Mouse.getValue()); // input mode
             wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, ClientPlayMode.Screen.getValue()); // play mode
             wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, NewInteractionModel.Touch.getValue()); // interaction mode
@@ -668,6 +669,9 @@ public class ClientPlayerPackets {
             wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().y()); // interact yaw
             wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG, (long) clientPlayer.age()); // tick
             wrapper.write(BedrockTypes.POSITION_3F, authInputContext.delta()); // delta
+            if (ViaBedrock.getConfig().shouldEmulateNetEaseClient()) {
+                wrapper.write(Types.BOOLEAN, false); // camera departed (NetEase >= 422)
+            }
             if (clientPlayer.authInputData().contains(PlayerAuthInputPacket_InputData.PerformItemInteraction)) {
                 final BedrockInventoryTransaction itemInteraction = clientPlayer.authInputItemInteraction();
                 if (itemInteraction != null) {
@@ -681,7 +685,7 @@ public class ClientPlayerPackets {
                     switch (blockAction.action()) {
                         // StopDestroyBlock does not have additional data even tho bedrock protocol docs claim it does
                         case StartDestroyBlock, AbortDestroyBlock, CrackBlock, PredictDestroyBlock, ContinueDestroyBlock -> {
-                            wrapper.write(BedrockTypes.BLOCK_POSITION, blockAction.position()); // position
+                            wrapper.write(BedrockTypes.SIGNED_BLOCK_POSITION, blockAction.position()); // signed position
                             wrapper.write(BedrockTypes.VAR_INT, blockAction.direction()); // facing
                         }
                     }
@@ -742,10 +746,10 @@ public class ClientPlayerPackets {
                 return;
             }
 
-            wrapper.write(Types.UNSIGNED_BYTE, (short) AnimatePacketPayload_Action.Swing.getValue()); // action
+            EntityPacketLayout.writeAnimateAction(wrapper, AnimatePacketPayload_Action.Swing.getValue()); // action
             wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG, clientPlayer.runtimeId()); // entity runtime id
             wrapper.write(BedrockTypes.FLOAT_LE, 0F); // data
-            wrapper.write(BedrockTypes.OPTIONAL_STRING, ActorSwingSource.Attack.name().toLowerCase(Locale.ROOT)); // swing source // TODO: 1.21.130
+            EntityPacketLayout.writeAnimateTrailer(wrapper, ActorSwingSource.Attack.name().toLowerCase(Locale.ROOT)); // swing source (897+)
 
             if (clientPlayer.blockBreakingInfo() != null) {
                 if (!gameSession.isBlockBreakingServerAuthoritative()) {

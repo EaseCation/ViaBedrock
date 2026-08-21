@@ -1,0 +1,128 @@
+/*
+ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
+ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+package net.raphimc.viabedrock.protocol.packet;
+
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
+import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
+import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemStackRequestActionType;
+import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.TextProcessingEventOrigin;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class ItemStackRequestLayoutTest {
+
+    @Test
+    void netease860KeepsLegacyByteActionType() {
+        assertFalse(ItemStackRequestLayout.usesUnsignedActionType(true, 860));
+        assertFalse(ItemStackRequestLayout.usesUnsignedActionType(false, 975));
+        assertTrue(ItemStackRequestLayout.usesUnsignedActionType(false, 2168));
+        assertTrue(ItemStackRequestLayout.usesOptionalDynamicId(true, 860));
+        assertTrue(ItemStackRequestLayout.usesOptionalDynamicId(false, 975));
+        assertFalse(ItemStackRequestLayout.usesLittleEndianStackNetworkId(true, 860));
+        assertFalse(ItemStackRequestLayout.usesLittleEndianStackNetworkId(false, 975));
+    }
+
+    @Test
+    void netease860TakeUsesByteTypeAndVarintNetId() {
+        final ItemStackRequestLayout.SlotInfo source = new ItemStackRequestLayout.SlotInfo(ContainerEnumName.HotbarContainer, 0, 12);
+        final ItemStackRequestLayout.SlotInfo destination = new ItemStackRequestLayout.SlotInfo(ContainerEnumName.CursorContainer, 0, 0);
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            ItemStackRequestLayout.writeTransfer(buffer, ItemStackRequestActionType.Take, 1, source, destination, true, 860);
+            assertEquals(ItemStackRequestActionType.Take.getValue(), buffer.readUnsignedByte());
+            assertEquals(1, buffer.readUnsignedByte());
+            final ItemStackRequestLayout.DecodedSlotInfo decodedSource = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+            assertEquals(ContainerEnumName.HotbarContainer, decodedSource.container());
+            assertEquals(0, decodedSource.slot());
+            assertEquals(12, decodedSource.stackNetworkId());
+            final ItemStackRequestLayout.DecodedSlotInfo decodedDestination = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+            assertEquals(ContainerEnumName.CursorContainer, decodedDestination.container());
+            assertEquals(0, decodedDestination.slot());
+            assertFalse(buffer.isReadable());
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
+    void official2168TakeWritesUnsignedTypeAndLittleEndianNetId() {
+        final ItemStackRequestLayout.SlotInfo source = new ItemStackRequestLayout.SlotInfo(ContainerEnumName.InventoryContainer, 12, 44);
+        final ItemStackRequestLayout.SlotInfo destination = new ItemStackRequestLayout.SlotInfo(ContainerEnumName.CursorContainer, 0, 0);
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            ItemStackRequestLayout.writeTransfer(buffer, ItemStackRequestActionType.Take, 8, source, destination, false, 2168);
+            assertEquals(ItemStackRequestActionType.Take.getValue(), buffer.readUnsignedByte());
+            assertEquals(0, buffer.readUnsignedByte());
+            assertEquals(8, buffer.readUnsignedByte());
+            final ItemStackRequestLayout.DecodedSlotInfo decodedSource = ItemStackRequestLayout.readSlotInfo(buffer, false, 2168);
+            assertEquals(ContainerEnumName.InventoryContainer, decodedSource.container());
+            assertEquals(12, decodedSource.slot());
+            assertEquals(44, decodedSource.stackNetworkId());
+            final ItemStackRequestLayout.DecodedSlotInfo decodedDestination = ItemStackRequestLayout.readSlotInfo(buffer, false, 2168);
+            assertEquals(ContainerEnumName.CursorContainer, decodedDestination.container());
+            assertEquals(0, decodedDestination.slot());
+            assertFalse(buffer.isReadable());
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
+    void official975StillUsesLegacyByteActionType() {
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            ItemStackRequestLayout.writeActionType(buffer, ItemStackRequestActionType.Swap, false, 975);
+            assertEquals(ItemStackRequestActionType.Swap.getValue(), buffer.readUnsignedByte());
+            assertFalse(buffer.isReadable());
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
+    void netease860TrailerStillWritesFilterStringsAndOrigin() {
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            ItemStackRequestLayout.writeRequestTrailer(buffer, true, 860);
+            final ItemStackRequestLayout.DecodedRequestTrailer trailer = ItemStackRequestLayout.readRequestTrailer(buffer, true, 860);
+            assertEquals(0, trailer.filterStringCount());
+            assertEquals(TextProcessingEventOrigin.BlockActorDataText.getValue(), trailer.textOrigin());
+            assertFalse(buffer.isReadable());
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
+    void neteaseShiftMovesCursorPastRecipeItemsHole() {
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            ItemStackRequestLayout.writeSlotInfo(buffer, ContainerEnumName.CursorContainer, 0, 0, null, true, 860);
+            assertEquals(60, buffer.readUnsignedByte());
+            assertFalse(buffer.readBoolean());
+            assertEquals(0, buffer.readUnsignedByte());
+        } finally {
+            buffer.release();
+        }
+    }
+}

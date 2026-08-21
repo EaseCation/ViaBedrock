@@ -1,0 +1,180 @@
+/*
+ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
+ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+package net.raphimc.viabedrock.protocol.packet;
+
+import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
+import com.viaversion.viaversion.api.type.Types;
+import io.netty.buffer.ByteBuf;
+import net.raphimc.viabedrock.ViaBedrock;
+import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+
+/**
+ * Trailer helpers for a few entity packets that grew extra official-Bedrock fields
+ * after NetEase 860.
+ * <p>
+ * {@code MOB_EFFECT} (0x1C) gained {@code ambient} at protocol 897. NetEase 860 still
+ * ends after the tick varlong (16 bytes for a typical join-time effect). Reading the
+ * extra boolean past that payload aborts the Java connection as {@code UPDATE_MOB_EFFECT}.
+ * {@code ANIMATE} gained optional {@code swingSource} at 897, and {@code ENTITY_EVENT}
+ * gained optional {@code fireAtPosition} at 974.
+ */
+public final class EntityPacketLayout {
+
+    public static final int AMBIENT_PROTOCOL = 897;
+    public static final int SWING_SOURCE_PROTOCOL = 897;
+    public static final int ENTITY_EVENT_FIRE_AT_POSITION_PROTOCOL = 974;
+
+    private EntityPacketLayout() {
+    }
+
+    public static boolean usesAmbient() {
+        return usesAmbient(emulateNetEase(), netEaseProtocol());
+    }
+
+    public static boolean usesAmbient(final boolean emulateNetEase, final int protocol) {
+        return !emulateNetEase || protocol >= AMBIENT_PROTOCOL;
+    }
+
+    public static boolean usesSwingSource() {
+        return usesSwingSource(emulateNetEase(), netEaseProtocol());
+    }
+
+    public static boolean usesSwingSource(final boolean emulateNetEase, final int protocol) {
+        return !emulateNetEase || protocol >= SWING_SOURCE_PROTOCOL;
+    }
+
+    public static boolean usesEntityEventFireAtPosition() {
+        return usesEntityEventFireAtPosition(emulateNetEase(), netEaseProtocol());
+    }
+
+    public static boolean usesEntityEventFireAtPosition(final boolean emulateNetEase, final int protocol) {
+        return !emulateNetEase || protocol >= ENTITY_EVENT_FIRE_AT_POSITION_PROTOCOL;
+    }
+
+    public static boolean readAmbient(final PacketWrapper wrapper) {
+        if (!usesAmbient()) {
+            return false;
+        }
+        return wrapper.read(Types.BOOLEAN);
+    }
+
+    public static boolean usesByteAnimateAction() {
+        return usesSwingSource();
+    }
+
+    public static boolean usesByteAnimateAction(final boolean emulateNetEase, final int protocol) {
+        return usesSwingSource(emulateNetEase, protocol);
+    }
+
+    public static int readAnimateAction(final PacketWrapper wrapper) {
+        if (usesByteAnimateAction()) {
+            return wrapper.read(Types.UNSIGNED_BYTE);
+        }
+        return wrapper.read(BedrockTypes.VAR_INT);
+    }
+
+    public static void writeAnimateAction(final PacketWrapper wrapper, final int action) {
+        if (usesByteAnimateAction()) {
+            wrapper.write(Types.UNSIGNED_BYTE, (short) action);
+        } else {
+            wrapper.write(BedrockTypes.VAR_INT, action);
+        }
+    }
+
+    public static int readAnimateAction(final ByteBuf buffer, final boolean emulateNetEase, final int protocol) {
+        if (usesByteAnimateAction(emulateNetEase, protocol)) {
+            return buffer.readUnsignedByte();
+        }
+        return BedrockTypes.VAR_INT.read(buffer);
+    }
+
+    public static void writeAnimateAction(final ByteBuf buffer, final int action,
+                                          final boolean emulateNetEase, final int protocol) {
+        if (usesByteAnimateAction(emulateNetEase, protocol)) {
+            buffer.writeByte(action);
+        } else {
+            BedrockTypes.VAR_INT.write(buffer, action);
+        }
+    }
+
+    public static void skipSwingSource(final PacketWrapper wrapper) {
+        if (usesSwingSource()) {
+            wrapper.read(BedrockTypes.OPTIONAL_STRING);
+        }
+    }
+
+    public static void writeAnimateTrailer(final PacketWrapper wrapper, final String swingSource) {
+        if (usesSwingSource()) {
+            wrapper.write(BedrockTypes.OPTIONAL_STRING, swingSource);
+        }
+    }
+
+    public static void skipEntityEventFireAtPosition(final PacketWrapper wrapper) {
+        if (usesEntityEventFireAtPosition()) {
+            wrapper.read(BedrockTypes.OPTIONAL_POSITION_3F);
+        }
+    }
+
+    public static boolean readAmbient(final ByteBuf buffer, final boolean emulateNetEase, final int protocol) {
+        if (!usesAmbient(emulateNetEase, protocol)) {
+            return false;
+        }
+        return buffer.readBoolean();
+    }
+
+    public static void skipSwingSource(final ByteBuf buffer, final boolean emulateNetEase, final int protocol) {
+        if (usesSwingSource(emulateNetEase, protocol)) {
+            BedrockTypes.OPTIONAL_STRING.read(buffer);
+        }
+    }
+
+    public static void skipEntityEventFireAtPosition(final ByteBuf buffer, final boolean emulateNetEase, final int protocol) {
+        if (usesEntityEventFireAtPosition(emulateNetEase, protocol)) {
+            BedrockTypes.OPTIONAL_POSITION_3F.read(buffer);
+        }
+    }
+
+    public static void writeMobEffectTrailer(final ByteBuf buffer, final long tick, final boolean ambient,
+                                             final boolean emulateNetEase, final int protocol) {
+        BedrockTypes.UNSIGNED_VAR_LONG.write(buffer, tick);
+        if (usesAmbient(emulateNetEase, protocol)) {
+            buffer.writeBoolean(ambient);
+        }
+    }
+
+    public static void writeAnimateTrailer(final ByteBuf buffer, final String swingSource,
+                                           final boolean emulateNetEase, final int protocol) {
+        if (usesSwingSource(emulateNetEase, protocol)) {
+            BedrockTypes.OPTIONAL_STRING.write(buffer, swingSource);
+        }
+    }
+
+    public static void writeEntityEventTrailer(final ByteBuf buffer, final boolean emulateNetEase, final int protocol) {
+        if (usesEntityEventFireAtPosition(emulateNetEase, protocol)) {
+            BedrockTypes.OPTIONAL_POSITION_3F.write(buffer, null);
+        }
+    }
+
+    private static boolean emulateNetEase() {
+        return ViaBedrock.getConfig().shouldEmulateNetEaseClient();
+    }
+
+    private static int netEaseProtocol() {
+        return ViaBedrock.getConfig().getNetEaseProtocolVersion();
+    }
+}

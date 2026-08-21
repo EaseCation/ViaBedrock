@@ -80,69 +80,79 @@ import java.util.logging.Level;
 
 public class WorldPackets {
 
-    private static final PacketHandler UPDATE_BLOCK_HANDLER = wrapper -> {
-        final ChunkTracker chunkTracker = wrapper.user().get(ChunkTracker.class);
-        final BlockPosition position = wrapper.get(Types.BLOCK_POSITION1_14, 0);
-        final int blockState = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // block state
-        wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // flags
-        final int layer = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // layer
-        if (layer < 0 || layer > 1) {
-            wrapper.cancel();
-            return;
-        }
-
-        final IntObjectPair<BlockEntity> remappedBlock = chunkTracker.handleBlockChange(position, layer, blockState);
-        if (remappedBlock == null) {
-            wrapper.cancel();
-            return;
-        }
-
-        // Recompute neighbor-aware blocks (stair shapes, fence/pane connections, door/bed halves) for this change
-        // and every neighbor it affects.
-        final BlockNeighborView view = new TrackerNeighborView(chunkTracker);
-        final Map<BlockPosition, Integer> updates = BedrockProtocol.MAPPINGS.getNeighborRewriter().resolveUpdate(view, position, remappedBlock.keyInt());
-        wrapper.write(Types.VAR_INT, updates.getOrDefault(position, remappedBlock.keyInt())); // block state
-
-        // Send the BLOCK_UPDATE explicitly to ensure it arrives before any deferred BlockChangedAck
-        wrapper.send(BedrockProtocol.class);
-        wrapper.cancel();
-
-        for (Map.Entry<BlockPosition, Integer> entry : updates.entrySet()) {
-            if (entry.getKey().equals(position)) {
-                continue;
+    private static PacketHandler updateBlockHandler(final boolean synced) {
+        return wrapper -> {
+            final ChunkTracker chunkTracker = wrapper.user().get(ChunkTracker.class);
+            final BlockPosition position = wrapper.get(Types.BLOCK_POSITION1_14, 0);
+            final int blockState = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // block state
+            wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // flags
+            final int layer = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // layer
+            if (layer < 0 || layer > 1) {
+                wrapper.cancel();
+                return;
             }
-            PacketFactory.sendJavaBlockUpdate(wrapper.user(), entry.getKey(), entry.getValue());
-        }
 
-        if (remappedBlock.value() != null) {
-            PacketFactory.sendJavaBlockEntityData(wrapper.user(), position, remappedBlock.value());
-        }
+            final IntObjectPair<BlockEntity> remappedBlock = chunkTracker.handleBlockChange(position, layer, blockState);
+            if (remappedBlock == null) {
+                wrapper.cancel();
+                return;
+            }
 
-        // Java 客户端必须先收到主层权威状态，再结束本次破坏预测。
-        if (layer == 0) {
-            final BlockBreakingProgressTracker breakTracker = wrapper.user().get(BlockBreakingProgressTracker.class);
-            if (breakTracker != null) {
-                final Integer seq = breakTracker.consumeAck(position);
+            // Recompute neighbor-aware blocks (stair shapes, fence/pane connections, door/bed halves) for this change
+            // and every neighbor it affects.
+            final BlockNeighborView view = new TrackerNeighborView(chunkTracker);
+            final Map<BlockPosition, Integer> updates = BedrockProtocol.MAPPINGS.getNeighborRewriter().resolveUpdate(view, position, remappedBlock.keyInt());
+            wrapper.write(Types.VAR_INT, updates.getOrDefault(position, remappedBlock.keyInt())); // block state
+
+            // UPDATE_BLOCK_SYNCED appends entity runtime id + sync type after the common fields.
+            // Consume them before leftover discard so send() cannot copy those varlongs onto Java BLOCK_UPDATE.
+            if (synced) {
+                wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // entity runtime id
+                wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // block sync type
+            }
+
+            // Send the BLOCK_UPDATE explicitly to ensure it arrives before any deferred BlockChangedAck
+            PacketLeftoverLayout.discardUnreadInput(wrapper);
+            wrapper.send(BedrockProtocol.class);
+            wrapper.cancel();
+
+            for (Map.Entry<BlockPosition, Integer> entry : updates.entrySet()) {
+                if (entry.getKey().equals(position)) {
+                    continue;
+                }
+                PacketFactory.sendJavaBlockUpdate(wrapper.user(), entry.getKey(), entry.getValue());
+            }
+
+            if (remappedBlock.value() != null) {
+                PacketFactory.sendJavaBlockEntityData(wrapper.user(), position, remappedBlock.value());
+            }
+
+            // Java client must receive the authoritative main-layer state before ending this break prediction.
+            if (layer == 0) {
+                final BlockBreakingProgressTracker breakTracker = wrapper.user().get(BlockBreakingProgressTracker.class);
+                if (breakTracker != null) {
+                    final Integer seq = breakTracker.consumeAck(position);
+                    if (seq != null) {
+                        PacketFactory.sendJavaBlockChangedAck(wrapper.user(), seq);
+                    }
+                }
+            }
+
+            // Send deferred BlockChangedAck for block placement (experimental feature).
+            // The ack must arrive AFTER the BLOCK_UPDATE so the Java client's prediction is cleared
+            // only after the server-known state has been updated, preventing placement flicker.
+            final BlockPlacementAckTracker tracker = wrapper.user().get(BlockPlacementAckTracker.class);
+            if (tracker != null) {
+                final Integer seq = tracker.consumeAck(position);
                 if (seq != null) {
                     PacketFactory.sendJavaBlockChangedAck(wrapper.user(), seq);
                 }
+                for (final int expiredSeq : tracker.flushExpired()) {
+                    PacketFactory.sendJavaBlockChangedAck(wrapper.user(), expiredSeq);
+                }
             }
-        }
-
-        // Send deferred BlockChangedAck for block placement (experimental feature).
-        // The ack must arrive AFTER the BLOCK_UPDATE so the Java client's prediction is cleared
-        // only after the server-known state has been updated, preventing placement flicker.
-        final BlockPlacementAckTracker tracker = wrapper.user().get(BlockPlacementAckTracker.class);
-        if (tracker != null) {
-            final Integer seq = tracker.consumeAck(position);
-            if (seq != null) {
-                PacketFactory.sendJavaBlockChangedAck(wrapper.user(), seq);
-            }
-            for (final int expiredSeq : tracker.flushExpired()) {
-                PacketFactory.sendJavaBlockChangedAck(wrapper.user(), expiredSeq);
-            }
-        }
-    };
+        };
+    }
 
     public static void register(final BedrockProtocol protocol) {
         protocol.registerClientbound(ClientboundBedrockPackets.SET_SPAWN_POSITION, ClientboundPackets26_1.SET_DEFAULT_SPAWN_POSITION, wrapper -> {
@@ -226,6 +236,7 @@ public class WorldPackets {
             wrapper.write(Types.VAR_INT, 0); // portal cooldown
             wrapper.write(Types.VAR_INT, 64); // sea level
             wrapper.write(Types.BYTE, (byte) (RespawnKeepFlag.ATTRIBUTE_MODIFIERS.getBit() | RespawnKeepFlag.ENTITY_DATA.getBit())); // keep data mask
+            PacketLeftoverLayout.discardUnreadInput(wrapper);
             wrapper.send(BedrockProtocol.class);
             wrapper.cancel();
             chunkTracker.resetJavaChunkLoading();
@@ -375,7 +386,7 @@ public class WorldPackets {
             if (dimension != chunkTracker.getDimension()) {
                 return;
             }
-            final BlockPosition center = wrapper.read(BedrockTypes.BLOCK_POSITION); // center position
+            final BlockPosition center = wrapper.read(BedrockTypes.SIGNED_BLOCK_POSITION); // signed center position
             final long count = wrapper.read(BedrockTypes.UNSIGNED_INT_LE); // count
 
             for (long i = 0; i < count; i++) {
@@ -497,16 +508,14 @@ public class WorldPackets {
             @Override
             protected void register() {
                 map(BedrockTypes.BLOCK_POSITION, Types.BLOCK_POSITION1_14); // position
-                handler(UPDATE_BLOCK_HANDLER);
+                handler(updateBlockHandler(false));
             }
         });
         protocol.registerClientbound(ClientboundBedrockPackets.UPDATE_BLOCK_SYNCED, ClientboundPackets26_1.BLOCK_UPDATE, new PacketHandlers() {
             @Override
             protected void register() {
                 map(BedrockTypes.BLOCK_POSITION, Types.BLOCK_POSITION1_14); // position
-                handler(UPDATE_BLOCK_HANDLER);
-                read(BedrockTypes.UNSIGNED_VAR_LONG); // entity runtime id
-                read(BedrockTypes.UNSIGNED_VAR_LONG); // block sync type
+                handler(updateBlockHandler(true));
             }
         });
         protocol.registerClientbound(ClientboundBedrockPackets.UPDATE_SUB_CHUNK_BLOCKS, null, wrapper -> {
@@ -616,7 +625,7 @@ public class WorldPackets {
             }
         });
         protocol.registerClientbound(ClientboundBedrockPackets.NETWORK_CHUNK_PUBLISHER_UPDATE, ClientboundPackets26_1.SET_CHUNK_CACHE_RADIUS, wrapper -> {
-            final BlockPosition position = wrapper.read(BedrockTypes.BLOCK_POSITION); // center position
+            final BlockPosition position = wrapper.read(BedrockTypes.SIGNED_BLOCK_POSITION); // signed center position
             final int radius = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT) >> 4; // radius
             wrapper.write(Types.VAR_INT, radius); // radius
 

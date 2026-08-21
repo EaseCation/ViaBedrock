@@ -115,7 +115,7 @@ public class LoginPackets {
             final String authInfo = authInfoObj.toString();
 
             final PacketWrapper login = PacketWrapper.create(ServerboundBedrockPackets.LOGIN, wrapper.user());
-            login.write(Types.INT, handshakeStorage.protocolVersion()); // protocol version
+            login.write(Types.INT, resolveBedrockProtocolVersion(handshakeStorage)); // protocol version
             login.write(BedrockTypes.UNSIGNED_VAR_INT, authInfo.length() + authData.getSkinJwt().length() + Integer.BYTES * 2); // length
             login.write(BedrockTypes.ASCII_STRING, authInfo); // auth info
             login.write(BedrockTypes.ASCII_STRING, authData.getSkinJwt()); // client properties
@@ -160,7 +160,7 @@ public class LoginPackets {
 
             final String javaUsername = wrapper.read(Types.STRING); // username
             final UUID javaUuid = wrapper.read(Types.UUID); // uuid
-            wrapper.write(Types.INT, handshakeStorage.protocolVersion()); // protocol version
+            wrapper.write(Types.INT, resolveBedrockProtocolVersion(handshakeStorage)); // protocol version
 
             final ProtocolInfo protocolInfo = wrapper.user().getProtocolInfo();
             protocolInfo.setUsername(javaUsername);
@@ -201,11 +201,14 @@ public class LoginPackets {
             final UUID identity = javaUuid != null
                     ? javaUuid
                     : UUID.nameUUIDFromBytes(("pocket-auth-1-xuid:" + xuid).getBytes(StandardCharsets.UTF_8));
-            if (!ViaBedrock.getConfig().getViaProxyAuthSecret().isEmpty()) {
+            if (!ViaBedrock.getConfig().getViaProxyAuthSecret().isEmpty() || ViaBedrock.getConfig().shouldEmulateNetEaseClient()) {
                 final Map<String, Object> extraData = new HashMap<>();
                 extraData.put("displayName", javaUsername);
                 extraData.put("XUID", xuid);
                 extraData.put("identity", identity);
+                if (ViaBedrock.getConfig().shouldEmulateNetEaseClient()) {
+                    extraData.putAll(createNetEaseExtraData(javaUsername, javaUuid, xuid));
+                }
 
                 final String identityJwt = Jwts.builder()
                         .signWith(sessionKeyPair.getPrivate(), Jwts.SIG.ES384)
@@ -270,6 +273,28 @@ public class LoginPackets {
                     javaUuid,
                     uuid -> Via.getManager().getProviders().get(SkinProvider.class).fetchJavaSkinAsync(uuid));
         }
+    }
+
+    static int resolveBedrockProtocolVersion(final HandshakeStorage handshakeStorage) {
+        final int configured = ViaBedrock.getConfig().getNetEaseProtocolVersion();
+        if (ViaBedrock.getConfig().shouldEmulateNetEaseClient() && configured > 0) {
+            return configured;
+        }
+        return handshakeStorage.protocolVersion();
+    }
+
+    static java.util.Map<String, Object> createNetEaseExtraData(final String javaUsername, final UUID javaUuid, final String xuid) {
+        final java.util.Map<String, Object> extraData = new java.util.HashMap<>();
+        final long uid = javaUuid != null ? Math.abs(javaUuid.getMostSignificantBits()) : Math.abs(FNV1.fnv1_64(javaUsername.getBytes(StandardCharsets.UTF_8)));
+        extraData.put("uid", uid);
+        extraData.put("netease_sid", "je-" + (javaUuid != null ? javaUuid.toString().replace("-", "") : xuid));
+        extraData.put("platform", "pc_java");
+        extraData.put("os_name", "windows");
+        extraData.put("env", "release");
+        extraData.put("engineVersion", ViaBedrock.getConfig().getNetEaseGameVersion());
+        extraData.put("patchVersion", ViaBedrock.getConfig().getNetEaseGameVersion());
+        extraData.put("bit", "64");
+        return extraData;
     }
 
     static void configureJavaSkinFuture(

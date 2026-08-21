@@ -29,6 +29,7 @@ import net.raphimc.viabedrock.api.util.EnumUtil;
 import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.experimental.rewriter.EntityMetadataRewriter;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
+import net.raphimc.viabedrock.protocol.packet.LevelSoundEventLayout;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorDataIDs;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorFlags;
@@ -158,8 +159,7 @@ public class Entity {
         levelSoundEvent.write(BedrockTypes.STRING, this.type); // entity identifier
         levelSoundEvent.write(Types.BOOLEAN, false); // is baby mob
         levelSoundEvent.write(Types.BOOLEAN, false); // is global sound
-        levelSoundEvent.write(BedrockTypes.LONG_LE, -1L); // entity unique id
-        levelSoundEvent.write(BedrockTypes.OPTIONAL_POSITION_3F, null); // fire at position
+        LevelSoundEventLayout.writeTrailer(levelSoundEvent, -1L);
         levelSoundEvent.send(BedrockProtocol.class, false);
     }
 

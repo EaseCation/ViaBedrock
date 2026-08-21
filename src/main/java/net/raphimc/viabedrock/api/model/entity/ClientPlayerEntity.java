@@ -46,6 +46,7 @@ import net.raphimc.viabedrock.protocol.rewriter.GameTypeRewriter;
 import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
 import net.raphimc.viabedrock.protocol.storage.CommandsStorage;
 import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
+import net.raphimc.viabedrock.protocol.packet.EntityPacketLayout;
 import net.raphimc.viabedrock.protocol.storage.PlayerListStorage;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
@@ -177,10 +178,10 @@ public class ClientPlayerEntity extends PlayerEntity {
 
     public void sendSwingPacketToServer() {
         final PacketWrapper animate = PacketWrapper.create(ServerboundBedrockPackets.ANIMATE, this.user);
-        animate.write(Types.UNSIGNED_BYTE, (short) AnimatePacketPayload_Action.Swing.getValue()); // action
+        EntityPacketLayout.writeAnimateAction(animate, AnimatePacketPayload_Action.Swing.getValue()); // action
         animate.write(BedrockTypes.UNSIGNED_VAR_LONG, this.runtimeId); // entity runtime id
         animate.write(BedrockTypes.FLOAT_LE, 0F); // data
-        animate.write(BedrockTypes.OPTIONAL_STRING, ActorSwingSource.Attack.name().toLowerCase(Locale.ROOT)); // swing source // TODO: 1.21.130
+        EntityPacketLayout.writeAnimateTrailer(animate, ActorSwingSource.Attack.name().toLowerCase(Locale.ROOT)); // swing source (897+)
         animate.sendToServer(BedrockProtocol.class);
     }
 
@@ -392,6 +393,10 @@ public class ClientPlayerEntity extends PlayerEntity {
 
     public void setInitiallySpawned() {
         this.initiallySpawned = true;
+    }
+
+        this.authInputSuppressionLogged = true;
+        return true;
     }
 
     public DimensionChangeInfo dimensionChangeInfo() {

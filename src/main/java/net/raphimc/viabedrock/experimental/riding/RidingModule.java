@@ -37,6 +37,8 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InteractPack
 import net.raphimc.viabedrock.protocol.data.enums.java.InputFlag;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.PlayerCommandAction;
 import net.raphimc.viabedrock.protocol.model.EntityLink;
+import net.raphimc.viabedrock.protocol.model.Position3f;
+import net.raphimc.viabedrock.protocol.packet.InteractPacketLayout;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.util.EnumSet;
@@ -199,7 +201,7 @@ public class RidingModule implements FeatureModule {
         final PacketWrapper interact = PacketWrapper.create(ServerboundBedrockPackets.INTERACT, user);
         interact.write(Types.UNSIGNED_BYTE, (short) action.getValue()); // action
         interact.write(BedrockTypes.UNSIGNED_VAR_LONG, targetRuntimeId); // target entity runtime id
-        interact.write(BedrockTypes.OPTIONAL_POSITION_3F, null); // position
+        InteractPacketLayout.writePosition(interact, action, Position3f.ZERO);
         interact.sendToServer(BedrockProtocol.class);
     }
 

@@ -20,9 +20,10 @@ package net.raphimc.viabedrock.protocol.types.model;
 import com.google.common.collect.Sets;
 import com.viaversion.viaversion.api.type.Type;
 import io.netty.buffer.ByteBuf;
-import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.CommandPermissionLevel;
+import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.CommandRegistry_HardNonTerminal;
 import net.raphimc.viabedrock.protocol.model.CommandData;
+import net.raphimc.viabedrock.protocol.packet.CommandPacketLayout;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.util.*;
@@ -40,8 +41,29 @@ public class CommandDataArrayType extends Type<CommandData[]> {
         super(CommandData[].class);
     }
 
+    private static boolean isNetEaseLegacyProtocol() {
+        return ViaBedrock.getConfig().shouldEmulateNetEaseClient()
+                && ViaBedrock.getConfig().getNetEaseProtocolVersion() > 0
+                && ViaBedrock.getConfig().getNetEaseProtocolVersion() < 898;
+    }
+
     @Override
     public CommandData[] read(ByteBuf buffer) {
+        final int startReaderIndex = buffer.readerIndex();
+        final boolean netEaseLegacy = isNetEaseLegacyProtocol();
+        final int originalWriterIndex = buffer.writerIndex();
+        try {
+            return readClassic(buffer, netEaseLegacy);
+        } catch (RuntimeException | Error first) {
+            ViaBedrock.getPlatform().getLogger().warning(
+                    "Failed to parse AVAILABLE_COMMANDS data after consuming "
+                            + (buffer.readerIndex() - startReaderIndex) + " of "
+                            + (originalWriterIndex - startReaderIndex) + " bytes: " + first);
+            throw first;
+        }
+    }
+
+    private static CommandData[] readClassic(ByteBuf buffer, final boolean netEaseLegacy) {
         final String[] enumLiterals = BedrockTypes.STRING_ARRAY.read(buffer); // enum literals
         final String[] subCommandLiterals = BedrockTypes.STRING_ARRAY.read(buffer); // sub command literals
         final String[] postFixLiterals = BedrockTypes.STRING_ARRAY.read(buffer); // post fix literals
@@ -51,11 +73,11 @@ public class CommandDataArrayType extends Type<CommandData[]> {
         for (int i = 0; i < enumPalette.length; i++) {
             final String name = BedrockTypes.STRING.read(buffer); // name
             final int count = BedrockTypes.UNSIGNED_VAR_INT.read(buffer); // values count
-            final Set<String> values = new HashSet<>(count);
+            final Set<String> values = new HashSet<>(Math.max(16, Math.min(count, 1024)));
             for (int j = 0; j < count; j++) {
-                final long index = buffer.readUnsignedIntLE(); // value
+                final int index = CommandPacketLayout.readEnumValueIndex(buffer, enumLiterals.length, !netEaseLegacy);
                 if (index >= 0 && index < enumLiterals.length) {
-                    values.add(enumLiterals[Math.toIntExact(index)]);
+                    values.add(enumLiterals[index]);
                 } else {
                     values.add("default");
                 }
@@ -76,10 +98,10 @@ public class CommandDataArrayType extends Type<CommandData[]> {
         for (int i = 0; i < subCommands.length; i++) {
             final String name = BedrockTypes.STRING.read(buffer); // name
             final int count = BedrockTypes.UNSIGNED_VAR_INT.read(buffer); // values count
-            final Map<String, Integer> values = new HashMap<>(count);
+            final Map<String, Integer> values = new HashMap<>(Math.max(16, Math.min(count, 1024)));
             for (int j = 0; j < count; j++) {
-                final int index = BedrockTypes.UNSIGNED_VAR_INT.read(buffer); // value
-                final int type = BedrockTypes.UNSIGNED_VAR_INT.read(buffer); // type
+                final int index = CommandPacketLayout.readSubCommandValueIndex(buffer, !netEaseLegacy); // value
+                final int type = CommandPacketLayout.readSubCommandValueIndex(buffer, !netEaseLegacy); // type
                 if (index >= 0 && index < subCommandLiterals.length) {
                     values.put(subCommandLiterals[index], type);
                 }
@@ -102,7 +124,7 @@ public class CommandDataArrayType extends Type<CommandData[]> {
             final String name = BedrockTypes.STRING.read(buffer); // name
             final String description = BedrockTypes.STRING.read(buffer); // description
             final int flags = buffer.readUnsignedShortLE(); // flags
-            final byte permission = (byte) CommandPermissionLevel.getByName(BedrockTypes.STRING.read(buffer)).getValue(); // permission
+            final byte permission = (byte) CommandPacketLayout.readPermission(buffer, !netEaseLegacy).getValue(); // permission
             final int aliasIndex = buffer.readIntLE(); // alias
             final boolean validAliasPointer = aliasIndex >= 0 && aliasIndex < enumPalette.length;
             final CommandData.EnumData alias;
@@ -114,7 +136,7 @@ public class CommandDataArrayType extends Type<CommandData[]> {
 
             final int subCommandCount = BedrockTypes.UNSIGNED_VAR_INT.read(buffer);
             for (int j = 0; j < subCommandCount; j++) {
-                buffer.readUnsignedIntLE(); // subcommand index?
+                CommandPacketLayout.readSubCommandOffset(buffer, !netEaseLegacy); // subcommand index
             }
 
             final CommandData.OverloadData[] overloads = new CommandData.OverloadData[BedrockTypes.UNSIGNED_VAR_INT.read(buffer)];

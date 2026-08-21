@@ -46,6 +46,8 @@ import net.raphimc.viabedrock.protocol.model.CommandData;
 import net.raphimc.viabedrock.protocol.model.CommandOriginData;
 import net.raphimc.viabedrock.protocol.storage.*;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
+import io.netty.buffer.ByteBuf;
 
 import java.util.Set;
 import java.util.UUID;
@@ -60,7 +62,7 @@ public class ChatPackets {
             map(Types.STRING, BedrockTypes.STRING, c -> '/' + c); // command
             handler(wrapper -> wrapper.write(BedrockTypes.COMMAND_ORIGIN_DATA, new CommandOriginData(CommandOriginType.Player, UUID.randomUUID(), ""))); // origin
             create(Types.BOOLEAN, false); // is internal
-            create(BedrockTypes.STRING, ProtocolConstants.BEDROCK_COMMAND_VERSION); // version
+            handler(wrapper -> CommandPacketLayout.writeRequestVersion(wrapper)); // version
             handler(PacketWrapper::clearInputBuffer);
             handler(wrapper -> {
                 final CommandsStorage commandsStorage = wrapper.user().get(CommandsStorage.class);
@@ -84,109 +86,20 @@ public class ChatPackets {
     };
 
     public static void register(final BedrockProtocol protocol) {
-        protocol.registerClientbound(ClientboundBedrockPackets.TEXT, ClientboundPackets26_1.SYSTEM_CHAT, new PacketHandlers() {
-            @Override
-            public void register() {
-                handler(wrapper -> {
-                    final boolean localize = wrapper.read(Types.BOOLEAN); // localize
-                    wrapper.read(Types.UNSIGNED_BYTE); // message type
-                    final short rawType = wrapper.read(Types.UNSIGNED_BYTE); // text packet type
-                    final TextPacketType type = TextPacketType.getByValue(rawType);
-                    if (type == null) {
-                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown TextPacketType: " + rawType);
-                        wrapper.cancel();
-                        return;
-                    }
-
-                    final Function<String, String> translator = wrapper.user().get(ResourcePackStorage.class).getTexts().lookup();
-                    String originalMessage = null;
-                    boolean javaTellrawMessage = false;
-                    try {
-                        switch (type) {
-                            case chat, whisper, announcement -> {
-                                final String sourceName = wrapper.read(BedrockTypes.STRING); // source name
-                                String message = originalMessage = wrapper.read(BedrockTypes.STRING); // message
-                                if (localize) {
-                                    message = BedrockTranslator.translate(message, translator, new Object[0]);
-                                }
-
-                                if (type == TextPacketType.chat && !sourceName.isEmpty()) {
-                                    message = BedrockTranslator.translate("chat.type.text", translator, new String[]{sourceName, message}, TranslatorOptions.SKIP_ARGS_TRANSLATION);
-                                } else if (type == TextPacketType.whisper) {
-                                    message = BedrockTranslator.translate("chat.type.text", translator, new String[]{sourceName, BedrockTranslator.translate("§7§o%commands.message.display.incoming", translator, new String[]{sourceName, message})}, TranslatorOptions.SKIP_ARGS_TRANSLATION);
-                                }
-
-                                wrapper.write(Types.TAG, TextUtil.stringToNbt(message));
-                                wrapper.write(Types.BOOLEAN, false); // overlay
-                            }
-                            case textObjectWhisper, textObject, textObjectAnnouncement -> {
-                                String message = originalMessage = wrapper.read(BedrockTypes.STRING); // message
-                                final RootBedrockComponent rootComponent = BedrockComponentSerializer.deserialize(message);
-                                rootComponent.forEach(c -> {
-                                    if (c instanceof TranslationBedrockComponent) ((TranslationBedrockComponent) c).setTranslator(translator);
-                                });
-                                message = rootComponent.asString();
-                                if (localize) {
-                                    message = BedrockTranslator.translate(message, translator, new Object[0]);
-                                }
-
-                                wrapper.write(Types.TAG, TextUtil.stringToNbt(message)); // message
-                                wrapper.write(Types.BOOLEAN, false); // overlay
-                            }
-                            case raw, systemMessage, tip -> {
-                                String message = originalMessage = wrapper.read(BedrockTypes.STRING); // message
-                                if (type == TextPacketType.raw && message.startsWith(ProtocolConstants.JAVA_TELLRAW_MAGIC_HEADER)) {
-                                    javaTellrawMessage = true;
-                                    final int wireSize = Utf8.encodedLength(message);
-                                    if (wireSize > ProtocolConstants.JAVA_TELLRAW_MAX_WIRE_BYTES) {
-                                        throw new IllegalArgumentException("Java tellraw envelope exceeds " + ProtocolConstants.JAVA_TELLRAW_MAX_WIRE_BYTES + " UTF-8 bytes: " + wireSize);
-                                    }
-
-                                    final String json = message.substring(ProtocolConstants.JAVA_TELLRAW_MAGIC_HEADER.length());
-                                    wrapper.write(Types.TAG, TextUtil.javaTellrawJsonToNbt(json));
-                                    wrapper.write(Types.BOOLEAN, false); // overlay
-                                    break;
-                                } else if (localize) {
-                                    message = BedrockTranslator.translate(message, translator, new Object[0]);
-                                }
-
-                                wrapper.write(Types.TAG, TextUtil.stringToNbt(message)); // message
-                                wrapper.write(Types.BOOLEAN, type == TextPacketType.tip); // overlay
-                            }
-                            case translate, popup, jukeboxPopup -> {
-                                String message = originalMessage = wrapper.read(BedrockTypes.STRING); // message
-                                final String[] parameters = wrapper.read(BedrockTypes.STRING_ARRAY); // parameters
-                                if (localize) {
-                                    message = BedrockTranslator.translate(message, translator, parameters);
-                                }
-
-                                wrapper.write(Types.TAG, TextUtil.stringToNbt(message)); // message
-                                wrapper.write(Types.BOOLEAN, type == TextPacketType.popup || type == TextPacketType.jukeboxPopup); // overlay
-                            }
-                            default -> throw new IllegalStateException("Unhandled TextPacketType: " + type);
-                        }
-                    } catch (Throwable e) { // Bedrock client silently ignores errors
-                        if (javaTellrawMessage) {
-                            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error while parsing Java tellraw message", e);
-                        } else {
-                            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error while translating '" + originalMessage + "'", e);
-                        }
-                        wrapper.cancel();
-                    }
-                });
-                read(BedrockTypes.STRING); // xuid
-                read(BedrockTypes.STRING); // platform online id
-                read(BedrockTypes.OPTIONAL_STRING); // filtered message
+        protocol.registerClientbound(ClientboundBedrockPackets.TEXT, ClientboundPackets26_1.SYSTEM_CHAT, wrapper -> {
+            try {
+                rewriteClientboundText(wrapper);
+            } catch (Throwable e) {
+                // A malformed TEXT packet must never close the session. Official Bedrock
+                // drops the message; PacketHandlers.read() after cancel() used to rethrow.
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Skipping TEXT packet due to parse error: " + e);
+                wrapper.cancel();
             }
         });
         protocol.registerClientbound(ClientboundBedrockPackets.COMMAND_OUTPUT, ClientboundPackets26_1.SYSTEM_CHAT, wrapper -> {
             final CommandOriginData originData = wrapper.read(BedrockTypes.COMMAND_ORIGIN_DATA); // origin
-            final String rawType = wrapper.read(BedrockTypes.STRING); // type
-            final CommandOutputType type = CommandOutputType.getByName(rawType); // type
-            if (type == null) { // Bedrock client disconnects if the type is not valid
-                throw new IllegalStateException("Unknown CommandOutputType: " + rawType);
-            }
-            wrapper.read(BedrockTypes.UNSIGNED_INT_LE); // success count
+            final CommandOutputType type = CommandPacketLayout.readOutputType(wrapper); // type
+            CommandPacketLayout.readSuccessCount(wrapper); // success count
 
             if (originData.type() != CommandOriginType.Player) { // Bedrock client ignores non player origins
                 wrapper.cancel();
@@ -197,9 +110,10 @@ public class ChatPackets {
             final StringBuilder message = new StringBuilder();
             final int messageCount = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // message count
             for (int i = 0; i < messageCount; i++) {
-                final String messageId = wrapper.read(BedrockTypes.STRING); // message id
-                final boolean successful = wrapper.read(Types.BOOLEAN); // is successful
-                final String[] parameters = wrapper.read(BedrockTypes.STRING_ARRAY); // parameters
+                final CommandPacketLayout.CommandOutputMessage outputMessage = CommandPacketLayout.readOutputMessage(wrapper);
+                final String messageId = outputMessage.messageId();
+                final boolean successful = outputMessage.successful();
+                final String[] parameters = outputMessage.parameters();
 
                 message.append(successful ? "§r" : "§c");
                 message.append(BedrockTranslator.translate(messageId, translator, parameters));
@@ -207,18 +121,35 @@ public class ChatPackets {
                     message.append("\n");
                 }
             }
-            wrapper.read(BedrockTypes.OPTIONAL_STRING); // data set
+            CommandPacketLayout.skipOutputData(wrapper, type); // data set
 
             wrapper.write(Types.TAG, TextUtil.stringToNbt(message.toString()));
             wrapper.write(Types.BOOLEAN, false); // overlay
         });
         protocol.registerClientboundTransition(ClientboundBedrockPackets.AVAILABLE_COMMANDS,
                 State.CONFIGURATION, (PacketHandler) wrapper -> {
-                    final CommandData[] commands = wrapper.read(BedrockTypes.COMMAND_DATA_ARRAY); // commands
+                    final CommandData[] commands;
+                    try {
+                        commands = wrapper.read(BedrockTypes.COMMAND_DATA_ARRAY); // commands
+                    } catch (Throwable t) {
+                        // NetEase tail layout differences must not kill the session; commands are optional
+                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING,
+                                "Skipping AVAILABLE_COMMANDS (configuration) due to parse error: " + t);
+                        wrapper.cancel();
+                        return;
+                    }
                     wrapper.user().put(new CommandsStorage(wrapper.user(), commands));
                     wrapper.cancel(); // Will be sent when the java player is ready
                 }, ClientboundPackets26_1.COMMANDS, (PacketHandler) wrapper -> {
-                    final CommandData[] commands = wrapper.read(BedrockTypes.COMMAND_DATA_ARRAY); // commands
+                    final CommandData[] commands;
+                    try {
+                        commands = wrapper.read(BedrockTypes.COMMAND_DATA_ARRAY); // commands
+                    } catch (Throwable t) {
+                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING,
+                                "Skipping AVAILABLE_COMMANDS (play) due to parse error: " + t);
+                        wrapper.cancel();
+                        return;
+                    }
                     final CommandsStorage commandsStorage = new CommandsStorage(wrapper.user(), commands);
                     wrapper.user().put(commandsStorage);
                     commandsStorage.writeCommandTree(wrapper);
@@ -271,14 +202,10 @@ public class ChatPackets {
         protocol.registerServerbound(ServerboundPackets26_1.CHAT, ServerboundBedrockPackets.TEXT, new PacketHandlers() {
             @Override
             public void register() {
-                create(Types.BOOLEAN, false); // localize
-                create(Types.UNSIGNED_BYTE, (short) 1); // message type
-                create(Types.UNSIGNED_BYTE, (short) TextPacketType.chat.getValue()); // type
+                handler(wrapper -> writeServerboundChatHeader(wrapper, TextPacketType.chat));
                 handler(wrapper -> wrapper.write(BedrockTypes.STRING, wrapper.user().get(EntityTracker.class).getClientPlayer().name())); // source name
                 map(Types.STRING, BedrockTypes.STRING); // message
-                handler(wrapper -> wrapper.write(BedrockTypes.STRING, wrapper.user().get(AuthData.class).getXuid())); // xuid
-                create(BedrockTypes.STRING, ""); // platform online id
-                create(BedrockTypes.OPTIONAL_STRING, null); // filtered message
+                handler(wrapper -> writeServerboundChatTrailer(wrapper));
                 handler(PacketWrapper::clearInputBuffer);
                 handler(wrapper -> {
                     final GameSessionStorage gameSession = wrapper.user().get(GameSessionStorage.class);
@@ -320,6 +247,113 @@ public class ChatPackets {
             }
             tabComplete.send(BedrockProtocol.class);
         });
+    }
+
+    static void rewriteClientboundText(final PacketWrapper wrapper) {
+        final ByteBuf input = ((PacketWrapperImpl) wrapper).getInputBuffer();
+        if (input == null) {
+            wrapper.cancel();
+            return;
+        }
+
+        final boolean emulateNetEase = ViaBedrock.getConfig().shouldEmulateNetEaseClient();
+        final int protocol = ViaBedrock.getConfig().getNetEaseProtocolVersion();
+        final TextPacketLayout.DecodedText decoded = TextPacketLayout.readPacket(input, emulateNetEase, protocol);
+        wrapper.clearInputBuffer();
+        final Function<String, String> translator = wrapper.user().get(ResourcePackStorage.class).getTexts().lookup();
+        String originalMessage = decoded.message();
+        boolean javaTellrawMessage = false;
+        try {
+            switch (decoded.type()) {
+                case chat, whisper, announcement -> {
+                    String message = originalMessage;
+                    if (decoded.localize()) {
+                        message = BedrockTranslator.translate(message, translator, new Object[0]);
+                    }
+                    if (decoded.type() == TextPacketType.chat && !decoded.sourceName().isEmpty()) {
+                        message = BedrockTranslator.translate("chat.type.text", translator, new String[]{decoded.sourceName(), message}, TranslatorOptions.SKIP_ARGS_TRANSLATION);
+                    } else if (decoded.type() == TextPacketType.whisper) {
+                        message = BedrockTranslator.translate("chat.type.text", translator, new String[]{decoded.sourceName(), BedrockTranslator.translate("§7§o%commands.message.display.incoming", translator, new String[]{decoded.sourceName(), message})}, TranslatorOptions.SKIP_ARGS_TRANSLATION);
+                    }
+                    wrapper.write(Types.TAG, TextUtil.stringToNbt(message));
+                    wrapper.write(Types.BOOLEAN, false);
+                }
+                case textObjectWhisper, textObject, textObjectAnnouncement -> {
+                    String message = originalMessage;
+                    final RootBedrockComponent rootComponent = BedrockComponentSerializer.deserialize(message);
+                    rootComponent.forEach(c -> {
+                        if (c instanceof TranslationBedrockComponent translation) {
+                            translation.setTranslator(translator);
+                        }
+                    });
+                    message = rootComponent.asString();
+                    if (decoded.localize()) {
+                        message = BedrockTranslator.translate(message, translator, new Object[0]);
+                    }
+                    wrapper.write(Types.TAG, TextUtil.stringToNbt(message));
+                    wrapper.write(Types.BOOLEAN, false);
+                }
+                case raw, systemMessage, tip -> {
+                    String message = originalMessage;
+                    if (decoded.type() == TextPacketType.raw && message.startsWith(ProtocolConstants.JAVA_TELLRAW_MAGIC_HEADER)) {
+                        javaTellrawMessage = true;
+                        final int wireSize = Utf8.encodedLength(message);
+                        if (wireSize > ProtocolConstants.JAVA_TELLRAW_MAX_WIRE_BYTES) {
+                            throw new IllegalArgumentException("Java tellraw envelope exceeds " + ProtocolConstants.JAVA_TELLRAW_MAX_WIRE_BYTES + " UTF-8 bytes: " + wireSize);
+                        }
+                        wrapper.write(Types.TAG, TextUtil.javaTellrawJsonToNbt(message.substring(ProtocolConstants.JAVA_TELLRAW_MAGIC_HEADER.length())));
+                        wrapper.write(Types.BOOLEAN, false);
+                        break;
+                    }
+                    if (decoded.localize()) {
+                        message = BedrockTranslator.translate(message, translator, new Object[0]);
+                    }
+                    wrapper.write(Types.TAG, TextUtil.stringToNbt(message));
+                    wrapper.write(Types.BOOLEAN, decoded.type() == TextPacketType.tip);
+                }
+                case translate, popup, jukeboxPopup -> {
+                    String message = originalMessage;
+                    if (decoded.localize()) {
+                        message = BedrockTranslator.translate(message, translator, decoded.parameters());
+                    }
+                    wrapper.write(Types.TAG, TextUtil.stringToNbt(message));
+                    wrapper.write(Types.BOOLEAN, decoded.type() == TextPacketType.popup || decoded.type() == TextPacketType.jukeboxPopup);
+                }
+                default -> throw new IllegalStateException("Unhandled TextPacketType: " + decoded.type());
+            }
+        } catch (Throwable e) {
+            if (javaTellrawMessage) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error while parsing Java tellraw message", e);
+            } else {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error while translating '" + originalMessage + "'", e);
+            }
+            wrapper.cancel();
+        }
+    }
+
+    static void writeServerboundChatHeader(final PacketWrapper wrapper, final TextPacketType type) {
+        final boolean legacy = TextPacketLayout.isLegacyTypeFirstLayout();
+        if (legacy) {
+            wrapper.write(Types.UNSIGNED_BYTE, (short) type.getValue());
+            wrapper.write(Types.BOOLEAN, false);
+            return;
+        }
+        wrapper.write(Types.BOOLEAN, false);
+        wrapper.write(Types.UNSIGNED_BYTE, (short) TextPacketLayout.categoryOf(type));
+        wrapper.write(Types.UNSIGNED_BYTE, (short) type.getValue());
+    }
+
+    static void writeServerboundChatTrailer(final PacketWrapper wrapper) {
+        wrapper.write(BedrockTypes.STRING, wrapper.user().get(AuthData.class).getXuid());
+        wrapper.write(BedrockTypes.STRING, "");
+        if (TextPacketLayout.usesRequiredFilteredString()) {
+            wrapper.write(BedrockTypes.STRING, "");
+        } else {
+            wrapper.write(BedrockTypes.OPTIONAL_STRING, null);
+        }
+        if (TextPacketLayout.usesNetEaseUnknownTail(TextPacketType.chat)) {
+            wrapper.write(BedrockTypes.STRING, "");
+        }
     }
 
 }

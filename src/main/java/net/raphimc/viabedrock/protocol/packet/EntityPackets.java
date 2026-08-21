@@ -172,6 +172,7 @@ public class EntityPackets {
             wrapper.write(Types.BYTE, MathUtil.float2Byte(rotation.y())); // yaw
             wrapper.write(Types.BYTE, MathUtil.float2Byte(rotation.z())); // head yaw
             wrapper.write(Types.VAR_INT, javaSpawnData); // data
+            PacketLeftoverLayout.discardUnreadInput(wrapper);
             wrapper.send(BedrockProtocol.class);
             wrapper.cancel();
 
@@ -210,6 +211,7 @@ public class EntityPackets {
             wrapper.write(Types.BYTE, (byte) 0); // yaw
             wrapper.write(Types.BYTE, (byte) 0); // head yaw
             wrapper.write(Types.VAR_INT, 0); // data
+            PacketLeftoverLayout.discardUnreadInput(wrapper);
             wrapper.send(BedrockProtocol.class);
             wrapper.cancel();
 
@@ -452,6 +454,7 @@ public class EntityPackets {
             wrapper.write(Types.BYTE, (byte) 0); // yaw
             wrapper.write(Types.BYTE, (byte) 0); // head yaw
             wrapper.write(Types.VAR_INT, direction.verticalId()); // data
+            PacketLeftoverLayout.discardUnreadInput(wrapper);
             wrapper.send(BedrockProtocol.class);
             wrapper.cancel();
 
@@ -473,7 +476,7 @@ public class EntityPackets {
                 return;
             }
             final int data = wrapper.read(BedrockTypes.VAR_INT); // data
-            wrapper.read(BedrockTypes.OPTIONAL_POSITION_3F); // fire at position
+            EntityPacketLayout.skipEntityEventFireAtPosition(wrapper);
 
             final Entity entity = entityTracker.getEntityByRid(entityRuntimeId);
             if (entity == null) {
@@ -605,7 +608,7 @@ public class EntityPackets {
             final boolean showParticles = wrapper.read(Types.BOOLEAN); // show particles
             final int duration = wrapper.read(BedrockTypes.VAR_INT); // duration
             wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // tick
-            final boolean ambient = wrapper.read(Types.BOOLEAN); // ambient
+            final boolean ambient = EntityPacketLayout.readAmbient(wrapper);
 
             final Entity entity = wrapper.user().get(EntityTracker.class).getEntityByRid(entityRuntimeId);
             if (!(entity instanceof LivingEntity livingEntity) || effectId == 0) {
@@ -629,10 +632,10 @@ public class EntityPackets {
             }
         });
         protocol.registerClientbound(ClientboundBedrockPackets.ANIMATE, ClientboundPackets26_1.ANIMATE, wrapper -> {
-            final AnimatePacketPayload_Action action = AnimatePacketPayload_Action.getByValue(wrapper.read(Types.UNSIGNED_BYTE), AnimatePacketPayload_Action.NoAction); // action
+            final AnimatePacketPayload_Action action = AnimatePacketPayload_Action.getByValue(EntityPacketLayout.readAnimateAction(wrapper), AnimatePacketPayload_Action.NoAction); // action
             final long entityRuntimeId = wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // entity runtime id
             wrapper.read(BedrockTypes.FLOAT_LE); // data
-            wrapper.read(BedrockTypes.OPTIONAL_STRING); // swing source
+            EntityPacketLayout.skipSwingSource(wrapper);
 
             final JavaAnimate javaAnimate = resolveJavaAnimate(action, entityRuntimeId, wrapper.user().get(EntityTracker.class)::getEntityByRid);
             if (javaAnimate == null) {

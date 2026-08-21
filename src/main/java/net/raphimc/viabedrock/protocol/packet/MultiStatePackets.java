@@ -65,15 +65,17 @@ public class MultiStatePackets {
 
     private static final PacketHandler DISCONNECT_HANDLER = wrapper -> {
         final Connection_DisconnectFailReason disconnectReason = Connection_DisconnectFailReason.getByValue(wrapper.read(BedrockTypes.VAR_INT), Connection_DisconnectFailReason.Unknown); // reason
-        final boolean hasMessage = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT) == 0; // has message
+        final boolean hasMessage = DisconnectPacketLayout.readHasMessage(wrapper); // has message
         if (hasMessage) {
             final Map<String, String> translations = BedrockProtocol.MAPPINGS.getBedrockResourcePacks().get(DataValues.VANILLA_RESOURCE_PACK_KEY).content().getLang("texts/en_US.lang");
             final Function<String, String> translator = k -> translations.getOrDefault(k, k);
             final String rawMessage = wrapper.read(BedrockTypes.STRING); // message
             wrapper.read(BedrockTypes.STRING); // filtered message
+            wrapper.clearInputBuffer();
             final String translatedMessage = BedrockTranslator.translate(rawMessage, translator, new Object[0]);
             PacketFactory.writeJavaDisconnect(wrapper, translatedMessage + " §r(Reason: " + disconnectReason + ")");
         } else {
+            wrapper.clearInputBuffer();
             PacketFactory.writeJavaDisconnect(wrapper, null);
         }
     };
@@ -97,7 +99,21 @@ public class MultiStatePackets {
 
     private static final PacketHandler NETWORK_STACK_LATENCY_HANDLER = wrapper -> {
         final long timestamp = wrapper.read(BedrockTypes.LONG_LE); // timestamp
-        if (!wrapper.read(Types.BOOLEAN)) { // from server
+        final boolean fromServer = wrapper.read(Types.BOOLEAN); // from server
+        if (ViaBedrock.getConfig().shouldEmulateNetEaseClient()) {
+            // NetEase 860 zero-fills NETWORK_STACK_LATENCY (timestamp=0, fromServer=false).
+            // The vanilla handler drops fromServer=false pings, so echo unconditionally.
+            final PacketWrapper reply = PacketWrapper.create(ServerboundBedrockPackets.NETWORK_STACK_LATENCY, wrapper.user());
+            reply.write(BedrockTypes.LONG_LE, timestamp); // timestamp
+            reply.write(Types.BOOLEAN, true); // from server
+            // scheduleSendToServer defers to the event loop tail: a synchronous sendToServer
+            // from inside the clientbound transform re-enters the serverbound pipeline on the
+            // same thread and gets silently cancelled (sendToServer0 swallows CancelException).
+            reply.scheduleSendToServer(BedrockProtocol.class);
+            wrapper.cancel();
+            return;
+        }
+        if (!fromServer) {
             wrapper.cancel();
             return;
         }

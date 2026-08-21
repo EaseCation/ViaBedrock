@@ -19,6 +19,7 @@ package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
 
 import com.viaversion.viaversion.api.minecraft.item.data.ItemModel;
 import com.viaversion.viaversion.libs.gson.JsonObject;
+import com.viaversion.viaversion.libs.gson.JsonParser;
 import com.viaversion.viaversion.util.Key;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
@@ -73,7 +74,7 @@ public class CustomEntityResourceRewriter extends ItemModelResourceRewriter {
                                         "viabedrock:" + this.getJavaTexturePath(textureEntry.getValue()),
                                         rotationTypeFor(supportsFreeRotation)),
                                 supportsFreeRotation);
-                        javaModelDefinitions.put(modelKey, itemModelData.compile());
+                        javaModelDefinitions.put(modelKey, JsonParser.parseString(itemModelData.compile().toString()).getAsJsonObject());
 
                         for (Parent bone : bedrockGeometry.getParents()) {
                             if (bone.getCubes().isEmpty()) {
@@ -95,7 +96,7 @@ public class CustomEntityResourceRewriter extends ItemModelResourceRewriter {
                                                 RotationType.HACKY_POST_1_21_6),
                                         supportsFreeRotation);
                                 final String boneKey = entityEntry.getKey() + '_' + modelKey + '_' + boneName;
-                                javaModelDefinitions.put(boneKey, boneModelData.compile());
+                                javaModelDefinitions.put(boneKey, JsonParser.parseString(boneModelData.compile().toString()).getAsJsonObject());
                             } catch (Throwable e) {
                                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to generate per-bone model for " + boneName + " in " + entityEntry.getKey() + '_' + modelKey, e);
                             }

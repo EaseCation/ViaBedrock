@@ -69,7 +69,7 @@ class ResourcePackPacketsTypeTest {
 
         assertFalse(ResourcePackPackets.shouldClaimRawArchive(false, PackType.Resources, info));
         assertTrue(ResourcePackPackets.shouldClaimRawArchive(true, PackType.Resources, info));
-        assertFalse(ResourcePackPackets.shouldClaimRawArchive(true, PackType.Behavior, info));
+        assertTrue(ResourcePackPackets.shouldClaimRawArchive(true, PackType.Behavior, info));
         assertFalse(ResourcePackPackets.shouldClaimRawArchive(true, PackType.Resources, null));
     }
 

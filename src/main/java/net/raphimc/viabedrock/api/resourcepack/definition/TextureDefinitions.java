@@ -27,67 +27,133 @@ import java.util.*;
 public class TextureDefinitions {
 
     private final Map<String, List<ItemTextureDefinition>> itemTextures;
+    private final Map<String, List<TerrainTextureDefinition>> terrainTextures;
 
     public TextureDefinitions(final ResourcePackStorage resourcePackStorage) {
-        this(parsePacks(resourcePackStorage.getPackStackBottomToTop()));
+        this(fold(resourcePackStorage.getPackStackBottomToTop().stream().map(TextureDefinitions::fromPack).toList()));
     }
 
-    private TextureDefinitions(final Map<String, List<ItemTextureDefinition>> itemTextures) {
-        final Map<String, List<ItemTextureDefinition>> immutable = new LinkedHashMap<>();
-        itemTextures.forEach((name, definitions) -> immutable.put(name, List.copyOf(definitions)));
-        this.itemTextures = DefinitionImmutability.map(immutable);
+    private TextureDefinitions(final TextureDefinitions source) {
+        this.itemTextures = source.itemTextures;
+        this.terrainTextures = source.terrainTextures;
+    }
+
+    private TextureDefinitions(final Map<String, List<ItemTextureDefinition>> itemTextures,
+                               final Map<String, List<TerrainTextureDefinition>> terrainTextures) {
+        final Map<String, List<ItemTextureDefinition>> immutableItems = new LinkedHashMap<>();
+        itemTextures.forEach((name, definitions) -> immutableItems.put(name, List.copyOf(definitions)));
+        this.itemTextures = DefinitionImmutability.map(immutableItems);
+        final Map<String, List<TerrainTextureDefinition>> immutableTerrain = new LinkedHashMap<>();
+        terrainTextures.forEach((name, definitions) -> immutableTerrain.put(name, List.copyOf(definitions)));
+        this.terrainTextures = DefinitionImmutability.map(immutableTerrain);
     }
 
     static TextureDefinitions fromPack(final ResourcePack pack) {
         final Map<String, List<ItemTextureDefinition>> itemTextures = new LinkedHashMap<>();
+        final Map<String, List<TerrainTextureDefinition>> terrainTextures = new LinkedHashMap<>();
         if (pack.content().contains("textures/item_texture.json")) {
             try {
                 final JsonObject itemTexture = pack.content().getJson("textures/item_texture.json");
                 final String textureName = itemTexture.has("texture_name") ? itemTexture.get("texture_name").getAsString() : "atlas.items";
                 if (textureName.equals("atlas.items")) {
-                    final JsonObject textureData = itemTexture.getAsJsonObject("texture_data");
-                    for (Map.Entry<String, JsonElement> entry : textureData.entrySet()) {
-                        final String name = entry.getKey();
-                        final JsonElement textures = entry.getValue().getAsJsonObject().get("textures");
-                        final List<ItemTextureDefinition> itemTextureDefinitions = new ArrayList<>();
-                        if (textures.isJsonPrimitive() && textures.getAsJsonPrimitive().isString()) {
-                            itemTextureDefinitions.add(new ItemTextureDefinition(name, textures.getAsString()));
-                        } else if (textures.isJsonArray()) {
-                            for (JsonElement texture : textures.getAsJsonArray()) {
-                                itemTextureDefinitions.add(new ItemTextureDefinition(name, texture.getAsString()));
-                            }
-                        }
-                        itemTextures.put(name, itemTextureDefinitions);
-                    }
+                    parseNamedTextures(itemTexture.getAsJsonObject("texture_data"), itemTextures, true);
                 }
             } catch (Throwable e) {
                 DefinitionLogger.warning("Failed to parse item_texture.json in pack " + pack.key(), e);
             }
         }
-        return new TextureDefinitions(itemTextures);
+        if (pack.content().contains("textures/terrain_texture.json")) {
+            try {
+                final JsonObject terrainTexture = pack.content().getJson("textures/terrain_texture.json");
+                final String textureName = terrainTexture.has("texture_name") ? terrainTexture.get("texture_name").getAsString() : "atlas.terrain";
+                if (textureName.equals("atlas.terrain")) {
+                    parseNamedTextures(terrainTexture.getAsJsonObject("texture_data"), terrainTextures, false);
+                }
+            } catch (Throwable e) {
+                DefinitionLogger.warning("Failed to parse terrain_texture.json in pack " + pack.key(), e);
+            }
+        }
+        return new TextureDefinitions(itemTextures, terrainTextures);
     }
 
     static TextureDefinitions fold(final Collection<TextureDefinitions> layersBottomToTop) {
         final Map<String, List<ItemTextureDefinition>> itemTextures = new LinkedHashMap<>();
+        final Map<String, List<TerrainTextureDefinition>> terrainTextures = new LinkedHashMap<>();
         for (TextureDefinitions layer : layersBottomToTop) {
             itemTextures.putAll(layer.itemTextures);
+            terrainTextures.putAll(layer.terrainTextures);
         }
-        return new TextureDefinitions(itemTextures);
+        return new TextureDefinitions(itemTextures, terrainTextures);
     }
 
-    private static Map<String, List<ItemTextureDefinition>> parsePacks(final Collection<ResourcePack> packsBottomToTop) {
-        final Map<String, List<ItemTextureDefinition>> itemTextures = new LinkedHashMap<>();
-        for (ResourcePack pack : packsBottomToTop) {
-            itemTextures.putAll(fromPack(pack).itemTextures);
+    @SuppressWarnings("unchecked")
+    private static <T> void parseNamedTextures(final JsonObject textureData, final Map<String, List<T>> output, final boolean itemAtlas) {
+        if (textureData == null) {
+            return;
         }
-        return itemTextures;
+        for (Map.Entry<String, JsonElement> entry : textureData.entrySet()) {
+            if (!entry.getValue().isJsonObject()) {
+                continue;
+            }
+            final String name = entry.getKey();
+            final JsonElement textures = entry.getValue().getAsJsonObject().get("textures");
+            final List<String> paths = texturePaths(textures);
+            if (paths.isEmpty()) {
+                continue;
+            }
+            final List<T> definitions = new ArrayList<>(paths.size());
+            for (String path : paths) {
+                if (itemAtlas) {
+                    definitions.add((T) new ItemTextureDefinition(name, path));
+                } else {
+                    definitions.add((T) new TerrainTextureDefinition(name, path));
+                }
+            }
+            output.put(name, definitions);
+        }
+    }
+
+    private static List<String> texturePaths(final JsonElement textures) {
+        final List<String> paths = new ArrayList<>();
+        if (textures == null || textures.isJsonNull()) {
+            return paths;
+        }
+        if (textures.isJsonPrimitive() && textures.getAsJsonPrimitive().isString()) {
+            paths.add(textures.getAsString());
+            return paths;
+        }
+        if (textures.isJsonArray()) {
+            for (JsonElement texture : textures.getAsJsonArray()) {
+                if (texture.isJsonPrimitive() && texture.getAsJsonPrimitive().isString()) {
+                    paths.add(texture.getAsString());
+                } else if (texture.isJsonObject() && texture.getAsJsonObject().has("path")) {
+                    paths.add(texture.getAsJsonObject().get("path").getAsString());
+                }
+            }
+        }
+        return paths;
     }
 
     public Map<String, List<ItemTextureDefinition>> itemTextures() {
         return Collections.unmodifiableMap(this.itemTextures);
     }
 
+    public Map<String, List<TerrainTextureDefinition>> terrainTextures() {
+        return Collections.unmodifiableMap(this.terrainTextures);
+    }
+
+    public String firstTerrainPath(final String textureName) {
+        if (textureName == null) {
+            return null;
+        }
+        final List<TerrainTextureDefinition> definitions = this.terrainTextures.get(textureName);
+        return definitions == null || definitions.isEmpty() ? null : definitions.getFirst().texturePath();
+    }
+
     public record ItemTextureDefinition(String name, String texturePath) {
+    }
+
+    public record TerrainTextureDefinition(String name, String texturePath) {
     }
 
 }
