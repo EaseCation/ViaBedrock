@@ -1,24 +1,24 @@
-# GanquanOnline ViaBedrock_NetEase
+# ViaBedrock_NetEase
 
 Public fork of [EaseCation/ViaBedrock](https://github.com/EaseCation/ViaBedrock) (`main`, based on [`fcf85f2`](https://github.com/EaseCation/ViaBedrock/commit/fcf85f26309eaed7fa3a070c5916a7d9492e2a91)).
 EaseCation/ViaBedrock itself is a fork of [RaphiMC/ViaBedrock](https://github.com/RaphiMC/ViaBedrock).
 
-This repository is published as **ViaBedrock_NetEase** because it contains dedicated NetEase / China Edition protocol 860 client emulation. It translates Minecraft Java Edition packets to Bedrock Edition. It is the protocol core of the GanquanOnline Java-to-Bedrock bridge.
+This repository adds **NetEase / China Edition protocol 860** client emulation on top of ViaBedrock. It translates Minecraft Java Edition packets to Bedrock Edition so a Java client can join NetEase Bedrock servers.
 
 ## Fork lineage
 
 | This repository | Pulled from | Branch | Upstream commit |
 |---|---|---|---|
-| [GanquanOnline/ViaBedrock_NetEase](https://github.com/GanquanOnline/ViaBedrock_NetEase) | [EaseCation/ViaBedrock](https://github.com/EaseCation/ViaBedrock) | `main` | `fcf85f26309eaed7fa3a070c5916a7d9492e2a91` |
+| **ViaBedrock_NetEase** | [EaseCation/ViaBedrock](https://github.com/EaseCation/ViaBedrock) | `main` | `fcf85f26309eaed7fa3a070c5916a7d9492e2a91` |
 
 ## Related repositories
 
 ```
 Java Fabric 1.21.11 client
-  ViaBedrockUtility  --custom payload-->  ViaProxy
+  ViaBedrockUtility  --custom payload-->  ViaProxy_NetEase
   (optional ModUI / camera / particle mods)     |
                                                 v
-                                         ViaBedrock
+                                         ViaBedrock_NetEase
                                                 |
                                                 v
                                          ViaVersion shims
@@ -29,15 +29,15 @@ Java Fabric 1.21.11 client
 
 | Repository | Upstream | What it does in this stack |
 |---|---|---|
-| [ViaVersion](https://github.com/GanquanOnline/ViaVersion) | [ViaVersion/ViaVersion](https://github.com/ViaVersion/ViaVersion) `master` @ `e8bbb5d` | Protocol base library plus send-interceptor / custom-registry shims that this ViaBedrock fork expects |
+| ViaVersion | [ViaVersion/ViaVersion](https://github.com/ViaVersion/ViaVersion) `master` @ `e8bbb5d` | Protocol base library plus send-interceptor / custom-registry shims that ViaBedrock_NetEase expects |
 | **ViaBedrock_NetEase (this repo)** | EaseCation/ViaBedrock `main` @ `fcf85f2` | Java <-> Bedrock translation, NetEase login, protocol 860 layouts, join replay, ModUI PY_RPC bridge |
-| [ViaProxy_NetEase](https://github.com/GanquanOnline/ViaProxy_NetEase) | [ViaVersion/ViaProxy](https://github.com/ViaVersion/ViaProxy) `main` @ `846646b` | Standalone proxy. Bundles ViaBedrock and uses RakNet 8 when NetEase emulation is enabled |
-| [ViaBedrockUtility](https://github.com/GanquanOnline/ViaBedrockUtility) | [EaseCation/ViaBedrockUtility](https://github.com/EaseCation/ViaBedrockUtility) `master` @ `ebfbe10` | Fabric client mod. Renders custom entities/skins/animations from ViaBedrock payloads |
+| ViaProxy_NetEase | [ViaVersion/ViaProxy](https://github.com/ViaVersion/ViaProxy) `main` @ `846646b` | Standalone proxy. Bundles ViaBedrock_NetEase and uses RakNet 8 when NetEase emulation is enabled |
+| ViaBedrockUtility | [EaseCation/ViaBedrockUtility](https://github.com/EaseCation/ViaBedrockUtility) `master` @ `ebfbe10` | Fabric client mod. Renders custom entities/skins/animations from ViaBedrock_NetEase payloads |
 
 Payload channels must stay in sync across repos:
 
-- Custom entities / skins / animations: `viabedrockutility:data` and `viabedrockutility:confirm` (ViaBedrock <-> ViaBedrockUtility)
-- ModUI / PY_RPC: `moduiclient:confirm` and `moduiclient:data` (ViaBedrock `experimental/modinterface` and `experimental/pyrpc` <-> ModUIClient)
+- Custom entities / skins / animations: `viabedrockutility:data` and `viabedrockutility:confirm` (ViaBedrock_NetEase <-> ViaBedrockUtility)
+- ModUI / PY_RPC: `moduiclient:confirm` and `moduiclient:data` (ViaBedrock_NetEase `experimental/modinterface` and `experimental/pyrpc` <-> ModUIClient)
 
 ## NetEase emulation
 
@@ -60,7 +60,7 @@ Local changes on top of EaseCation/ViaBedrock:
 - Server-authoritative inventory clicks encoded as `ITEM_STACK_REQUEST`
 - ModUI PY_RPC bridging on `moduiclient:*`
 
-Build this module with `./gradlew publishToMavenLocal` (Java 21). In the GanquanOnline workspace the full proxy chain is built by `GanquanNetEaseGateway/build.ps1`.
+Build this module with `./gradlew publishToMavenLocal` (Java 21) after publishing the matching ViaVersion fork to mavenLocal. Then build ViaProxy_NetEase.
 
 ## License
 
