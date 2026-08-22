@@ -52,6 +52,7 @@ public final class PlayerAuthInputLayout {
     public static final int HANDLED_TELEPORT_ORDINAL = 37;
     public static final int TWO_EXTRA_FLAGS_PROTOCOL = 819;
     public static final int ONE_EXTRA_FLAG_PROTOCOL = 686;
+    public static final int CAMERA_DEPARTED_PROTOCOL = 422;
     public static final int NUKKIT_FLAG_BIT_LIMIT = 64;
 
     private PlayerAuthInputLayout() {
@@ -68,6 +69,14 @@ public final class PlayerAuthInputLayout {
             return EnumUtil.getBigBitmaskFromEnumSet(inputData, PlayerAuthInputPacket_InputData::getValue);
         }
         return bitmask(inputData, extraFlags);
+    }
+
+    public static boolean usesCameraDeparted() {
+        return usesCameraDeparted(emulateNetEase(), netEaseProtocol());
+    }
+
+    public static boolean usesCameraDeparted(final boolean emulateNetEase, final int protocol) {
+        return emulateNetEase && protocol >= CAMERA_DEPARTED_PROTOCOL;
     }
 
     public static int extraInputFlags(final boolean emulateNetEase, final int protocol) {

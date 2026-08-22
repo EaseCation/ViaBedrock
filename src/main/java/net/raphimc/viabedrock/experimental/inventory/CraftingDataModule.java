@@ -165,7 +165,7 @@ public class CraftingDataModule implements FeatureModule {
         wrapper.read(BedrockTypes.UUID); // uuid
         final String tag = wrapper.read(BedrockTypes.STRING);
         final int priority = wrapper.read(BedrockTypes.VAR_INT);
-        wrapper.read(Types.BYTE); // unlocking requirement ordinal
+        skipUnlockingRequirement(wrapper);
         final int networkId = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
 
         recipes.add(new BedrockRecipe(
@@ -200,13 +200,21 @@ public class CraftingDataModule implements FeatureModule {
         final String tag = wrapper.read(BedrockTypes.STRING);
         final int priority = wrapper.read(BedrockTypes.VAR_INT);
         final boolean assumeSymmetry = wrapper.read(Types.BOOLEAN);
-        wrapper.read(Types.BYTE); // unlocking requirement ordinal
+        skipUnlockingRequirement(wrapper);
         final int networkId = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
 
         recipes.add(new BedrockRecipe(
                 recipeId, BedrockRecipe.RecipeType.SHAPED, width, height,
                 ingredients, primaryOutput, extraOutputs, tag, priority, networkId, assumeSymmetry
         ));
+    }
+
+
+    private static void skipUnlockingRequirement(final PacketWrapper wrapper) {
+        final boolean emulateNetEase = ViaBedrock.getConfig().shouldEmulateNetEaseClient();
+        final int netEaseProtocol = ViaBedrock.getConfig().getNetEaseProtocolVersion();
+        final int protocol = emulateNetEase && netEaseProtocol > 0 ? netEaseProtocol : 975;
+        CraftingDataLayout.skipUnlockingRequirement(wrapper, emulateNetEase, protocol);
     }
 
     private static void skipFurnaceRecipe(final PacketWrapper wrapper) {

@@ -86,4 +86,17 @@ class TabListConfigTest {
         assertFalse(config.shouldEnableSwordBlockingAnimation());
     }
 
+    @Test
+    void usesUpstreamTabListBrandingByDefault(@TempDir final Path tempDir) {
+        final ViaBedrockConfig config = new ViaBedrockConfig(
+                tempDir.resolve("viabedrock.yml").toFile(),
+                Logger.getAnonymousLogger()
+        );
+        config.reload();
+
+        assertTrue(config.shouldSendTabList());
+        assertEquals("%level_name%\n", config.getTabListHeader());
+        assertEquals("\u00A7aViaBedrock \u00A73v%version%\n\u00A77https://github.com/RaphiMC/ViaBedrock", config.getTabListFooter());
+    }
+
 }

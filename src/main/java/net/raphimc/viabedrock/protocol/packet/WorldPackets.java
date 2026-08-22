@@ -47,6 +47,7 @@ import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
+import net.raphimc.viabedrock.experimental.block.CustomBlockDisplayTracker;
 import net.raphimc.viabedrock.experimental.storage.BlockBreakingProgressTracker;
 import net.raphimc.viabedrock.experimental.storage.BlockPlacementAckTracker;
 import net.raphimc.viabedrock.protocol.data.enums.Dimension;
@@ -100,9 +101,13 @@ public class WorldPackets {
 
             // Recompute neighbor-aware blocks (stair shapes, fence/pane connections, door/bed halves) for this change
             // and every neighbor it affects.
+            final CustomBlockDisplayTracker displayTracker = wrapper.user().get(CustomBlockDisplayTracker.class);
+            final int displayState = displayTracker != null
+                    ? displayTracker.overlayJavaBlockState(blockState, remappedBlock.keyInt())
+                    : remappedBlock.keyInt();
             final BlockNeighborView view = new TrackerNeighborView(chunkTracker);
-            final Map<BlockPosition, Integer> updates = BedrockProtocol.MAPPINGS.getNeighborRewriter().resolveUpdate(view, position, remappedBlock.keyInt());
-            wrapper.write(Types.VAR_INT, updates.getOrDefault(position, remappedBlock.keyInt())); // block state
+            final Map<BlockPosition, Integer> updates = BedrockProtocol.MAPPINGS.getNeighborRewriter().resolveUpdate(view, position, displayState);
+            wrapper.write(Types.VAR_INT, updates.getOrDefault(position, displayState)); // block state
 
             // UPDATE_BLOCK_SYNCED appends entity runtime id + sync type after the common fields.
             // Consume them before leftover discard so send() cannot copy those varlongs onto Java BLOCK_UPDATE.
@@ -115,6 +120,10 @@ public class WorldPackets {
             PacketLeftoverLayout.discardUnreadInput(wrapper);
             wrapper.send(BedrockProtocol.class);
             wrapper.cancel();
+
+            if (displayTracker != null && layer == 0) {
+                displayTracker.sync(position, blockState);
+            }
 
             for (Map.Entry<BlockPosition, Integer> entry : updates.entrySet()) {
                 if (entry.getKey().equals(position)) {
@@ -542,7 +551,13 @@ public class WorldPackets {
                     if (remappedBlock.value() != null) {
                         blockEntities.put(entry.position(), remappedBlock.value());
                     }
-                    remappedBlockStates.put(entry.position(), remappedBlock.keyInt());
+                    final CustomBlockDisplayTracker displayTracker = wrapper.user().get(CustomBlockDisplayTracker.class);
+                    remappedBlockStates.put(entry.position(), displayTracker != null
+                            ? displayTracker.overlayJavaBlockState(entry.blockState(), remappedBlock.keyInt())
+                            : remappedBlock.keyInt());
+                    if (displayTracker != null && layer == 0) {
+                        displayTracker.sync(entry.position(), entry.blockState());
+                    }
                 }
             }
 

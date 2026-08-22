@@ -18,7 +18,7 @@
 package net.raphimc.viabedrock.protocol.storage;
 
 import com.viaversion.viaversion.api.connection.UserConnection;
-import com.viaversion.viaversion.connection.UserConnectionImpl;
+import net.raphimc.viabedrock.test.StubUserConnection;
 import com.viaversion.viaversion.libs.mcstructs.text.components.StringComponent;
 import io.netty.channel.embedded.EmbeddedChannel;
 import net.raphimc.viabedrock.api.model.container.ChestContainer;
@@ -44,7 +44,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class InventoryTrackerContainerStateTest {
 
     private final EmbeddedChannel channel = new EmbeddedChannel();
-    private final UserConnectionImpl user = new UserConnectionImpl(this.channel);
+    private final StubUserConnection user = new StubUserConnection(this.channel);
     private final RecordingClosePacketSink packets = new RecordingClosePacketSink();
     private final RecordingClosePreparation closePreparation = new RecordingClosePreparation();
     private InventoryTracker tracker;
@@ -210,6 +210,29 @@ class InventoryTrackerContainerStateTest {
 
         assertFalse(this.tracker.getHudContainer().getItem(0).isEmpty());
         assertEquals(OPEN, this.tracker.getContainerState());
+    }
+
+    @Test
+    void bedrockInventoryOpenDoesNotOccupyCurrentContainer() {
+        this.tracker.acknowledgeBedrockInventoryOpen((byte) 0, new com.viaversion.viaversion.api.minecraft.BlockPosition(10, 64, 10));
+
+        assertTrue(this.tracker.isBedrockPlayerInventoryOpen());
+        assertEquals((byte) 0, this.tracker.bedrockInventoryContainerId());
+        assertNull(this.tracker.getCurrentContainer());
+        assertEquals(CLOSED, this.tracker.getContainerState());
+
+        this.openContainer();
+        assertSame(this.container, this.tracker.getCurrentContainer());
+        assertFalse(this.tracker.isBedrockPlayerInventoryOpen());
+    }
+
+    @Test
+    void serverCloseClearsUntrackedBedrockInventoryOpen() {
+        this.tracker.acknowledgeBedrockInventoryOpen((byte) 0, new com.viaversion.viaversion.api.minecraft.BlockPosition(1, 64, 1));
+
+        assertNull(this.tracker.acceptServerClose((byte) 0, ContainerType.INVENTORY));
+        assertFalse(this.tracker.isBedrockPlayerInventoryOpen());
+        assertEquals(CLOSED, this.tracker.getContainerState());
     }
 
     private void openContainer() {

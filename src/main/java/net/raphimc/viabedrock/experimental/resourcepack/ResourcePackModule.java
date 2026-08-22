@@ -24,6 +24,7 @@ import net.raphimc.viabedrock.experimental.FeatureModule;
 import net.raphimc.viabedrock.experimental.resourcepack.cache.SharedPackRuntimeCache.RuntimeLease;
 import net.raphimc.viabedrock.protocol.rewriter.ResourcePackRewriter;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
+import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -54,7 +55,33 @@ public class ResourcePackModule implements FeatureModule {
     @Override
     public void onResourcePackStackSet(final UserConnection user) {
         final ResourcePackStorage resourcePackStorage = user.get(ResourcePackStorage.class);
-        ensureRuntimeData(resourcePackStorage);
+        if (resourcePackStorage != null) {
+            ensureRuntimeData(resourcePackStorage);
+        }
+    }
+
+    @Override
+    public void onJavaResourcePackLoaded(final UserConnection user) {
+        final ResourcePackStorage resourcePackStorage = user.get(ResourcePackStorage.class);
+        final ChunkTracker chunkTracker = user.get(ChunkTracker.class);
+        if (resourcePackStorage == null || chunkTracker == null) {
+            return;
+        }
+        // Overlay spawning requires the converted Java models to be loaded on the client.
+        // Runtime data may already be ready before that, so wait for both and hop back
+        // onto the connection thread before touching chunk/entity state.
+        ensureRuntimeData(resourcePackStorage).whenComplete((ignored, error) -> {
+            if (error != null) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING,
+                        "Failed to initialize custom block overlay runtime data", error);
+                return;
+            }
+            final io.netty.channel.Channel channel = user.getChannel();
+            if (channel == null || !channel.isActive()) {
+                return;
+            }
+            channel.eventLoop().execute(chunkTracker::rescanCustomBlockDisplays);
+        });
     }
 
     /** Completes only after all stack-derived runtime data is fully initialized and published. */

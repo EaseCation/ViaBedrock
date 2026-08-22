@@ -40,6 +40,11 @@ class PlayerAuthInputLayoutTest {
         assertEquals(1, PlayerAuthInputLayout.extraInputFlags(true, 686));
         assertEquals(2, PlayerAuthInputLayout.extraInputFlags(true, 819));
         assertEquals(2, PlayerAuthInputLayout.extraInputFlags(true, 860));
+        assertFalse(PlayerAuthInputLayout.usesCameraDeparted(false, 860));
+        assertFalse(PlayerAuthInputLayout.usesCameraDeparted(false, 975));
+        assertFalse(PlayerAuthInputLayout.usesCameraDeparted(true, 421));
+        assertTrue(PlayerAuthInputLayout.usesCameraDeparted(true, 422));
+        assertTrue(PlayerAuthInputLayout.usesCameraDeparted(true, 860));
     }
 
     @Test

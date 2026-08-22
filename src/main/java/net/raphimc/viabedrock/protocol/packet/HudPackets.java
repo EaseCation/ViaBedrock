@@ -18,6 +18,7 @@
 package net.raphimc.viabedrock.protocol.packet;
 
 import com.viaversion.nbt.tag.Tag;
+import com.viaversion.nbt.tag.CompoundTag;
 import com.viaversion.viaversion.api.Via;
 import com.viaversion.viaversion.api.minecraft.GameProfile;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
@@ -94,7 +95,7 @@ public class HudPackets {
 
                         wrapper.write(Types.UUID, uuids[i]); // uuid
                         wrapper.write(Types.STRING, StringUtil.encodeUUID(uuids[i])); // username
-                        names[i] = wrapper.read(BedrockTypes.STRING); // username
+                        names[i] = TextUtil.toSingleLine(wrapper.read(BedrockTypes.STRING)); // username
                         final String xuid = wrapper.read(BedrockTypes.STRING); // xuid
                         final String platformOnlineId = wrapper.read(BedrockTypes.STRING); // platform online id
                         final int deviceOs = wrapper.read(BedrockTypes.INT_LE); // device os
@@ -234,15 +235,15 @@ public class HudPackets {
                     }
                     case Title, TitleTextObject -> {
                         wrapper.setPacketType(ClientboundPackets26_1.SET_TITLE_TEXT);
-                        wrapper.write(Types.TAG, TextUtil.stringToNbt(text)); // text
+                        wrapper.write(Types.TAG, TextUtil.stringToNbt(TextUtil.toSingleLine(text))); // text
                     }
                     case Subtitle, SubtitleTextObject -> {
                         wrapper.setPacketType(ClientboundPackets26_1.SET_SUBTITLE_TEXT);
-                        wrapper.write(Types.TAG, TextUtil.stringToNbt(text)); // text
+                        wrapper.write(Types.TAG, TextUtil.stringToNbt(TextUtil.toSingleLine(text))); // text
                     }
                     case Actionbar, ActionbarTextObject -> {
                         wrapper.setPacketType(ClientboundPackets26_1.SET_ACTION_BAR_TEXT);
-                        wrapper.write(Types.TAG, TextUtil.stringToNbt(text)); // text
+                        wrapper.write(Types.TAG, TextUtil.stringToNbt(TextUtil.toSingleLine(text))); // text
                     }
                     case Times -> {
                         wrapper.setPacketType(ClientboundPackets26_1.SET_TITLES_ANIMATION);
@@ -280,13 +281,17 @@ public class HudPackets {
 
             if (objectiveName.isEmpty()) return;
 
-            if (!scoreboardTracker.hasObjective(objectiveName)) {
+            final boolean created = !scoreboardTracker.hasObjective(objectiveName);
+            if (created) {
                 scoreboardTracker.addObjective(objectiveName, new ScoreboardObjective(objectiveName, sortOrder));
-
+            }
+            final ScoreboardObjective objective = scoreboardTracker.getObjective(objectiveName);
+            if (created || !displayName.equals(objective.getDisplayName())) {
+                objective.setDisplayName(displayName);
                 final PacketWrapper scoreboardObjective = PacketWrapper.create(ClientboundPackets26_1.SET_OBJECTIVE, wrapper.user());
                 scoreboardObjective.write(Types.STRING, objectiveName); // objective name
-                scoreboardObjective.write(Types.BYTE, (byte) ObjectiveAction.ADD.ordinal()); // mode
-                scoreboardObjective.write(Types.TAG, TextUtil.stringToNbt(wrapper.user().get(ResourcePackStorage.class).getTexts().translate(displayName))); // display name
+                scoreboardObjective.write(Types.BYTE, (byte) (created ? ObjectiveAction.ADD : ObjectiveAction.CHANGE).ordinal()); // mode
+                scoreboardObjective.write(Types.TAG, ganquanScoreboardTitle(wrapper.user(), displayName)); // display name
                 scoreboardObjective.write(Types.VAR_INT, ObjectiveCriteriaRenderType.INTEGER.ordinal()); // display mode
                 scoreboardObjective.write(Types.BOOLEAN, false); // has number format
                 scoreboardObjective.send(BedrockProtocol.class);
@@ -412,7 +417,7 @@ public class HudPackets {
             final BossBarStorage bossBars = wrapper.user().get(BossBarStorage.class);
             switch (updateType) {
                 case Add -> {
-                    final var name = TextUtil.stringToNbt(wrapper.user().get(ResourcePackStorage.class).getTexts().translate(wrapper.read(BedrockTypes.STRING)));
+                    final var name = TextUtil.stringToNbt(TextUtil.toSingleLine(wrapper.user().get(ResourcePackStorage.class).getTexts().translate(wrapper.read(BedrockTypes.STRING))));
                     wrapper.read(BedrockTypes.STRING); // filtered name
                     final float progress = wrapper.read(BedrockTypes.FLOAT_LE);
                     wrapper.read(BedrockTypes.UNSIGNED_SHORT_LE); // darken screen | Does nothing in Bedrock Edition
@@ -449,7 +454,7 @@ public class HudPackets {
                     wrapper.write(Types.FLOAT, progress); // progress
                 }
                 case Update_Name -> {
-                    final var name = TextUtil.stringToNbt(wrapper.user().get(ResourcePackStorage.class).getTexts().translate(wrapper.read(BedrockTypes.STRING)));
+                    final var name = TextUtil.stringToNbt(TextUtil.toSingleLine(wrapper.user().get(ResourcePackStorage.class).getTexts().translate(wrapper.read(BedrockTypes.STRING))));
                     wrapper.read(BedrockTypes.STRING); // filtered name
                     final BossBarStorage.BossBar bar = bossBars.get(uuid);
                     if (bar == null) {
@@ -505,7 +510,7 @@ public class HudPackets {
             final String[] parameters = wrapper.read(BedrockTypes.STRING_ARRAY); // parameters
 
             final Function<String, String> translator = wrapper.user().get(ResourcePackStorage.class).getTexts().lookup();
-            gameSession.setDeathMessage(TextUtil.stringToTextComponent(BedrockTranslator.translate(message, translator, parameters)));
+            gameSession.setDeathMessage(TextUtil.stringToTextComponent(TextUtil.toSingleLine(BedrockTranslator.translate(message, translator, parameters))));
             if (entityTracker.getClientPlayer().isDead()) {
                 final PacketWrapper playerCombatKill = PacketWrapper.create(ClientboundPackets26_1.PLAYER_COMBAT_KILL, wrapper.user());
                 playerCombatKill.write(Types.VAR_INT, entityTracker.getClientPlayer().javaId()); // entity id
@@ -546,6 +551,17 @@ public class HudPackets {
         wrapper.write(Types.VAR_INT, bar.color()); // color
         wrapper.write(Types.VAR_INT, 0); // overlay
         wrapper.write(Types.UNSIGNED_BYTE, (short) 0); // flags
+    }
+
+    /**
+     * Java text drops unknown Bedrock {@code §} pairs such as Ganquan's {@code §THEME1}.
+     * Keep the raw title in {@code insertion} so ModUIClient can still route the JSON-UI skin.
+     */
+    private static Tag ganquanScoreboardTitle(final com.viaversion.viaversion.api.connection.UserConnection user, final String displayName) {
+        final String translated = TextUtil.toSingleLine(user.get(ResourcePackStorage.class).getTexts().translate(displayName));
+        final CompoundTag tag = TextUtil.ensureCompoundTag(TextUtil.stringToNbt(translated));
+        tag.putString("insertion", translated);
+        return tag;
     }
 
 }

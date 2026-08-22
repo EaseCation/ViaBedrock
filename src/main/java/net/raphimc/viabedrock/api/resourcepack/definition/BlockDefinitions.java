@@ -134,14 +134,15 @@ public class BlockDefinitions {
         }
 
         public String face(final String face) {
+            final String fallback = first(this.up, this.down, this.north, this.south, this.west, this.east, this.side);
             return switch (face) {
-                case "up" -> first(this.up, this.side);
-                case "down" -> first(this.down, this.side);
-                case "north" -> first(this.north, this.side);
-                case "south" -> first(this.south, this.side);
-                case "west" -> first(this.west, this.side);
-                case "east" -> first(this.east, this.side);
-                default -> this.side;
+                case "up" -> first(this.up, this.side, fallback);
+                case "down" -> first(this.down, this.side, fallback);
+                case "north" -> first(this.north, this.side, fallback);
+                case "south" -> first(this.south, this.side, fallback);
+                case "west" -> first(this.west, this.side, fallback);
+                case "east" -> first(this.east, this.side, fallback);
+                default -> first(this.side, fallback);
             };
         }
 

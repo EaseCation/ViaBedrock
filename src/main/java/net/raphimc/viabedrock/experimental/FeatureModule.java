@@ -150,6 +150,12 @@ public interface FeatureModule {
     }
 
     /**
+     * Called after the Java client has finished loading the converted resource pack.
+     */
+    default void onJavaResourcePackLoaded(UserConnection user) {
+    }
+
+    /**
      * Called when a custom payload packet is received from the Java client.
      * The first module that returns true claims the packet.
      *

@@ -38,6 +38,8 @@ import com.viaversion.viaversion.libs.fastutil.objects.Object2IntOpenHashMap;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import net.raphimc.viabedrock.api.model.BlockState;
 import net.raphimc.viabedrock.api.model.entity.Entity;
+import net.raphimc.viabedrock.protocol.data.enums.Direction;
+import net.raphimc.viabedrock.protocol.model.Position3f;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
@@ -45,6 +47,8 @@ import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomBlockTextureResourceRewriter;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
+import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
+import net.raphimc.viabedrock.api.util.PacketFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -53,16 +57,23 @@ import java.util.UUID;
 /**
  * Overlays converted custom-block item models onto unmapped Bedrock blocks.
  * Java cannot register new block states from a resource pack, so the world
- * keeps a collision placeholder while an item display shows the converted cube.
+ * keeps a solid, survival-breakable collision placeholder while an item display
+ * shows the converted cube. The display hitbox stays empty so Java clicks and
+ * mining hit the placeholder block instead of a fake entity.
  */
 public class CustomBlockDisplayTracker extends StoredObject {
 
     private static final byte BILLBOARD_FIXED = 0;
-    private static final byte ITEM_DISPLAY_FIXED = 5;
-    private static final BlockState BARRIER = new BlockState("barrier", java.util.Collections.singletonMap("waterlogged", "false"));
+    // ItemDisplayContext.NONE: render the raw model without the grounded-item transforms.
+    private static final byte ITEM_DISPLAY_NONE = 0;
+    // Glass keeps a full cube collision box, stays see-through for the overlay
+    // model, and unlike barrier can be mined in survival so USE_ITEM_ON /
+    // PLAYER_ACTION actually fire.
+    private static final BlockState GLASS = new BlockState("glass", java.util.Collections.emptyMap());
 
     private final Object2IntMap<BlockPosition> displays = new Object2IntOpenHashMap<>();
     private final Int2ObjectMap<String> identifiersById = new Int2ObjectOpenHashMap<>();
+    private final Int2ObjectMap<BlockPosition> positionsById = new Int2ObjectOpenHashMap<>();
 
     public CustomBlockDisplayTracker(final UserConnection user) {
         super(user);
@@ -70,14 +81,18 @@ public class CustomBlockDisplayTracker extends StoredObject {
     }
 
     public int placeholderJavaBlockState() {
-        final Integer id = BedrockProtocol.MAPPINGS.getJavaBlockStates().get(BARRIER);
+        final Integer id = BedrockProtocol.MAPPINGS.getJavaBlockStates().get(GLASS);
         return id != null ? id : -1;
     }
 
     public boolean shouldOverlay(final int bedrockRuntimeId) {
+        return this.shouldOverlay(bedrockRuntimeId, true);
+    }
+
+    public boolean shouldOverlay(final int bedrockRuntimeId, final boolean requireJavaPackLoaded) {
         final UserConnection user = this.user();
         final ResourcePackStorage packs = user.get(ResourcePackStorage.class);
-        if (packs == null || !packs.isLoadedOnJavaClient()) {
+        if (packs == null || (requireJavaPackLoaded && !packs.isLoadedOnJavaClient())) {
             return false;
         }
         final BlockStateRewriter rewriter = user.get(BlockStateRewriter.class);
@@ -88,7 +103,54 @@ public class CustomBlockDisplayTracker extends StoredObject {
         if (bedrockState == null) {
             return false;
         }
+        // A BedrockLoader projection already gives the Java client a real custom
+        // block state. In that case an item-display overlay would render twice.
+        final CustomMappingSyncStorage customMapping = user.get(CustomMappingSyncStorage.class);
+        if (customMapping != null && customMapping.access().isAllowedBedrockRuntimeId(bedrockRuntimeId)) {
+            return false;
+        }
         return CustomBlockTextureResourceRewriter.hasConvertedTexture(packs, bedrockState.namespacedIdentifier());
+    }
+
+    public int overlayJavaBlockState(final int bedrockRuntimeId, final int mappedJavaBlockState) {
+        return this.shouldOverlay(bedrockRuntimeId, false) ? this.placeholderJavaBlockState() : mappedJavaBlockState;
+    }
+
+    public void syncChunk(final net.raphimc.viabedrock.api.chunk.BedrockChunk chunk, final int minY) {
+        if (chunk == null) {
+            return;
+        }
+        final ResourcePackStorage packs = this.user().get(ResourcePackStorage.class);
+        if (packs == null || !packs.isLoadedOnJavaClient()) {
+            return;
+        }
+        final BlockStateRewriter rewriter = this.user().get(BlockStateRewriter.class);
+        if (rewriter == null) {
+            return;
+        }
+        final var sections = chunk.getSections();
+        for (int sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
+            final var palettes = sections[sectionIndex].palettes(com.viaversion.viaversion.api.minecraft.chunks.PaletteType.BLOCKS);
+            if (palettes.isEmpty()) {
+                continue;
+            }
+            final var layer0 = palettes.get(0);
+            for (int index = 0; index < com.viaversion.viaversion.api.minecraft.chunks.ChunkSection.SIZE; index++) {
+                final int runtimeId = layer0.idAt(index);
+                final BlockPosition position = new BlockPosition(
+                        (chunk.getX() << 4) + com.viaversion.viaversion.api.minecraft.chunks.ChunkSection.xFromIndex(index),
+                        minY + (sectionIndex << 4) + com.viaversion.viaversion.api.minecraft.chunks.ChunkSection.yFromIndex(index),
+                        (chunk.getZ() << 4) + com.viaversion.viaversion.api.minecraft.chunks.ChunkSection.zFromIndex(index));
+                if (runtimeId == rewriter.bedrockId(net.raphimc.viabedrock.api.model.BedrockBlockState.AIR)
+                        && this.displays.getInt(position) == -1) {
+                    continue;
+                }
+                if (this.shouldOverlay(runtimeId)) {
+                    PacketFactory.sendJavaBlockUpdate(this.user(), position, this.placeholderJavaBlockState());
+                }
+                this.sync(position, runtimeId);
+            }
+        }
     }
 
     public void sync(final BlockPosition position, final int bedrockRuntimeId) {
@@ -106,6 +168,7 @@ public class CustomBlockDisplayTracker extends StoredObject {
             return;
         }
         this.identifiersById.remove(javaId);
+        this.positionsById.remove(javaId);
         final PacketWrapper removeEntities = PacketWrapper.create(ClientboundPackets26_1.REMOVE_ENTITIES, this.user());
         removeEntities.write(Types.VAR_INT_ARRAY_PRIMITIVE, new int[]{javaId});
         removeEntities.send(BedrockProtocol.class);
@@ -123,11 +186,55 @@ public class CustomBlockDisplayTracker extends StoredObject {
         }
     }
 
+    public BlockPosition getOverlayPosition(final int javaId) {
+        return this.positionsById.get(javaId);
+    }
+
+    public int getOverlayJavaId(final BlockPosition position) {
+        return this.displays.getInt(position);
+    }
+
+    /**
+     * Java yaw 0 is south. Used when an overlay entity still intercepts a click
+     * and we have to reconstruct the block face the player was aiming at.
+     */
+    public static Direction facingFromLook(final Position3f rotation) {
+        if (rotation == null) {
+            return Direction.NORTH;
+        }
+        final float pitch = rotation.x();
+        if (pitch <= -45F) {
+            return Direction.UP;
+        }
+        if (pitch >= 45F) {
+            return Direction.DOWN;
+        }
+        float yaw = rotation.y() % 360F;
+        if (yaw < 0F) {
+            yaw += 360F;
+        }
+        if (yaw >= 315F || yaw < 45F) {
+            return Direction.SOUTH;
+        }
+        if (yaw < 135F) {
+            return Direction.WEST;
+        }
+        if (yaw < 225F) {
+            return Direction.NORTH;
+        }
+        return Direction.EAST;
+    }
+
+    void putOverlay(final BlockPosition position, final int javaId) {
+        this.displays.put(position, javaId);
+        this.positionsById.put(javaId, position);
+    }
+
     private void spawnOrUpdate(final BlockPosition position, final String identifier) {
         int javaId = this.displays.getInt(position);
         if (javaId == -1) {
             javaId = this.user().get(EntityTracker.class).getNextJavaEntityId();
-            this.displays.put(position, javaId);
+            this.putOverlay(position, javaId);
             final PacketWrapper addEntity = PacketWrapper.create(ClientboundPackets26_1.ADD_ENTITY, this.user());
             addEntity.write(Types.VAR_INT, javaId);
             addEntity.write(Types.UUID, UUID.randomUUID());
@@ -157,7 +264,7 @@ public class CustomBlockDisplayTracker extends StoredObject {
         entityData.add(new EntityData(probe.getJavaEntityDataIndex(EntityDataFields.ITEM_STACK),
                 VersionedTypes.V26_1.entityDataTypes.itemType, item));
         entityData.add(new EntityData(probe.getJavaEntityDataIndex(EntityDataFields.ITEM_DISPLAY),
-                VersionedTypes.V26_1.entityDataTypes.byteType, ITEM_DISPLAY_FIXED));
+                VersionedTypes.V26_1.entityDataTypes.byteType, ITEM_DISPLAY_NONE));
         entityData.add(new EntityData(probe.getJavaEntityDataIndex(EntityDataFields.BILLBOARD_RENDER_CONSTRAINTS),
                 VersionedTypes.V26_1.entityDataTypes.byteType, BILLBOARD_FIXED));
         entityData.add(new EntityData(probe.getJavaEntityDataIndex(EntityDataFields.SCALE),
@@ -167,6 +274,11 @@ public class CustomBlockDisplayTracker extends StoredObject {
         entityData.add(new EntityData(probe.getJavaEntityDataIndex(EntityDataFields.SHADOW_RADIUS),
                 VersionedTypes.V26_1.entityDataTypes.floatType, 0F));
         entityData.add(new EntityData(probe.getJavaEntityDataIndex(EntityDataFields.SHADOW_STRENGTH),
+                VersionedTypes.V26_1.entityDataTypes.floatType, 0F));
+        // Keep the display pick box empty so Java raycasts reach the placeholder block.
+        entityData.add(new EntityData(probe.getJavaEntityDataIndex(EntityDataFields.WIDTH),
+                VersionedTypes.V26_1.entityDataTypes.floatType, 0F));
+        entityData.add(new EntityData(probe.getJavaEntityDataIndex(EntityDataFields.HEIGHT),
                 VersionedTypes.V26_1.entityDataTypes.floatType, 0F));
 
         final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets26_1.SET_ENTITY_DATA, this.user());

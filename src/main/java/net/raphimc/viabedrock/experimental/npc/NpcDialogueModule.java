@@ -122,7 +122,7 @@ public class NpcDialogueModule implements FeatureModule {
             final ActionButton exitButton = new ActionButton(new StringComponent(resourcePackStorage.getTexts().get("gui.close")), DIALOG_BUTTON_WIDTH, new CustomAllAction(responseIdentifier, exitButtonAdditions));
 
             final MultiActionDialog dialog = new MultiActionDialog(
-                    TextUtil.stringToTextComponent(npcName.isEmpty() ? "NPC" : npcName),
+                    TextUtil.stringToTextComponent(npcName.isEmpty() ? "NPC" : TextUtil.toSingleLine(npcName)),
                     true, false, AfterAction.CLOSE, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), exitButton, 1);
 
             addTextToDialog(dialogue.isEmpty() ? " " : dialogue, dialog);
@@ -141,7 +141,7 @@ public class NpcDialogueModule implements FeatureModule {
                         final String displayText = !buttonName.isEmpty() ? buttonName : buttonText;
                         final CompoundTag buttonAdditions = new CompoundTag();
                         buttonAdditions.putInt("button_index", i);
-                        dialog.getActions().add(new ActionButton(TextUtil.stringToTextComponent(displayText), DIALOG_BUTTON_WIDTH, new CustomAllAction(responseIdentifier, buttonAdditions)));
+                        dialog.getActions().add(new ActionButton(TextUtil.stringToTextComponent(TextUtil.toSingleLine(displayText)), DIALOG_BUTTON_WIDTH, new CustomAllAction(responseIdentifier, buttonAdditions)));
                     }
                 } catch (Throwable e) {
                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error parsing NPC action JSON: " + actionJson, e);

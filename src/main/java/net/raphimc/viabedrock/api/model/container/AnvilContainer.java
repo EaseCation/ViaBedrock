@@ -22,7 +22,6 @@ import com.viaversion.viaversion.api.minecraft.BlockPosition;
 import com.viaversion.viaversion.libs.mcstructs.text.TextComponent;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
 import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomBlockTags;
-import net.raphimc.viabedrock.protocol.model.BedrockItem;
 
 public class AnvilContainer extends Container {
 
@@ -30,15 +29,5 @@ public class AnvilContainer extends Container {
         super(user, containerId, ContainerType.ANVIL, title, position, 3, CustomBlockTags.ANVIL);
     }
 
-    @Override
-    public boolean setItems(BedrockItem[] items) {
-        if (items.length == 2) {
-            final BedrockItem[] padded = new BedrockItem[3];
-            System.arraycopy(items, 0, padded, 0, 2);
-            padded[2] = BedrockItem.empty();
-            items = padded;
-        }
-        return super.setItems(items);
-    }
 
 }

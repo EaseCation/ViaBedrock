@@ -267,6 +267,11 @@ public class EntityTracker extends StoredObject {
         return this.itemFrameInfoById.get(javaId);
     }
 
+    void putItemFrame(final BlockPosition position, final int javaId, final int facingDirection) {
+        this.itemFrames.put(position, javaId);
+        this.itemFrameInfoById.put(javaId, new ItemFrameInfo(position, facingDirection));
+    }
+
     public void removeItemFrame(final ChunkPosition chunkPos) {
         final List<BlockPosition> toRemove = new ArrayList<>();
         for (BlockPosition position : this.itemFrames.keySet()) {

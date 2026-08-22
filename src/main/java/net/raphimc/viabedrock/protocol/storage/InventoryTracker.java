@@ -19,6 +19,7 @@ package net.raphimc.viabedrock.protocol.storage;
 
 import com.viaversion.viaversion.api.connection.StoredObject;
 import com.viaversion.viaversion.api.connection.UserConnection;
+import com.viaversion.viaversion.api.minecraft.BlockPosition;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.libs.fastutil.ints.IntObjectPair;
@@ -99,6 +100,8 @@ public class InventoryTracker extends StoredObject {
     private Container currentContainer = null;
     private Container pendingCloseContainer = null;
     private IntObjectPair<Form> currentForm = null;
+    private byte bedrockInventoryContainerId = (byte) ContainerID.CONTAINER_ID_NONE.getValue();
+    private boolean bedrockPlayerInventoryOpen;
     private NpcDialogueState currentNpcDialogue = null;
     private int nextItemStackRequestId = -1;
 
@@ -163,6 +166,10 @@ public class InventoryTracker extends StoredObject {
     public Container acceptServerClose(final byte containerId, final ContainerType containerType) {
         final Container container = this.currentContainer;
         if (container == null || container.containerId() != containerId || container.type() != containerType) {
+            if (container == null && this.bedrockPlayerInventoryOpen && containerType == ContainerType.INVENTORY
+                    && containerId == this.bedrockInventoryContainerId) {
+                this.clearBedrockPlayerInventoryOpen();
+            }
             return null;
         }
         if (!this.returnCursorBeforeClose()) {
@@ -178,6 +185,9 @@ public class InventoryTracker extends StoredObject {
     public Container acceptClientCloseConfirmation(final byte containerId) {
         final Container container = this.pendingCloseContainer;
         if (container == null || container.containerId() != containerId) {
+            if (container == null && this.bedrockPlayerInventoryOpen && containerId == this.bedrockInventoryContainerId) {
+                this.clearBedrockPlayerInventoryOpen();
+            }
             return null;
         }
         this.currentContainer = null;
@@ -207,6 +217,7 @@ public class InventoryTracker extends StoredObject {
         this.currentContainer = null;
         this.pendingCloseContainer = null;
         this.clearCursorAfterContainerClose();
+        this.clearBedrockPlayerInventoryOpen();
     }
 
     private void clearCursorAfterContainerClose() {
@@ -314,6 +325,29 @@ public class InventoryTracker extends StoredObject {
             throw new IllegalStateException("There is already another container open");
         }
         this.currentContainer = container;
+        if (container != null && container.type() != ContainerType.INVENTORY) {
+            this.bedrockPlayerInventoryOpen = false;
+        }
+    }
+
+    public void acknowledgeBedrockInventoryOpen(final byte containerId, final BlockPosition position) {
+        this.bedrockInventoryContainerId = containerId;
+        this.bedrockPlayerInventoryOpen = true;
+        this.inventoryContainer.rememberBedrockOpen(containerId, position);
+    }
+
+    public boolean isBedrockPlayerInventoryOpen() {
+        return this.bedrockPlayerInventoryOpen;
+    }
+
+    public byte bedrockInventoryContainerId() {
+        return this.bedrockInventoryContainerId;
+    }
+
+    public void clearBedrockPlayerInventoryOpen() {
+        this.bedrockPlayerInventoryOpen = false;
+        this.bedrockInventoryContainerId = (byte) ContainerID.CONTAINER_ID_NONE.getValue();
+        this.inventoryContainer.clearBedrockOpen();
     }
 
     public Container getPendingCloseContainer() {

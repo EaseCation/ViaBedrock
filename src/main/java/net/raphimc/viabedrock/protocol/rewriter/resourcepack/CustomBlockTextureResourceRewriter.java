@@ -64,7 +64,7 @@ public class CustomBlockTextureResourceRewriter extends ItemModelResourceRewrite
 
     @Override
     public String artifactFingerprint() {
-        return "1";
+        return "2";
     }
 
     public static boolean hasConvertedTexture(final ResourcePackStorage resourcePackStorage, final String blockIdentifier) {
@@ -80,16 +80,14 @@ public class CustomBlockTextureResourceRewriter extends ItemModelResourceRewrite
         final TextureDefinitions textures = resourcePackStorage.getTextures();
         for (Map.Entry<String, BlockDefinitions.BlockDefinition> blockEntry : resourcePackStorage.getBlocks().blocks().entrySet()) {
             final BlockDefinitions.BlockDefinition block = blockEntry.getValue();
-            if (block == null || !block.hasTextures()) {
+            if (block == null || !isCustomBlock(block.identifier()) || !block.hasTextures()) {
                 continue;
             }
             final Map<String, String> facePaths = new LinkedHashMap<>();
-            boolean missingTexture = false;
             for (String face : FACES) {
                 final String textureName = block.textures().face(face);
                 final String texturePath = textures.firstTerrainPath(textureName);
                 if (texturePath == null) {
-                    missingTexture = true;
                     break;
                 }
                 facePaths.put(face, texturePath);
@@ -97,7 +95,7 @@ public class CustomBlockTextureResourceRewriter extends ItemModelResourceRewrite
                     copyTexture(resourcePackStorage, javaContent, texturePath);
                 }
             }
-            if (missingTexture || facePaths.isEmpty()) {
+            if (facePaths.size() != FACES.length) {
                 continue;
             }
             if (javaContent != null) {
@@ -106,10 +104,14 @@ public class CustomBlockTextureResourceRewriter extends ItemModelResourceRewrite
             }
             converted.put(block.identifier(), facePaths.get("up"));
         }
-        if (javaContent != null && !converted.isEmpty()) {
+        if (javaContent != null && !converted.isEmpty() && ViaBedrock.getPlatform() != null) {
             ViaBedrock.getPlatform().getLogger().log(Level.INFO, "Converted " + converted.size() + " custom block texture(s) to Java models");
         }
         return Map.copyOf(converted);
+    }
+
+    private static boolean isCustomBlock(final String identifier) {
+        return identifier != null && !identifier.startsWith("minecraft:");
     }
 
     private void copyTexture(final ResourcePackStorage resourcePackStorage, final Content javaContent, final String texturePath) {

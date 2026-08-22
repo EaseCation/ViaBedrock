@@ -146,6 +146,11 @@ public class TextureDefinitions {
         if (textureName == null) {
             return null;
         }
+        // Bedrock permits blocks.json to reference a texture path directly,
+        // without an entry in terrain_texture.json.
+        if (textureName.startsWith("textures/")) {
+            return textureName;
+        }
         final List<TerrainTextureDefinition> definitions = this.terrainTextures.get(textureName);
         return definitions == null || definitions.isEmpty() ? null : definitions.getFirst().texturePath();
     }

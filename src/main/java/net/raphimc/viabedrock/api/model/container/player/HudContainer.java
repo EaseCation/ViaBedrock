@@ -42,9 +42,11 @@ public class HudContainer extends InventoryRedirectContainer {
                 // the player inventory (0), but these slots belong to the crafting table window (1).
                 // Send a full CONTAINER_SET_CONTENT for the crafting table instead.
                 final InventoryTracker tracker = this.user.get(InventoryTracker.class);
-                final Container current = tracker.getCurrentContainer();
-                if (current instanceof CraftingTableContainer) {
-                    PacketFactory.sendJavaContainerSetContent(this.user, current);
+                if (tracker != null) {
+                    final Container current = tracker.getCurrentContainer();
+                    if (current instanceof CraftingTableContainer) {
+                        PacketFactory.sendJavaContainerSetContent(this.user, current);
+                    }
                 }
                 return false;
             }

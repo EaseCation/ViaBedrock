@@ -367,6 +367,7 @@ public class ResourcePackPackets {
                 if (completedStorage != null) {
                     if (action == ResourcePackAction.SUCCESSFULLY_LOADED) {
                         completedStorage.setLoadedOnJavaClient();
+                        ExperimentalFeatures.dispatchJavaResourcePackLoaded(wrapper.user());
                     }
                     ViaBedrock.getPlatform().getLogger().fine(
                             "Ignoring late Java resource pack action after session completion: " + action);
@@ -391,6 +392,7 @@ public class ResourcePackPackets {
                     if (resourcePackStorage != null) {
                         resourcePackStorage.setLoadedOnJavaClient();
                     }
+                    ExperimentalFeatures.dispatchJavaResourcePackLoaded(wrapper.user());
                 }
                 case FAILED_DOWNLOAD, FAILED_RELOAD, DISCARDED -> {
                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Client resource pack download/load failed");
@@ -481,6 +483,7 @@ public class ResourcePackPackets {
                 if (loadStateTracker.javaPackPhase()
                         == ResourcePackLoadStateTracker.JavaPackPhase.LOADED) {
                     resourcePackStorage.setLoadedOnJavaClient();
+                    ExperimentalFeatures.dispatchJavaResourcePackLoaded(user);
                 }
                 if (ViaBedrock.getResourcePackServer() != null && loadStateTracker.httpToken() != null) {
                     ViaBedrock.getResourcePackServer().completeConnection(

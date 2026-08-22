@@ -49,6 +49,30 @@ final class ItemUseSemantics {
                 || itemUse != null;
     }
 
+    static boolean isConsumableUseItem(final String identifier, final Set<String> itemTags, final ItemUseDefinition itemUse) {
+        return consumableUseTicks(identifier, itemTags, itemUse) > 0;
+    }
+
+    /**
+     * Official Bedrock starts food from PlayerAuthInput START_USING_ITEM +
+     * PERFORM_ITEM_INTERACTION. NetEase 860 Nukkit-MOT parses that payload but never
+     * handles it, so consumables need a standalone USE_ITEM transaction there.
+     * Bows/crossbows already send that standalone packet on both paths.
+     */
+    static boolean needsStandaloneUseTransaction(final boolean emulateNetEase, final boolean consumable,
+                                                 final boolean bow, final boolean crossbow) {
+        return bow || crossbow || (emulateNetEase && consumable);
+    }
+
+    /**
+     * Official Bedrock still finishes food with a second USE_ITEM plus delayed Release.
+     * NetEase 860 auto-completes after the first CLICK_AIR, so repeating that sequence
+     * would start eating the next stack item.
+     */
+    static boolean neteaseAutoCompletesConsumable(final boolean emulateNetEase, final boolean consumable) {
+        return emulateNetEase && consumable;
+    }
+
     static ItemReleaseInventoryTransaction_ActionType releaseAction(final String identifier, final Set<String> itemTags, final ItemUseDefinition itemUse, final int usingTicks) {
         if (identifier == null || RELEASE_ON_RELEASE_ITEMS.contains(identifier)) {
             return ItemReleaseInventoryTransaction_ActionType.Release;

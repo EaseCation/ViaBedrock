@@ -272,7 +272,7 @@ public class ItemRewriter extends StoredObject {
                 if (display.get("Lore") instanceof ListTag<?> bedrockLore) {
                     for (Tag loreEntry : bedrockLore) {
                         if (loreEntry instanceof StringTag loreString) {
-                            additionalLore.add(TextUtil.stringToNbt(loreString.getValue()));
+                            additionalLore.add(TextUtil.stringToNbt(TextUtil.toSingleLine(loreString.getValue())));
                         }
                     }
                 }

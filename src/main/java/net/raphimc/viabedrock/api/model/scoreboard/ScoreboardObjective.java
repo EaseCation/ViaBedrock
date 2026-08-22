@@ -32,10 +32,19 @@ public class ScoreboardObjective {
     private final String name;
     private final ObjectiveSortOrder sortOrder;
     private final Long2ObjectMap<ScoreboardEntry> entries = new Long2ObjectOpenHashMap<>();
+    private String displayName = "";
 
     public ScoreboardObjective(final String name, final ObjectiveSortOrder sortOrder) {
         this.name = name;
         this.sortOrder = sortOrder;
+    }
+
+    public String getDisplayName() {
+        return this.displayName;
+    }
+
+    public void setDisplayName(final String displayName) {
+        this.displayName = displayName != null ? displayName : "";
     }
 
     public ScoreboardEntry getEntry(final long scoreboardId) {

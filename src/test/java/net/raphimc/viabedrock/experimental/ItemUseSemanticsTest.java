@@ -71,4 +71,32 @@ class ItemUseSemanticsTest {
                 ItemUseSemantics.releaseAction("minecraft:apple", Set.of("minecraft:is_food"), null, 32));
     }
 
+    @Test
+    void consumableDetectionCoversFoodPotionAndCustomUseItems() {
+        assertTrue(ItemUseSemantics.isConsumableUseItem("minecraft:apple", Set.of("minecraft:is_food"), null));
+        assertTrue(ItemUseSemantics.isConsumableUseItem("minecraft:potion", null, null));
+        assertTrue(ItemUseSemantics.isConsumableUseItem("minecraft:milk_bucket", null, null));
+        assertTrue(ItemUseSemantics.isConsumableUseItem("test:quick_food", null, new ItemUseDefinition(12, UseAnimation.EAT)));
+        assertFalse(ItemUseSemantics.isConsumableUseItem("minecraft:bow", null, null));
+        assertFalse(ItemUseSemantics.isConsumableUseItem("minecraft:shield", null, null));
+        assertFalse(ItemUseSemantics.isConsumableUseItem("minecraft:paper", null, null));
+    }
+
+    @Test
+    void neteaseConsumablesNeedStandaloneUseItemWhileOfficialKeepsAuthInputOnly() {
+        assertTrue(ItemUseSemantics.needsStandaloneUseTransaction(true, true, false, false));
+        assertTrue(ItemUseSemantics.needsStandaloneUseTransaction(true, false, true, false));
+        assertFalse(ItemUseSemantics.needsStandaloneUseTransaction(false, true, false, false));
+        assertTrue(ItemUseSemantics.needsStandaloneUseTransaction(false, false, true, false));
+        assertTrue(ItemUseSemantics.needsStandaloneUseTransaction(false, false, false, true));
+        assertFalse(ItemUseSemantics.needsStandaloneUseTransaction(true, false, false, false));
+    }
+
+    @Test
+    void neteaseAutoCompletesFoodAfterTheFirstClickAir() {
+        assertTrue(ItemUseSemantics.neteaseAutoCompletesConsumable(true, true));
+        assertFalse(ItemUseSemantics.neteaseAutoCompletesConsumable(false, true));
+        assertFalse(ItemUseSemantics.neteaseAutoCompletesConsumable(true, false));
+    }
+
 }

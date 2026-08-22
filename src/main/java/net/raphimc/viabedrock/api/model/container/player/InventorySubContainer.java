@@ -19,7 +19,6 @@ package net.raphimc.viabedrock.api.model.container.player;
 
 import com.viaversion.viaversion.api.connection.UserConnection;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
-import net.raphimc.viabedrock.protocol.model.BedrockItem;
 
 public abstract class InventorySubContainer extends InventoryRedirectContainer {
 
@@ -27,14 +26,5 @@ public abstract class InventorySubContainer extends InventoryRedirectContainer {
         super(user, containerId, type, size);
     }
 
-    @Override
-    public boolean setItems(BedrockItem[] items) {
-        if (items.length != this.size()) {
-            final BedrockItem[] newItems = this.getItems();
-            System.arraycopy(items, 0, newItems, 0, Math.min(items.length, newItems.length));
-            items = newItems;
-        }
-        return super.setItems(items);
-    }
 
 }

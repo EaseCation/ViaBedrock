@@ -23,8 +23,6 @@ import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ServerboundPack
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 
-import java.lang.reflect.Field;
-
 public class ProtocolUtil {
 
     public static void appendClientbound(final BedrockProtocol protocol, final ClientboundBedrockPackets type, final PacketHandler handler) {
@@ -100,21 +98,7 @@ public class ProtocolUtil {
     }
 
     private static void setHandler(final PacketMapping mapping, final PacketHandler handler) {
-        Field handlerField = null;
-        for (Field field : mapping.getClass().getDeclaredFields()) {
-            if (field.getName().equals("handler")) {
-                handlerField = field;
-            }
-        }
-        if (handlerField == null) {
-            throw new IllegalStateException("Failed to find handler field in PacketMapping");
-        }
-        handlerField.setAccessible(true);
-        try {
-            handlerField.set(mapping, handler);
-        } catch (IllegalAccessException e) {
-            throw new RuntimeException(e);
-        }
+        mapping.setHandler(handler);
     }
 
 }

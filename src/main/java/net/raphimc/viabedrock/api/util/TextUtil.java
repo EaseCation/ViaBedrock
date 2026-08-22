@@ -96,6 +96,35 @@ public class TextUtil {
         return String.join("\n", Arrays.copyOfRange(lines, start, end));
     }
 
+    /**
+     * Returns the last line of a (potentially multiline) nametag string.
+     * Java team prefixes and vanilla player nametags cannot render {@code \n}, so the
+     * extra lines have to live on virtual armor stands instead of the host prefix.
+     */
+    public static String lastLine(final String text) {
+        if (text == null) return null;
+        final int idx = text.lastIndexOf('\n');
+        return idx < 0 ? text : text.substring(idx + 1);
+    }
+
+    /**
+     * Flattens a Bedrock HUD string onto one line for Java surfaces that cannot render {@code \n}
+     * (boss bars, scoreboard titles, titles/subtitles, action bars, tab-list names, container titles).
+     * Leading/trailing blank lines are dropped, then remaining lines are joined with a space.
+     */
+    public static String toSingleLine(final String text) {
+        if (text == null) return null;
+        final String trimmed = trimBlankLines(text);
+        if (trimmed == null || trimmed.indexOf('\n') < 0) return trimmed;
+        final StringBuilder out = new StringBuilder(trimmed.length());
+        for (String line : trimmed.split("\n", -1)) {
+            if (stripFormatting(line).isEmpty()) continue;
+            if (out.length() > 0) out.append(' ');
+            out.append(line);
+        }
+        return out.toString();
+    }
+
     public static String stripFormatting(final String text) {
         if (text == null) return null;
         final StringBuilder out = new StringBuilder();

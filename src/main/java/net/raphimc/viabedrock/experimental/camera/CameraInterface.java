@@ -25,8 +25,10 @@ import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPack
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.model.Position3f;
+import net.raphimc.viabedrock.protocol.packet.CameraPacketLayout;
 import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+import net.raphimc.viabedrock.ViaBedrock;
 
 import java.nio.charset.StandardCharsets;
 
@@ -60,6 +62,8 @@ public class CameraInterface {
         protocol.registerClientbound(ClientboundBedrockPackets.CAMERA_PRESETS, null, wrapper -> {
             wrapper.cancel();
             final int count = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
+            final boolean emulateNetEase = emulateNetEase();
+            final int cameraProtocolVersion = cameraProtocol();
 
             final String[] names = new String[count];
             final String[] parents = new String[count];
@@ -81,28 +85,48 @@ public class CameraInterface {
                 rotXs[i] = wrapper.read(Types.BOOLEAN) ? wrapper.read(BedrockTypes.FLOAT_LE) : null;
                 rotYs[i] = wrapper.read(Types.BOOLEAN) ? wrapper.read(BedrockTypes.FLOAT_LE) : null;
 
-                // Skip remaining optional fields we don't use yet
-                skipOptionalFloat(wrapper); // rotation_speed
-                skipOptionalBoolean(wrapper); // snap_to_target
-                skipOptionalVec2f(wrapper); // horizontal_rotation_limit
-                skipOptionalVec2f(wrapper); // vertical_rotation_limit
-                skipOptionalBoolean(wrapper); // continue_targeting
-                skipOptionalFloat(wrapper); // block_listening_radius
-                skipOptionalVec2f(wrapper); // view_offset
-                skipOptionalVec3f(wrapper); // entity_offset
-                skipOptionalFloat(wrapper); // radius
-                skipOptionalFloat(wrapper); // yaw_limit_min
-                skipOptionalFloat(wrapper); // yaw_limit_max
+                // The optional fields are versioned and must be consumed in the
+                // exact order used by Bedrock's CameraPresets packet.
+                if (CameraPacketLayout.usesRotationSpeed(emulateNetEase, cameraProtocolVersion)) {
+                    skipOptionalFloat(wrapper); // rotation_speed
+                    skipOptionalBoolean(wrapper); // snap_to_target
+                    if (CameraPacketLayout.usesRotationLimits(emulateNetEase, cameraProtocolVersion)) {
+                        skipOptionalVec2f(wrapper); // horizontal_rotation_limit
+                        skipOptionalVec2f(wrapper); // vertical_rotation_limit
+                        skipOptionalBoolean(wrapper); // continue_targeting
+                    }
+                }
+                if (CameraPacketLayout.usesBlockListeningRadius(emulateNetEase, cameraProtocolVersion)) {
+                    skipOptionalFloat(wrapper); // block_listening_radius
+                }
+                if (CameraPacketLayout.usesBaseCameraOptions(emulateNetEase, cameraProtocolVersion)) {
+                    skipOptionalVec2f(wrapper); // view_offset
+                }
+                if (CameraPacketLayout.usesRotationSpeed(emulateNetEase, cameraProtocolVersion)) {
+                    skipOptionalVec3f(wrapper); // entity_offset
+                }
+                if (CameraPacketLayout.usesBaseCameraOptions(emulateNetEase, cameraProtocolVersion)) {
+                    skipOptionalFloat(wrapper); // radius
+                }
+                if (CameraPacketLayout.usesYawLimits(emulateNetEase, cameraProtocolVersion)) {
+                    skipOptionalFloat(wrapper); // yaw_limit_min
+                    skipOptionalFloat(wrapper); // yaw_limit_max
+                }
                 audioListeners[i] = wrapper.read(Types.BOOLEAN) ? wrapper.read(Types.BYTE) : null;
                 playerEffectsArr[i] = wrapper.read(Types.BOOLEAN) ? wrapper.read(Types.BOOLEAN) : null;
+                if (CameraPacketLayout.usesAlignTargetAndCameraForward(emulateNetEase, cameraProtocolVersion)) {
+                    skipOptionalBoolean(wrapper); // align_target_and_camera_forward
+                }
                 // aim_assist (optional nested)
-                if (wrapper.read(Types.BOOLEAN)) {
+                if (CameraPacketLayout.usesAimAssist(emulateNetEase, cameraProtocolVersion) && wrapper.read(Types.BOOLEAN)) {
                     skipOptionalString(wrapper); // preset_id
-                    skipOptionalByte(wrapper); // target_mode
+                    skipOptionalIntLE(wrapper); // target_mode
                     skipOptionalVec2f(wrapper); // angle
                     skipOptionalFloat(wrapper); // distance
                 }
-                skipOptionalByte(wrapper); // control_scheme
+                if (CameraPacketLayout.usesControlScheme(emulateNetEase, cameraProtocolVersion)) {
+                    skipOptionalByte(wrapper); // control_scheme
+                }
             }
 
             final CameraAudioTracker cameraAudio = wrapper.user().get(CameraAudioTracker.class);
@@ -172,7 +196,9 @@ public class CameraInterface {
                     isDefault = wrapper.read(Types.BOOLEAN);
                 }
 
-                wrapper.read(Types.BOOLEAN); // remove_ignore_starting_values_component
+                if (CameraPacketLayout.usesRemoveIgnoreStartingValues(emulateNetEase(), cameraProtocol())) {
+                    wrapper.read(Types.BOOLEAN); // remove_ignore_starting_values_component
+                }
             }
 
             // Clear instruction (optional)
@@ -361,6 +387,12 @@ public class CameraInterface {
         }
     }
 
+    private static void skipOptionalIntLE(final PacketWrapper wrapper) {
+        if (wrapper.read(Types.BOOLEAN)) {
+            wrapper.read(BedrockTypes.INT_LE);
+        }
+    }
+
     private static void skipOptionalString(final PacketWrapper wrapper) {
         if (wrapper.read(Types.BOOLEAN)) {
             wrapper.read(BedrockTypes.STRING);
@@ -384,6 +416,18 @@ public class CameraInterface {
 
     private enum PayloadType {
         CONFIRM, CAMERA_INSTRUCTION, CAMERA_SHAKE, CAMERA_PRESETS
+    }
+
+    private static boolean emulateNetEase() {
+        return ViaBedrock.getConfig() != null && ViaBedrock.getConfig().shouldEmulateNetEaseClient();
+    }
+
+    private static int cameraProtocol() {
+        if (emulateNetEase()) {
+            final int configured = ViaBedrock.getConfig().getNetEaseProtocolVersion();
+            return configured > 0 ? configured : 975;
+        }
+        return 975;
     }
 
 }

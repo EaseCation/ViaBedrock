@@ -21,7 +21,6 @@ import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.minecraft.BlockPosition;
 import com.viaversion.viaversion.libs.mcstructs.text.TextComponent;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
-import net.raphimc.viabedrock.protocol.model.BedrockItem;
 
 /**
  * Identity-mapped Bedrock container whose Java menu already matches the Bedrock slot
@@ -36,14 +35,5 @@ public class GenericContainer extends Container {
         super(user, containerId, type, title, position, size, validBlockTags);
     }
 
-    @Override
-    public boolean setItems(final BedrockItem[] items) {
-        if (items.length < this.size()) {
-            final BedrockItem[] padded = BedrockItem.emptyArray(this.size());
-            System.arraycopy(items, 0, padded, 0, items.length);
-            return super.setItems(padded);
-        }
-        return super.setItems(items);
-    }
 }
 

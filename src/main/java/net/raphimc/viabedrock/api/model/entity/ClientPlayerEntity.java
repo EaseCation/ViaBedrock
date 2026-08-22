@@ -395,10 +395,6 @@ public class ClientPlayerEntity extends PlayerEntity {
         this.initiallySpawned = true;
     }
 
-        this.authInputSuppressionLogged = true;
-        return true;
-    }
-
     public DimensionChangeInfo dimensionChangeInfo() {
         return this.dimensionChangeInfo;
     }

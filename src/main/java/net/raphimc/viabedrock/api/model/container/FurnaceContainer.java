@@ -22,7 +22,6 @@ import com.viaversion.viaversion.api.minecraft.BlockPosition;
 import com.viaversion.viaversion.libs.mcstructs.text.TextComponent;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
 import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomBlockTags;
-import net.raphimc.viabedrock.protocol.model.BedrockItem;
 
 /**
  * Furnace / blast furnace / smoker container.
@@ -43,15 +42,5 @@ public class FurnaceContainer extends Container {
         };
     }
 
-    @Override
-    public boolean setItems(BedrockItem[] items) {
-        // Bedrock may send a shorter content array; pad to the full 3 slots to stay in sync with the Java menu.
-        if (items.length < 3) {
-            final BedrockItem[] padded = BedrockItem.emptyArray(3);
-            System.arraycopy(items, 0, padded, 0, items.length);
-            items = padded;
-        }
-        return super.setItems(items);
-    }
 
 }

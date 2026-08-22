@@ -730,8 +730,9 @@ public class MultilineNametagTracker extends StoredObject {
 
     /**
      * Sends a corrective team update for a player entity, setting the team prefix
-     * to the specified bottom line text. This overrides the upstream team update
-     * (which set the full multiline name as prefix).
+     * to the specified bottom line text. PlayerEntity already sends the bottom line
+     * for Java team prefixes; this packet keeps the prefix in sync if a later
+     * metadata batch rewrites the team.
      */
     private void sendPlayerTeamPrefix(final PlayerEntity entity, final String bottomLine) {
         final boolean hasVisibleName = !TextUtil.stripFormatting(bottomLine).isEmpty();

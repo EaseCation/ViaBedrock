@@ -41,6 +41,8 @@ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 public class InventoryContainer extends Container {
 
     private byte selectedHotbarSlot = 0;
+    private byte bedrockOpenContainerId = (byte) ContainerID.CONTAINER_ID_NONE.getValue();
+    private BlockPosition bedrockOpenPosition;
 
     public InventoryContainer(final UserConnection user) {
         super(user, (byte) ContainerID.CONTAINER_ID_INVENTORY.getValue(), ContainerType.INVENTORY, null, null, 36);
@@ -49,6 +51,24 @@ public class InventoryContainer extends Container {
     public InventoryContainer(final UserConnection user, final byte containerId, final BlockPosition position, final InventoryContainer inventoryContainer) {
         super(user, containerId, inventoryContainer.type, inventoryContainer.title, position, inventoryContainer.items, inventoryContainer.validBlockTags);
         this.selectedHotbarSlot = inventoryContainer.selectedHotbarSlot;
+    }
+
+    public void rememberBedrockOpen(final byte containerId, final BlockPosition position) {
+        this.bedrockOpenContainerId = containerId;
+        this.bedrockOpenPosition = position;
+    }
+
+    public void clearBedrockOpen() {
+        this.bedrockOpenContainerId = (byte) ContainerID.CONTAINER_ID_NONE.getValue();
+        this.bedrockOpenPosition = null;
+    }
+
+    public byte bedrockOpenContainerId() {
+        return this.bedrockOpenContainerId;
+    }
+
+    public BlockPosition bedrockOpenPosition() {
+        return this.bedrockOpenPosition;
     }
 
     @Override
@@ -71,16 +91,6 @@ public class InventoryContainer extends Container {
             combinedItems[1 + i] = hudContainer.getJavaItem(28 + i);
         }
         return combinedItems;
-    }
-
-    @Override
-    public boolean setItems(BedrockItem[] items) {
-        if (items.length != this.size()) {
-            final BedrockItem[] newItems = this.getItems();
-            System.arraycopy(items, 0, newItems, 0, Math.min(items.length, newItems.length));
-            items = newItems;
-        }
-        return super.setItems(items);
     }
 
     @Override

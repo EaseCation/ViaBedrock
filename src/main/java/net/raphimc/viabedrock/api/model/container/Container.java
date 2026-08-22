@@ -109,13 +109,15 @@ public abstract class Container {
     }
 
     public boolean setItems(final BedrockItem[] items) {
-        if (items.length != this.items.length) {
-            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Tried to set items for " + this.type + ", but items array length was not correct (" + items.length + " != " + this.items.length + ")");
-            return false;
+        BedrockItem[] applied = items;
+        if (applied.length != this.items.length) {
+            // Nukkit 860 HUD/CONTENT arrays can be shorter or longer than the Java menu.
+            // Pad or truncate in place so a length mismatch cannot drop the whole screen.
+            applied = this.copyItemsToSize(applied);
         }
 
-        for (int i = 0; i < items.length; i++) {
-            this.setItem(i, items[i]);
+        for (int i = 0; i < applied.length; i++) {
+            this.setItem(i, applied[i]);
         }
         return true;
     }
@@ -160,6 +162,17 @@ public abstract class Container {
     }
 
     protected void onSlotChanged(final int slot, final BedrockItem oldItem, final BedrockItem newItem) {
+    }
+
+    protected BedrockItem[] copyItemsToSize(final BedrockItem[] items) {
+        final BedrockItem[] resized = this.getItems();
+        System.arraycopy(items, 0, resized, 0, Math.min(items.length, resized.length));
+        if (items.length < resized.length) {
+            for (int i = items.length; i < resized.length; i++) {
+                resized[i] = BedrockItem.empty();
+            }
+        }
+        return resized;
     }
 
 }

@@ -152,6 +152,14 @@ public class ClientAuthInventoryModule implements FeatureModule {
                 }
             }
 
+            // Nukkit opens player-inventory SAI through INTERACT.OpenInventory. The non-experimental
+            // fallback already sends that handshake, but this handler owns player-inventory clicks
+            // and previously skipped it, so Take/Place never had an open inventory and cursor return
+            // could not close container -1.
+            if (needsBedrockPlayerInventoryOpen(containerId, inventoryTracker.isBedrockPlayerInventoryOpen())) {
+                PacketFactory.sendBedrockOpenInventory(wrapper.user());
+            }
+
             final DragState dragState = wrapper.user().get(DragState.class);
             final List<InventoryActionData> actions = validPrediction ? runOrRollback(
                     () -> ClickSimulator.validateArmorActions(
@@ -221,6 +229,9 @@ public class ClientAuthInventoryModule implements FeatureModule {
             PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
             return true;
         }
+        if (needsBedrockPlayerInventoryOpen(ContainerID.CONTAINER_ID_INVENTORY.getValue(), tracker.isBedrockPlayerInventoryOpen())) {
+            PacketFactory.sendBedrockOpenInventory(user);
+        }
 
         if (!sendPredictedActions(user, actions)) {
             PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
@@ -242,6 +253,9 @@ public class ClientAuthInventoryModule implements FeatureModule {
             return false;
         }
         if (!actions.isEmpty()) {
+            if (needsBedrockPlayerInventoryOpen(ContainerID.CONTAINER_ID_INVENTORY.getValue(), tracker.isBedrockPlayerInventoryOpen())) {
+                PacketFactory.sendBedrockOpenInventory(user);
+            }
             if (!sendPredictedActions(user, actions)) {
                 return false;
             }
@@ -330,6 +344,10 @@ public class ClientAuthInventoryModule implements FeatureModule {
             failureHandler.accept(e);
             return null;
         }
+    }
+
+    static boolean needsBedrockPlayerInventoryOpen(final int containerId, final boolean bedrockInventoryOpen) {
+        return containerId == ContainerID.CONTAINER_ID_INVENTORY.getValue() && !bedrockInventoryOpen;
     }
 
     private static final int HUD_OUTPUT_SLOT = 50;

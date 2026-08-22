@@ -88,10 +88,10 @@ class ItemModelResourceRewriterTest {
         ItemModelResourceRewriter.prepareModelForClient(model, false);
 
         assertTrue(model.getScale() > 1F);
-        final JsonObject compiled = model.compile();
-        final JsonObject element = compiled.getAsJsonArray("elements").get(0).getAsJsonObject();
-        assertLegacyVectorIsValid(element.getAsJsonArray("from"));
-        assertLegacyVectorIsValid(element.getAsJsonArray("to"));
+        final com.google.gson.JsonObject compiled = model.compile();
+        final com.google.gson.JsonObject element = compiled.getAsJsonArray("elements").get(0).getAsJsonObject();
+        assertLegacyGoogleVectorIsValid(element.getAsJsonArray("from"));
+        assertLegacyGoogleVectorIsValid(element.getAsJsonArray("to"));
         assertCompensatedVector(originalParentPivot, parent.getPivot(), model.getScale());
         assertCompensatedVector(originalPosition, cube.getPosition(), model.getScale());
         assertCompensatedVector(originalSize, cube.getSize(), model.getScale());
@@ -219,6 +219,15 @@ class ItemModelResourceRewriterTest {
     private static void assertLegacyVectorIsValid(final JsonArray vector) {
         assertEquals(3, vector.size());
         for (JsonElement coordinate : vector) {
+            final double value = coordinate.getAsDouble();
+            assertTrue(Double.isFinite(value));
+            assertTrue(value >= -16D && value <= 32D, () -> "Legacy coordinate out of range: " + value);
+        }
+    }
+
+    private static void assertLegacyGoogleVectorIsValid(final com.google.gson.JsonArray vector) {
+        assertEquals(3, vector.size());
+        for (com.google.gson.JsonElement coordinate : vector) {
             final double value = coordinate.getAsDouble();
             assertTrue(Double.isFinite(value));
             assertTrue(value >= -16D && value <= 32D, () -> "Legacy coordinate out of range: " + value);

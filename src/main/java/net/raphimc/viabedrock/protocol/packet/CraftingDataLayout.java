@@ -17,11 +17,33 @@
  */
 package net.raphimc.viabedrock.protocol.packet;
 
+import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
+import com.viaversion.viaversion.api.type.Types;
+import io.netty.buffer.ByteBuf;
+import net.raphimc.viabedrock.experimental.model.inventory.BedrockRecipe.RecipeIngredient;
+import net.raphimc.viabedrock.experimental.types.inventory.RecipeIngredientType;
+import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+
+/**
+ * Wire-layout helpers for Bedrock CRAFTING_DATA (packet 0x34).
+ * <p>
+ * Official 975 and NetEase 860 both still encode shapeless / shaped unlock
+ * requirements as a single context byte. Context {@code NONE} (0) then appends
+ * an ingredient array. Protocol 2168 switches that field to
+ * {@code varint context + boolean + optional ingredients}.
+ * <p>
+ * Reading only the context byte leaves those extra ingredients in the buffer
+ * and desynchronizes every later recipe. Official 975 MUST keep the 685+ byte
+ * layout; do not invent the 2168 varint/bool shape there.
+ */
 public final class CraftingDataLayout {
 
     public static final int SHAPELESS_FURNACE_PROTOCOL = 974;
     public static final int FURNACE_RECIPE_TYPE = 2;
     public static final int FURNACE_AUX_RECIPE_TYPE = 3;
+    public static final int UNLOCKING_REQUIREMENT_PROTOCOL = 685;
+    public static final int UNLOCKING_VARINT_PROTOCOL = 2168;
+    public static final int UNLOCKING_CONTEXT_NONE = 0;
 
     private CraftingDataLayout() {
     }
@@ -32,5 +54,97 @@ public final class CraftingDataLayout {
 
     public static boolean isLegacyFurnaceType(final int rawType) {
         return rawType == FURNACE_RECIPE_TYPE || rawType == FURNACE_AUX_RECIPE_TYPE;
+    }
+
+    public static boolean usesUnlockingRequirement(final boolean emulateNetEase, final int protocol) {
+        return !emulateNetEase || protocol >= UNLOCKING_REQUIREMENT_PROTOCOL;
+    }
+
+    public static boolean usesVarIntUnlockingRequirement(final boolean emulateNetEase, final int protocol) {
+        return protocol >= UNLOCKING_VARINT_PROTOCOL;
+    }
+
+    public static int skipUnlockingRequirement(final PacketWrapper wrapper, final boolean emulateNetEase, final int protocol) {
+        if (!usesUnlockingRequirement(emulateNetEase, protocol)) {
+            return -1;
+        }
+        if (usesVarIntUnlockingRequirement(emulateNetEase, protocol)) {
+            final int context = wrapper.read(BedrockTypes.VAR_INT);
+            if (wrapper.read(Types.BOOLEAN)) {
+                skipUnlockingIngredients(wrapper);
+            }
+            return context;
+        }
+        final int context = wrapper.read(Types.UNSIGNED_BYTE);
+        if (context == UNLOCKING_CONTEXT_NONE) {
+            skipUnlockingIngredients(wrapper);
+        }
+        return context;
+    }
+
+    public static int skipUnlockingRequirement(final ByteBuf buffer, final boolean emulateNetEase, final int protocol) {
+        if (!usesUnlockingRequirement(emulateNetEase, protocol)) {
+            return -1;
+        }
+        if (usesVarIntUnlockingRequirement(emulateNetEase, protocol)) {
+            final int context = BedrockTypes.VAR_INT.read(buffer);
+            if (buffer.readBoolean()) {
+                skipUnlockingIngredients(buffer);
+            }
+            return context;
+        }
+        final int context = buffer.readUnsignedByte();
+        if (context == UNLOCKING_CONTEXT_NONE) {
+            skipUnlockingIngredients(buffer);
+        }
+        return context;
+    }
+
+    public static void writeUnlockingRequirement(final ByteBuf buffer, final boolean emulateNetEase, final int protocol,
+                                                 final int context, final RecipeIngredient... extraIngredients) {
+        if (!usesUnlockingRequirement(emulateNetEase, protocol)) {
+            return;
+        }
+        if (usesVarIntUnlockingRequirement(emulateNetEase, protocol)) {
+            BedrockTypes.VAR_INT.write(buffer, context);
+            final boolean present = context == UNLOCKING_CONTEXT_NONE;
+            buffer.writeBoolean(present);
+            if (present) {
+                writeUnlockingIngredients(buffer, extraIngredients);
+            }
+            return;
+        }
+        buffer.writeByte(context);
+        if (context == UNLOCKING_CONTEXT_NONE) {
+            writeUnlockingIngredients(buffer, extraIngredients);
+        }
+    }
+
+    private static void skipUnlockingIngredients(final PacketWrapper wrapper) {
+        final int count = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
+        for (int i = 0; i < count; i++) {
+            wrapper.read(RecipeIngredientType.INSTANCE);
+        }
+    }
+
+    private static void skipUnlockingIngredients(final ByteBuf buffer) {
+        final int count = BedrockTypes.UNSIGNED_VAR_INT.read(buffer);
+        for (int i = 0; i < count; i++) {
+            RecipeIngredientType.INSTANCE.read(buffer);
+        }
+    }
+
+    private static void writeUnlockingIngredients(final ByteBuf buffer, final RecipeIngredient[] extraIngredients) {
+        BedrockTypes.UNSIGNED_VAR_INT.write(buffer, extraIngredients.length);
+        for (RecipeIngredient ingredient : extraIngredients) {
+            writeDefaultIngredient(buffer, ingredient);
+        }
+    }
+
+    private static void writeDefaultIngredient(final ByteBuf buffer, final RecipeIngredient ingredient) {
+        buffer.writeByte(1);
+        buffer.writeShortLE(ingredient.runtimeId());
+        buffer.writeShortLE(ingredient.damage());
+        BedrockTypes.VAR_INT.write(buffer, ingredient.count());
     }
 }

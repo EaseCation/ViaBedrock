@@ -18,6 +18,7 @@
 package net.raphimc.viabedrock.api.model.container;
 
 import com.viaversion.viaversion.api.minecraft.BlockPosition;
+import net.raphimc.viabedrock.protocol.model.BedrockItem;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
 import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomBlockTags;
 import org.junit.jupiter.api.Test;
@@ -52,5 +53,54 @@ class ChestContainerTest {
         assertTrue(hopper.isValidBlockTag(CustomBlockTags.HOPPER));
         assertFalse(hopper.isValidBlockTag(CustomBlockTags.CHEST));
         assertFalse(hopper.isValidBlockTag(null));
+    }
+
+    @Test
+    void mismatchedContentLengthIsPaddedOrTruncated() {
+        final ChestContainer single = new ChestContainer(null, (byte) 1, null, new BlockPosition(0, 64, 0), 27);
+        final BedrockItem[] doubleContents = BedrockItem.emptyArray(54);
+        doubleContents[0] = new BedrockItem(3);
+        doubleContents[26] = new BedrockItem(4);
+        assertTrue(single.setItems(doubleContents));
+        assertEquals(3, single.getItem(0).identifier());
+        assertEquals(4, single.getItem(26).identifier());
+
+        final ChestContainer large = new ChestContainer(null, (byte) 2, null, new BlockPosition(0, 64, 0), 54);
+        final BedrockItem[] shortContents = BedrockItem.emptyArray(27);
+        shortContents[0] = new BedrockItem(5);
+        assertTrue(large.setItems(shortContents));
+        assertEquals(5, large.getItem(0).identifier());
+        assertTrue(large.getItem(53).isEmpty());
+    }
+
+    @Test
+    void mismatchedContentLengthIsPaddedOrTruncatedForOtherMenus() {
+        final EnderChestContainer ender = new EnderChestContainer(null, (byte) 4, null, new BlockPosition(0, 64, 0));
+        final BedrockItem[] oversized = BedrockItem.emptyArray(54);
+        oversized[0] = new BedrockItem(6);
+        assertTrue(ender.setItems(oversized));
+        assertEquals(6, ender.getItem(0).identifier());
+        assertEquals(27, ender.size());
+
+        final ShulkerBoxContainer shulker = new ShulkerBoxContainer(null, (byte) 5, null, new BlockPosition(0, 64, 0));
+        final BedrockItem[] shortShulker = BedrockItem.emptyArray(13);
+        shortShulker[12] = new BedrockItem(7);
+        assertTrue(shulker.setItems(shortShulker));
+        assertEquals(7, shulker.getItem(12).identifier());
+        assertTrue(shulker.getItem(26).isEmpty());
+
+        final BrewingStandContainer brewing = new BrewingStandContainer(null, (byte) 6, null, new BlockPosition(0, 64, 0));
+        final BedrockItem[] brewingItems = BedrockItem.emptyArray(3);
+        brewingItems[0] = new BedrockItem(8);
+        assertTrue(brewing.setItems(brewingItems));
+        assertEquals(8, brewing.getItem(0).identifier());
+        assertTrue(brewing.getItem(4).isEmpty());
+
+        final CraftingTableContainer table = new CraftingTableContainer(null, (byte) 7, null, new BlockPosition(0, 64, 0));
+        final BedrockItem[] tableItems = BedrockItem.emptyArray(1);
+        tableItems[0] = new BedrockItem(9);
+        assertTrue(table.setItems(tableItems));
+        assertEquals(9, table.getItem(0).identifier());
+        assertTrue(table.getItem(9).isEmpty());
     }
 }

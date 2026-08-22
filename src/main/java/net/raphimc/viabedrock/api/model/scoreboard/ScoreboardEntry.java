@@ -20,6 +20,7 @@ package net.raphimc.viabedrock.api.model.scoreboard;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.util.Pair;
 import net.raphimc.viabedrock.api.util.StringUtil;
+import net.raphimc.viabedrock.api.util.TextUtil;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.IdentityDefinition_Type;
 import net.raphimc.viabedrock.protocol.storage.PlayerListStorage;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
@@ -85,13 +86,13 @@ public class ScoreboardEntry {
                 final PlayerListStorage playerList = user.get(PlayerListStorage.class);
                 final Pair<UUID, String> player = playerList.getPlayer(this.entityUniqueId);
                 if (player != null) {
-                    this.javaName = player.value();
+                    this.javaName = TextUtil.toSingleLine(player.value());
                 } else {
                     this.javaName = StringUtil.encodeLong(this.entityUniqueId) + user.get(ResourcePackStorage.class).getTexts().get("commands.scoreboard.players.offlinePlayerName");
                 }
             }
             case Entity -> this.javaName = String.valueOf(this.entityUniqueId);
-            case FakePlayer -> this.javaName = this.fakePlayerName;
+            case FakePlayer -> this.javaName = TextUtil.toSingleLine(this.fakePlayerName);
         }
     }
 

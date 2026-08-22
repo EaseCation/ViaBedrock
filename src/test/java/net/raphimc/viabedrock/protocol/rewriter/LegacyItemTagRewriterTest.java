@@ -119,8 +119,8 @@ class LegacyItemTagRewriterTest {
 
     @Test
     void legacyPotionIdsMatchCurrentJavaRegistryOrder() {
-        for (int potionId = 0; potionId < EnumTypes.POTION.names().length; potionId++) {
-            assertEquals("minecraft:" + Potions1_20_5.idToKey(potionId), EnumTypes.POTION.byId(potionId));
+        for (int potionId = 0; potionId < EnumTypes.POTION.keys().length; potionId++) {
+            assertEquals("minecraft:" + Potions1_20_5.idToKey(potionId), EnumTypes.POTION.byId(potionId).toString());
         }
     }
 

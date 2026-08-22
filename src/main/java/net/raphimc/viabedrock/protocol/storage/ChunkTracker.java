@@ -65,6 +65,7 @@ import java.util.*;
 import java.util.logging.Level;
 
 import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
+import net.raphimc.viabedrock.experimental.block.CustomBlockDisplayTracker;
 import net.raphimc.viabedrock.experimental.custommapping.CustomMappingAccess;
 import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
 import net.raphimc.viabedrock.experimental.light.AsyncLightEngine;
@@ -248,6 +249,10 @@ public class ChunkTracker extends StoredObject {
         this.subChunkRequests.cancelColumn(key);
         this.lightProvider.onChunkUnload(key);
         this.user().get(EntityTracker.class).removeItemFrame(chunkPos);
+        final CustomBlockDisplayTracker displayTracker = this.user().get(CustomBlockDisplayTracker.class);
+        if (displayTracker != null) {
+            displayTracker.removeChunk(chunkPos);
+        }
 
         if (this.suppressJavaRuntimePacketBeforeLogin(ClientboundPackets26_1.FORGET_LEVEL_CHUNK)) {
             return;
@@ -701,6 +706,20 @@ public class ChunkTracker extends StoredObject {
         throw new IllegalStateException("Current ChunkTracker has no active proxy light provider in server-computed mode");
     }
 
+    /** Re-applies custom-block display overlays after the Java resource pack becomes available. */
+    public void rescanCustomBlockDisplays() {
+        final CustomBlockDisplayTracker displayTracker = this.user().get(CustomBlockDisplayTracker.class);
+        if (displayTracker == null) {
+            return;
+        }
+        for (BedrockChunk chunk : this.chunks.values()) {
+            if (!this.javaSentChunks.contains(ChunkPosition.chunkKey(chunk.getX(), chunk.getZ()))) {
+                continue;
+            }
+            displayTracker.syncChunk(chunk, this.minY);
+        }
+    }
+
     private boolean isPlayerChunk(final int chunkX, final int chunkZ) {
         final EntityTracker entityTracker = this.user().get(EntityTracker.class);
         if (entityTracker == null) {
@@ -755,6 +774,10 @@ public class ChunkTracker extends StoredObject {
             levelChunkWithLight.write(Types.BYTE_ARRAY_PRIMITIVE, array); // block light
         }
         levelChunkWithLight.send(BedrockProtocol.class);
+        final CustomBlockDisplayTracker displayTracker = this.user().get(CustomBlockDisplayTracker.class);
+        if (displayTracker != null) {
+            displayTracker.syncChunk(this.getChunk(remappedChunk.getX(), remappedChunk.getZ()), this.minY);
+        }
         final long chunkKey = ChunkPosition.chunkKey(remappedChunk.getX(), remappedChunk.getZ());
         this.javaSentChunks.add(chunkKey);
         this.progressiveChunkResends.onSnapshotSent(chunkKey);
@@ -1146,6 +1169,7 @@ public class ChunkTracker extends StoredObject {
     private Chunk remapChunk(final BedrockChunk chunk) {
         final BlockStateRewriter blockStateRewriter = this.user().get(BlockStateRewriter.class);
         final CustomMappingAccess customAccess = this.user().get(CustomMappingSyncStorage.class).access();
+        final CustomBlockDisplayTracker displayTracker = this.user().get(CustomBlockDisplayTracker.class);
         final int airId = this.bedrockAirId();
 
         final Chunk remappedChunk = new Chunk1_21_5(chunk.getX(), chunk.getZ(), new ChunkSection[chunk.getSections().length], new Heightmap[2], new ArrayList<>());
@@ -1177,11 +1201,15 @@ public class ChunkTracker extends StoredObject {
                 for (int y = 0; y < 16; y++) {
                     for (int z = 0; z < 16; z++) {
                         for (int x = 0; x < 16; x++) {
-                            final String tag = paletteIndexBlockStateTags[remappedBlockPalette.paletteIndexAt(remappedBlockPalette.index(x, y, z))];
+                            final int paletteIndex = remappedBlockPalette.paletteIndexAt(remappedBlockPalette.index(x, y, z));
+                            final String tag = paletteIndexBlockStateTags[paletteIndex];
+                            final int bedrockRuntimeId = layer0.idAt(x, y, z);
+                            if (displayTracker != null && displayTracker.shouldOverlay(bedrockRuntimeId, false)) {
+                                remappedBlockPalette.setIdAt(x, y, z, displayTracker.placeholderJavaBlockState());
+                            }
                             if (tag != null) {
                                 final int absY = this.minY + (idx << 4) + y;
                                 final BlockPosition position = new BlockPosition((chunk.getX() << 4) + x, absY, (chunk.getZ() << 4) + z);
-                                final int bedrockRuntimeId = layer0.idAt(x, y, z);
                                 if (BlockEntityRewriter.isJavaBlockEntity(this.user(), bedrockRuntimeId)) {
                                     final BlockEntity javaBlockEntity = BlockEntityRewriter.toJavaOrCreate(this.user(), bedrockRuntimeId, chunk.getBlockEntityAt(position), BlockEntity.pack(x, z), (short) absY);
                                     if (javaBlockEntity instanceof BlockEntityWithBlockState blockEntityWithBlockState) {

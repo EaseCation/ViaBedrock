@@ -71,10 +71,12 @@ public class PlayerEntity extends LivingEntity {
         this.setName(name);
         // Trim blank lines so the single-line team prefix never carries leading/trailing newlines
         // (which the Java client renders as missing-glyph boxes). The multiline tracker reads the
-        // raw stored name from entity data and overrides this prefix for genuine multiline names.
+        // raw stored name from entity data and attaches extra lines to virtual armor stands.
+        // Java team prefixes cannot render interior newlines, so only the bottom line stays here.
         final String trimmed = TextUtil.trimBlankLines(name);
-        final boolean hasVisibleName = trimmed != null && !TextUtil.stripFormatting(trimmed).isEmpty();
-        this.sendTeamUpdate(hasVisibleName ? trimmed : "", hasVisibleName);
+        final String prefix = TextUtil.lastLine(trimmed);
+        final boolean hasVisibleName = prefix != null && !TextUtil.stripFormatting(prefix).isEmpty();
+        this.sendTeamUpdate(hasVisibleName ? prefix : "", hasVisibleName);
     }
 
     private void sendTeamUpdate(final String prefix, final boolean nameTagVisible) {
@@ -133,7 +135,7 @@ public class PlayerEntity extends LivingEntity {
             }
             case NAMETAG_ALWAYS_SHOW -> {
                 final byte alwaysShow = (byte) entityData.getValue();
-                final String currentName = TextUtil.trimBlankLines(this.name());
+                final String currentName = TextUtil.lastLine(TextUtil.trimBlankLines(this.name()));
                 final boolean hasVisibleName = alwaysShow == 1 && currentName != null && !TextUtil.stripFormatting(currentName).isEmpty();
                 this.sendTeamUpdate(hasVisibleName ? currentName : "", hasVisibleName);
             }

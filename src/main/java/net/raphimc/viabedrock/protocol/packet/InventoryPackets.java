@@ -44,6 +44,7 @@ import net.raphimc.viabedrock.api.model.container.*;
 import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
 import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.api.util.PacketFactory;
+import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.api.util.TextUtil;
 import net.raphimc.viabedrock.experimental.inventory.ClientAuthInventoryModule;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
@@ -54,7 +55,6 @@ import net.raphimc.viabedrock.protocol.data.enums.java.generated.ContainerInput;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.EquipmentSlot;
 import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomBlockTags;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
-import net.raphimc.viabedrock.protocol.model.Position3f;
 import net.raphimc.viabedrock.protocol.model.FullContainerName;
 import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
@@ -105,14 +105,18 @@ public class InventoryPackets {
             };
             TextComponent title = new TranslationComponent(javaTitleKey);
             if (blockEntity != null && blockEntity.tag().get("CustomName") instanceof StringTag customNameTag) {
-                title = TextUtil.stringToTextComponent(wrapper.user().get(ResourcePackStorage.class).getTexts().translate(customNameTag.getValue()));
+                title = TextUtil.stringToTextComponent(TextUtil.toSingleLine(wrapper.user().get(ResourcePackStorage.class).getTexts().translate(customNameTag.getValue())));
             }
 
             final Container container;
             int javaMenuId = BedrockProtocol.MAPPINGS.getBedrockToJavaContainers().getOrDefault(type, -1);
             switch (type) {
                 case INVENTORY -> {
-                    inventoryTracker.setCurrentContainer(new InventoryContainer(wrapper.user(), containerId, position, inventoryTracker.getInventoryContainer()));
+                    // Java already owns the player inventory window. Nukkit still sends CONTAINER_OPEN
+                    // type=-1 after Interact.OpenInventory so SAI transfers are accepted, but treating
+                    // that as a real screen occupies currentContainer and later chest/table opens are
+                    // rejected as "another container is open". Record the Bedrock acknowledgement only.
+                    inventoryTracker.acknowledgeBedrockInventoryOpen(containerId, position);
                     wrapper.cancel();
                     return;
                 }
@@ -241,10 +245,11 @@ public class InventoryPackets {
         });
         protocol.registerClientbound(ClientboundBedrockPackets.INVENTORY_CONTENT, ClientboundPackets26_1.CONTAINER_SET_CONTENT, wrapper -> {
             final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
-            final int containerId = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // container id
-            final BedrockItem[] items = wrapper.read(itemRewriter.itemArrayType()); // items
-            final FullContainerName containerName = wrapper.read(BedrockTypes.FULL_CONTAINER_NAME); // container name
-            final BedrockItem storageItem = wrapper.read(itemRewriter.itemType()); // storage item
+            final InventoryContentLayout.DecodedInventoryContent decoded = InventoryContentLayout.read(wrapper, itemRewriter);
+            final int containerId = decoded.containerId();
+            final BedrockItem[] items = decoded.items();
+            final FullContainerName containerName = decoded.containerName();
+            final BedrockItem storageItem = decoded.storageItem();
             PacketLeftoverLayout.discardUnreadInput(wrapper);
 
             final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
@@ -281,6 +286,13 @@ public class InventoryPackets {
             } else {
                 wrapper.cancel();
             }
+        });
+        protocol.registerClientbound(ClientboundBedrockPackets.ITEM_STACK_RESPONSE, null, wrapper -> {
+            wrapper.cancel();
+            // SAI servers echo every click. Consume the 860/975 container array so the
+            // next mapped packet is not parsed as leftover ITEM_STACK_RESPONSE bytes.
+            ItemStackResponseLayout.skip(wrapper);
+            PacketLeftoverLayout.discardUnreadInput(wrapper);
         });
         protocol.registerClientbound(ClientboundBedrockPackets.CONTAINER_SET_DATA, ClientboundPackets26_1.CONTAINER_SET_DATA, wrapper -> {
             final int containerId = wrapper.read(Types.BYTE); // container id
@@ -446,12 +458,18 @@ public class InventoryPackets {
             final Container container = inventoryTracker.getContainerServerbound((byte) containerId);
             if (container == null) {
                 if (containerId == ContainerID.CONTAINER_ID_INVENTORY.getValue()) {
-                    // Bedrock client can send multiple OpenInventory requests if the server doesn't respond, so this is fine here
-                    final PacketWrapper interact = PacketWrapper.create(ServerboundBedrockPackets.INTERACT, wrapper.user());
-                    interact.write(Types.UNSIGNED_BYTE, (short) InteractPacket_Action.OpenInventory.getValue()); // action
-                    interact.write(BedrockTypes.UNSIGNED_VAR_LONG, wrapper.user().get(EntityTracker.class).getClientPlayer().runtimeId()); // target entity runtime id
-                    InteractPacketLayout.writePosition(interact, InteractPacket_Action.OpenInventory, Position3f.ZERO);
-                    interact.sendToServer(BedrockProtocol.class);
+                    if (ViaBedrock.getConfig().shouldEnableExperimentalFeatures()) {
+                        // ClientAuthInventoryModule already owns player-inventory clicks. Falling through
+                        // here would turn every backpack take into Interact.OpenInventory.
+                        wrapper.cancel();
+                        return;
+                    }
+                    if (inventoryTracker.isBedrockPlayerInventoryOpen()) {
+                        wrapper.cancel();
+                        return;
+                    }
+                    // Bedrock clients may send multiple OpenInventory requests if the server doesn't respond.
+                    PacketFactory.sendBedrockOpenInventory(wrapper.user());
                     PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getInventoryContainer());
                 }
 
@@ -552,6 +570,7 @@ public class InventoryPackets {
                                 return;
                             }
                             wrapper.set(Types.BYTE, 0, (byte) -1);
+                            inventoryTracker.clearBedrockPlayerInventoryOpen();
                             return;
                         }
                         wrapper.cancel();
@@ -584,6 +603,16 @@ public class InventoryPackets {
 
             final Entity entity = wrapper.user().get(EntityTracker.class).getEntityByJid(entityId);
             if (entity == null) {
+                final BlockPosition fakeBlockPosition = ExperimentalFeatures.resolveFakeBlockEntityPickPosition(wrapper.user(), entityId);
+                if (fakeBlockPosition != null) {
+                    wrapper.cancel();
+                    final PacketWrapper pick = PacketWrapper.create(ServerboundBedrockPackets.BLOCK_PICK_REQUEST, wrapper.user());
+                    pick.write(BedrockTypes.SIGNED_BLOCK_POSITION, fakeBlockPosition); // signed position
+                    pick.write(Types.BOOLEAN, includeData); // include data
+                    pick.write(Types.UNSIGNED_BYTE, (short) 9); // empty hotbar slots
+                    pick.sendToServer(BedrockProtocol.class);
+                    return;
+                }
                 wrapper.cancel();
                 return;
             }

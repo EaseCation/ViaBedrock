@@ -17,13 +17,16 @@
  */
 package net.raphimc.viabedrock.experimental.inventory;
 
+import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
 import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ClientAuthInventoryModuleTest {
 
@@ -54,5 +57,14 @@ class ClientAuthInventoryModuleTest {
 
         assertNull(ClientAuthInventoryModule.runOrRollback(() -> null, handled::set));
         assertNull(handled.get());
+    }
+
+    @Test
+    void playerInventoryMutationsOpenBedrockInventoryOnlyUntilAcknowledged() {
+        assertTrue(ClientAuthInventoryModule.needsBedrockPlayerInventoryOpen(
+                ContainerID.CONTAINER_ID_INVENTORY.getValue(), false));
+        assertFalse(ClientAuthInventoryModule.needsBedrockPlayerInventoryOpen(
+                ContainerID.CONTAINER_ID_INVENTORY.getValue(), true));
+        assertFalse(ClientAuthInventoryModule.needsBedrockPlayerInventoryOpen(4, false));
     }
 }

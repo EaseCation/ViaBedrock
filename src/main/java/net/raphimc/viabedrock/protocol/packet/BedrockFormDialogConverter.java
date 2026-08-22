@@ -72,14 +72,14 @@ final class BedrockFormDialogConverter {
         final ActionButton exitButton = new ActionButton(new TranslationComponent("gui.cancel"), BUTTON_WIDTH, new CustomAllAction(responseIdentifier, exitButtonAdditions));
 
         if (form instanceof ModalForm modalForm) {
-            final MultiActionDialog dialog = new MultiActionDialog(TextUtil.stringToTextComponent(form.getTitle()), true, false, AfterAction.CLOSE, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), exitButton, 1);
+            final MultiActionDialog dialog = new MultiActionDialog(TextUtil.stringToTextComponent(TextUtil.toSingleLine(form.getTitle())), true, false, AfterAction.CLOSE, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), exitButton, 1);
             addText(dialog, modalForm.getText(), protocolVersion);
             final CompoundTag button1Additions = new CompoundTag();
             button1Additions.putInt("button_id", 0);
-            dialog.getActions().add(new ActionButton(TextUtil.stringToTextComponent(modalForm.getButton1()), BUTTON_WIDTH, new CustomAllAction(responseIdentifier, button1Additions)));
+            dialog.getActions().add(new ActionButton(TextUtil.stringToTextComponent(TextUtil.toSingleLine(modalForm.getButton1())), BUTTON_WIDTH, new CustomAllAction(responseIdentifier, button1Additions)));
             final CompoundTag button2Additions = new CompoundTag();
             button2Additions.putInt("button_id", 1);
-            dialog.getActions().add(new ActionButton(TextUtil.stringToTextComponent(modalForm.getButton2()), BUTTON_WIDTH, new CustomAllAction(responseIdentifier, button2Additions)));
+            dialog.getActions().add(new ActionButton(TextUtil.stringToTextComponent(TextUtil.toSingleLine(modalForm.getButton2())), BUTTON_WIDTH, new CustomAllAction(responseIdentifier, button2Additions)));
             return dialog;
         } else if (form instanceof ActionForm actionForm) {
             return convertActionForm(actionForm, responseIdentifier, exitButton, protocolVersion);
@@ -103,23 +103,23 @@ final class BedrockFormDialogConverter {
             }
         }
         if (!hasAction) {
-            final NoticeDialog dialog = new NoticeDialog(TextUtil.stringToTextComponent(form.getTitle()), true, false, AfterAction.CLOSE, new ArrayList<>(), new ArrayList<>(), exitButton);
+            final NoticeDialog dialog = new NoticeDialog(TextUtil.stringToTextComponent(TextUtil.toSingleLine(form.getTitle())), true, false, AfterAction.CLOSE, new ArrayList<>(), new ArrayList<>(), exitButton);
             addText(dialog, form.getText(), protocolVersion);
             return dialog;
         }
 
-        final MultiActionDialog dialog = new MultiActionDialog(TextUtil.stringToTextComponent(form.getTitle()), true, false, AfterAction.CLOSE, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), exitButton, 1);
+        final MultiActionDialog dialog = new MultiActionDialog(TextUtil.stringToTextComponent(TextUtil.toSingleLine(form.getTitle())), true, false, AfterAction.CLOSE, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), exitButton, 1);
         addText(dialog, form.getText(), protocolVersion);
         int buttonIndex = 0;
         for (FormElement element : form.getElements()) {
             if (element instanceof ButtonFormElement button) {
                 final CompoundTag additions = new CompoundTag();
                 additions.putInt("button_id", buttonIndex++);
-                dialog.getActions().add(new ActionButton(TextUtil.stringToTextComponent(button.getText()), BUTTON_WIDTH, new CustomAllAction(responseIdentifier, additions)));
+                dialog.getActions().add(new ActionButton(TextUtil.stringToTextComponent(TextUtil.toSingleLine(button.getText())), BUTTON_WIDTH, new CustomAllAction(responseIdentifier, additions)));
             } else if (element instanceof HeaderFormElement header) {
-                dialog.getActions().add(new ActionButton(TextUtil.stringToTextComponent(header.getText()), new StringComponent(FAKE_BUTTON_TEXT), FAKE_BUTTON_WIDTH, exitButton.getAction()));
+                dialog.getActions().add(new ActionButton(TextUtil.stringToTextComponent(TextUtil.toSingleLine(header.getText())), new StringComponent(FAKE_BUTTON_TEXT), FAKE_BUTTON_WIDTH, exitButton.getAction()));
             } else if (element instanceof LabelFormElement label) {
-                dialog.getActions().add(new ActionButton(TextUtil.stringToTextComponent(label.getText()), new StringComponent(FAKE_BUTTON_TEXT), FAKE_BUTTON_WIDTH, exitButton.getAction()));
+                dialog.getActions().add(new ActionButton(TextUtil.stringToTextComponent(TextUtil.toSingleLine(label.getText())), new StringComponent(FAKE_BUTTON_TEXT), FAKE_BUTTON_WIDTH, exitButton.getAction()));
             } else if (!(element instanceof DividerFormElement)) {
                 throw new IllegalArgumentException("Unhandled form element type: " + element.getClass().getSimpleName());
             }
@@ -128,23 +128,23 @@ final class BedrockFormDialogConverter {
     }
 
     private static Dialog convertCustomForm(final CustomForm form, final Identifier responseIdentifier, final CompoundTag exitButtonAdditions, final ProtocolVersion protocolVersion) {
-        final MultiActionDialog dialog = new MultiActionDialog(TextUtil.stringToTextComponent(form.getTitle()), false, false, AfterAction.CLOSE, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), 1);
+        final MultiActionDialog dialog = new MultiActionDialog(TextUtil.stringToTextComponent(TextUtil.toSingleLine(form.getTitle())), false, false, AfterAction.CLOSE, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), 1);
         for (int elementIndex = 0; elementIndex < form.getElements().length; elementIndex++) {
             final FormElement element = form.getElements()[elementIndex];
             final String inputKey = String.valueOf(elementIndex);
             if (element instanceof CheckboxFormElement checkbox) {
-                final BooleanInput input = new BooleanInput(TextUtil.stringToTextComponent(checkbox.getText()));
+                final BooleanInput input = new BooleanInput(TextUtil.stringToTextComponent(TextUtil.toSingleLine(checkbox.getText())));
                 input.setInitial(checkbox.getDefaultValue());
                 dialog.getInputs().add(new Input(inputKey, input));
             } else if (element instanceof DropdownFormElement dropdown) {
                 dialog.getInputs().add(new Input(inputKey, singleOptionInput(dropdown.getText(), dropdown.getOptions(), dropdown.getDefaultOption())));
             } else if (element instanceof SliderFormElement slider) {
-                final NumberRangeInput input = new NumberRangeInput(TextUtil.stringToTextComponent(slider.getText()), new NumberRangeInput.Range(slider.getMin(), slider.getMax(), slider.getDefaultValue(), slider.getStep()));
+                final NumberRangeInput input = new NumberRangeInput(TextUtil.stringToTextComponent(TextUtil.toSingleLine(slider.getText())), new NumberRangeInput.Range(slider.getMin(), slider.getMax(), slider.getDefaultValue(), slider.getStep()));
                 dialog.getInputs().add(new Input(inputKey, input));
             } else if (element instanceof StepSliderFormElement stepSlider) {
                 dialog.getInputs().add(new Input(inputKey, singleOptionInput(stepSlider.getText(), stepSlider.getSteps(), stepSlider.getDefaultStep())));
             } else if (element instanceof TextFieldFormElement textField) {
-                final TextInput input = new TextInput(TextUtil.stringToTextComponent(textField.getText()));
+                final TextInput input = new TextInput(TextUtil.stringToTextComponent(TextUtil.toSingleLine(textField.getText())));
                 input.setMaxLength(100);
                 input.setInitial(textField.getDefaultValue());
                 dialog.getInputs().add(new Input(inputKey, input));
@@ -170,7 +170,7 @@ final class BedrockFormDialogConverter {
     }
 
     private static SingleOptionInput singleOptionInput(final String label, final String[] options, final int defaultOption) {
-        final SingleOptionInput input = new SingleOptionInput(new ArrayList<>(Math.max(1, options.length)), TextUtil.stringToTextComponent(label));
+        final SingleOptionInput input = new SingleOptionInput(new ArrayList<>(Math.max(1, options.length)), TextUtil.stringToTextComponent(TextUtil.toSingleLine(label)));
         if (options.length == 0) {
             // Bedrock represents an empty selector response as index 0; keep that response contract while
             // satisfying Java's non-empty dialog codec with a visually empty option.
@@ -178,7 +178,7 @@ final class BedrockFormDialogConverter {
             return input;
         }
         for (int optionIndex = 0; optionIndex < options.length; optionIndex++) {
-            input.getOptions().add(new SingleOptionInput.Entry(String.valueOf(optionIndex), TextUtil.stringToTextComponent(options[optionIndex]), optionIndex == defaultOption));
+            input.getOptions().add(new SingleOptionInput.Entry(String.valueOf(optionIndex), TextUtil.stringToTextComponent(TextUtil.toSingleLine(options[optionIndex])), optionIndex == defaultOption));
         }
         return input;
     }
@@ -196,7 +196,7 @@ final class BedrockFormDialogConverter {
                 dialog.getInputs().add(new Input("dummy", input));
             }
         } else {
-            dialog.getInputs().add(new Input("dummy", new BooleanInput(TextUtil.stringToTextComponent(text))));
+            dialog.getInputs().add(new Input("dummy", new BooleanInput(TextUtil.stringToTextComponent(TextUtil.toSingleLine(text)))));
         }
     }
 

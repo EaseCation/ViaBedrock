@@ -45,6 +45,7 @@ import net.raphimc.viabedrock.experimental.model.map.MapObject;
 import net.raphimc.viabedrock.experimental.model.map.MapTrackedObject;
 import net.raphimc.viabedrock.experimental.model.PlayerAuthInputContext;
 import net.raphimc.viabedrock.experimental.block.CustomBlockMappingModule;
+import net.raphimc.viabedrock.experimental.block.CustomBlockDisplayTracker;
 import net.raphimc.viabedrock.experimental.blockbreak.BlockBreakingProgressModule;
 import net.raphimc.viabedrock.experimental.camera.CameraModule;
 import net.raphimc.viabedrock.experimental.inventory.BedrockItemLockPolicy;
@@ -286,6 +287,16 @@ public class ExperimentalFeatures {
         }
     }
 
+    public static void dispatchJavaResourcePackLoaded(final UserConnection user) {
+        for (final FeatureModule module : MODULES) {
+            try {
+                module.onJavaResourcePackLoaded(user);
+            } catch (final Throwable e) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error in module onJavaResourcePackLoaded", e);
+            }
+        }
+    }
+
     public static boolean dispatchCustomPayload(final String channel, final PacketWrapper wrapper) {
         for (final FeatureModule module : MODULES) {
             try {
@@ -350,8 +361,19 @@ public class ExperimentalFeatures {
         return item.tag() != null && (item.tag().get("chargedItem") != null || item.tag().get("ChargedProjectiles") != null);
     }
 
+    private static boolean isConsumableUseItem(final ItemRewriter itemRewriter, final BedrockItem item) {
+        final String identifier = itemRewriter.bedrockIdentifier(item);
+        final Set<String> itemTags = identifier != null ? BedrockProtocol.MAPPINGS.getBedrockItemTags().get(identifier) : null;
+        return ItemUseSemantics.isConsumableUseItem(identifier, itemTags, itemRewriter.itemUseDefinition(item));
+    }
+
     private static boolean shouldSendStandaloneUseTransaction(final ItemRewriter itemRewriter, final BedrockItem item) {
-        return isBow(itemRewriter, item) || isCrossbow(itemRewriter, item);
+        return ItemUseSemantics.needsStandaloneUseTransaction(
+                ViaBedrock.getConfig().shouldEmulateNetEaseClient(),
+                isConsumableUseItem(itemRewriter, item),
+                isBow(itemRewriter, item),
+                isCrossbow(itemRewriter, item)
+        );
     }
 
     private static BedrockInventoryTransaction createUseItemTransaction(final ItemUseHandContext handContext, final ClientPlayerEntity clientPlayer) {
@@ -554,6 +576,117 @@ public class ExperimentalFeatures {
         return true;
     }
 
+    /**
+     * Custom cubes are shown as a Java placeholder block plus an item-display overlay.
+     * If the display still intercepts a right-click, translate it into the Bedrock
+     * block use the server expects instead of dropping the packet.
+     */
+    public static boolean tryHandleCustomBlockOverlayInteract(final UserConnection user, final int javaEntityId, final InteractionHand hand) {
+        if (!ViaBedrock.getConfig().shouldEnableExperimentalFeatures()) {
+            return false;
+        }
+        final CustomBlockDisplayTracker overlay = user.get(CustomBlockDisplayTracker.class);
+        if (overlay == null) {
+            return false;
+        }
+        final BlockPosition position = overlay.getOverlayPosition(javaEntityId);
+        if (position == null) {
+            return false;
+        }
+
+        final EntityTracker entityTracker = user.get(EntityTracker.class);
+        final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
+        final Direction direction = CustomBlockDisplayTracker.facingFromLook(clientPlayer.rotation());
+        sendItemUseOnBlock(
+                user,
+                clientPlayer,
+                ItemUseHandContext.resolve(user.get(InventoryTracker.class), hand),
+                user.get(InventoryTransactionRewriter.class),
+                user.get(ChunkTracker.class),
+                position,
+                direction.verticalId(),
+                direction.blockFace(),
+                new Position3f(0.5F, 0.5F, 0.5F),
+                false,
+                0);
+        return true;
+    }
+
+    /**
+     * Left-clicking an overlay display must start the Bedrock block break at that
+     * position. Returns true when the attack was consumed as a block action.
+     */
+    public static boolean tryHandleCustomBlockOverlayAttack(final UserConnection user, final int javaEntityId) {
+        if (!ViaBedrock.getConfig().shouldEnableExperimentalFeatures()) {
+            return false;
+        }
+        final CustomBlockDisplayTracker overlay = user.get(CustomBlockDisplayTracker.class);
+        if (overlay == null) {
+            return false;
+        }
+        final BlockPosition position = overlay.getOverlayPosition(javaEntityId);
+        if (position == null) {
+            return false;
+        }
+        startFakeEntityBlockBreak(user, position, CustomBlockDisplayTracker.facingFromLook(user.get(EntityTracker.class).getClientPlayer().rotation()));
+        return true;
+    }
+
+    /**
+     * Java left-clicking a fake item-frame entity must become Bedrock
+     * {@code StartDestroyBlock}. Nukkit's {@code BlockItemFrame.onTouch} drops the
+     * displayed item on LEFT_CLICK_BLOCK and only then lets a later destroy break
+     * the frame. Cancelling ATTACK with no translation swallowed both.
+     */
+    public static boolean tryHandleItemFrameAttack(final UserConnection user, final int javaEntityId) {
+        if (!ViaBedrock.getConfig().shouldEnableExperimentalFeatures()) {
+            return false;
+        }
+        final EntityTracker entityTracker = user.get(EntityTracker.class);
+        if (entityTracker == null) {
+            return false;
+        }
+        final EntityTracker.ItemFrameInfo info = entityTracker.getItemFrameInfo(javaEntityId);
+        if (info == null) {
+            return false;
+        }
+        final Direction direction = Direction.getFromVerticalId(info.facingDirection(), Direction.NORTH);
+        startFakeEntityBlockBreak(user, info.position(), direction);
+        return true;
+    }
+
+    public static BlockPosition resolveFakeBlockEntityPickPosition(final UserConnection user, final int javaEntityId) {
+        final CustomBlockDisplayTracker overlay = user.get(CustomBlockDisplayTracker.class);
+        if (overlay != null) {
+            final BlockPosition overlayPosition = overlay.getOverlayPosition(javaEntityId);
+            if (overlayPosition != null) {
+                return overlayPosition;
+            }
+        }
+        final EntityTracker entityTracker = user.get(EntityTracker.class);
+        if (entityTracker == null) {
+            return null;
+        }
+        final EntityTracker.ItemFrameInfo info = entityTracker.getItemFrameInfo(javaEntityId);
+        return info != null ? info.position() : null;
+    }
+
+    private static void startFakeEntityBlockBreak(final UserConnection user, final BlockPosition position, final Direction direction) {
+        final ClientPlayerEntity clientPlayer = user.get(EntityTracker.class).getClientPlayer();
+        clientPlayer.sendSwingPacketToServer();
+        clientPlayer.cancelNextSwingPacket();
+        clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(
+                PlayerActionType.StartDestroyBlock, position, direction.ordinal()));
+        if (clientPlayer.javaGameMode() == GameMode.CREATIVE) {
+            clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(
+                    PlayerActionType.PredictDestroyBlock, position, direction.ordinal()));
+            clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(
+                    PlayerActionType.AbortDestroyBlock, position, 0));
+        } else {
+            clientPlayer.setBlockBreakingInfo(new ClientPlayerEntity.BlockBreakingInfo(position, direction));
+        }
+    }
+
     public static boolean tryHandleSwapHands(final UserConnection user) {
         return ViaBedrock.getConfig().shouldEnableExperimentalFeatures()
                 && ClientAuthInventoryModule.tryHandleSwapHands(user);
@@ -733,6 +866,9 @@ public class ExperimentalFeatures {
     private static void finishConsumableUse(final UserConnection user, final InventoryTransactionRewriter inventoryTransactionRewriter, final ClientPlayerEntity clientPlayer) {
         final ItemUseSnapshot snapshot = clientPlayer.itemUseSnapshot();
         if (snapshot == null) {
+            return;
+        }
+        if (ItemUseSemantics.neteaseAutoCompletesConsumable(ViaBedrock.getConfig().shouldEmulateNetEaseClient(), true)) {
             return;
         }
         sendUseItemTransaction(user, inventoryTransactionRewriter, createHandContext(snapshot), clientPlayer, false);
@@ -1353,6 +1489,7 @@ public class ExperimentalFeatures {
         user.put(new MultilineNametagTracker(user));
         user.put(new ScriptDebugTextTracker(user));
         user.put(new BlockPlacementAckTracker(user));
+        user.put(new CustomBlockDisplayTracker(user));
 
         // Dispatch to feature modules
         for (final FeatureModule module : MODULES) {

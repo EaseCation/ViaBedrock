@@ -99,7 +99,7 @@ public class BlockEntityRewriter {
         BLOCK_ENTITY_REWRITERS.put(CustomBlockTags.MOB_SPAWNER, new MobSpawnerBlockEntityRewriter());
         BLOCK_ENTITY_REWRITERS.put(CustomBlockTags.NETHER_REACTOR, NULL_REWRITER);
         BLOCK_ENTITY_REWRITERS.put(CustomBlockTags.SCULK_CATALYST, NOOP_REWRITER);
-        BLOCK_ENTITY_REWRITERS.put(CustomBlockTags.SHULKER_BOX, new LootableContainerBlockEntityRewriter());
+        BLOCK_ENTITY_REWRITERS.put(CustomBlockTags.SHULKER_BOX, new ShulkerBoxBlockEntityRewriter());
         BLOCK_ENTITY_REWRITERS.put(CustomBlockTags.SIGN, new SignBlockEntityRewriter());
         BLOCK_ENTITY_REWRITERS.put(CustomBlockTags.SKULL, new SkullBlockEntityRewriter());
         BLOCK_ENTITY_REWRITERS.put(CustomBlockTags.SMOKER, new FurnaceBlockEntityRewriter());
@@ -240,7 +240,7 @@ public class BlockEntityRewriter {
         }
 
         default StringTag rewriteCustomName(final UserConnection user, final StringTag textTag) {
-            return new StringTag(TextUtil.stringToJson(user.get(ResourcePackStorage.class).getTexts().translate(textTag.getValue())));
+            return new StringTag(TextUtil.stringToJson(TextUtil.toSingleLine(user.get(ResourcePackStorage.class).getTexts().translate(textTag.getValue()))));
         }
 
     }
