@@ -200,7 +200,12 @@ public enum ClientboundBedrockPackets implements ClientboundPacketType {
     ATTRIBUTE_LAYER_SYNC(MinecraftPacketIds.ClientboundAttributeLayerSyncPacket.getValue()),
     SERVER_STORE_INFO(MinecraftPacketIds.ServerStoreInfo.getValue()),
     SERVER_PRESENCE_INFO(MinecraftPacketIds.ServerPresenceInfo.getValue()),
-    PY_RPC(0xC8);
+    PY_RPC(0xC8),
+    // NetEase title-specific packets. MOT packetPoolCurrentNetEase registers these on
+    // top of the international pool: PY_RPC=200, NETEASE_JSON=203, CONFIRM_SKIN=228, SYNC_SKIN=236.
+    NETEASE_JSON(0xCB),
+    CONFIRM_SKIN(0xE4),
+    SYNC_SKIN(0xEC);
 
     private static final ClientboundBedrockPackets[] REGISTRY = new ClientboundBedrockPackets[512];
 

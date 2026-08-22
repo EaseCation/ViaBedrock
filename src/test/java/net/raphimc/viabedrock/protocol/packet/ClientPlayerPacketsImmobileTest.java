@@ -17,12 +17,14 @@
  */
 package net.raphimc.viabedrock.protocol.packet;
 
+import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAuthInputPacket_InputData;
 import org.junit.jupiter.api.Test;
 
 import java.util.EnumSet;
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -55,6 +57,13 @@ class ClientPlayerPacketsImmobileTest {
         assertTrue(inputData.contains(PlayerAuthInputPacket_InputData.PerformItemInteraction));
         assertTrue(inputData.contains(PlayerAuthInputPacket_InputData.PerformBlockActions));
         assertTrue(inputData.contains(PlayerAuthInputPacket_InputData.MissedSwing));
+    }
+
+    @Test
+    void usesAbsoluteNeteaseLevelGravityForAuthInput() {
+        assertEquals(ProtocolConstants.PLAYER_GRAVITY, ClientPlayerPackets.neteaseAuthInputGravity((Float) null));
+        assertEquals(0.08f, ClientPlayerPackets.neteaseAuthInputGravity(-0.08f), 0.0001f);
+        assertEquals(0.16f, ClientPlayerPackets.neteaseAuthInputGravity(0.16f), 0.0001f);
     }
 
 }

@@ -1,0 +1,170 @@
+/*
+ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
+ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+package net.raphimc.viabedrock.protocol.packet;
+
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
+import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
+import net.raphimc.viabedrock.protocol.model.SkinData;
+import org.junit.jupiter.api.Test;
+
+import java.awt.image.BufferedImage;
+import java.util.Collections;
+import java.util.List;
+import java.util.UUID;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class NeteasePacketLayoutTest {
+
+    @Test
+    void registersNeteaseTitlePacketIds() {
+        assertEquals(200, ClientboundBedrockPackets.PY_RPC.getId());
+        assertEquals(203, ClientboundBedrockPackets.NETEASE_JSON.getId());
+        assertEquals(228, ClientboundBedrockPackets.CONFIRM_SKIN.getId());
+        assertEquals(236, ClientboundBedrockPackets.SYNC_SKIN.getId());
+        assertEquals(ClientboundBedrockPackets.NETEASE_JSON, ClientboundBedrockPackets.getPacket(0xCB));
+        assertEquals(ClientboundBedrockPackets.CONFIRM_SKIN, ClientboundBedrockPackets.getPacket(0xE4));
+        assertEquals(ClientboundBedrockPackets.SYNC_SKIN, ClientboundBedrockPackets.getPacket(0xEC));
+    }
+
+    @Test
+    void confirmSkinRoundTripsMotLayoutAndRebuildsRgbaSkin() {
+        final UUID uuid = UUID.fromString("00112233-4455-6677-8899-aabbccddeeff");
+        final byte[] rgba = new byte[64 * 64 * 4];
+        for (int i = 0; i < rgba.length; i += 4) {
+            rgba[i] = (byte) 0x11;
+            rgba[i + 1] = (byte) 0x22;
+            rgba[i + 2] = (byte) 0x33;
+            rgba[i + 3] = (byte) 0xFF;
+        }
+        final ConfirmSkinLayout.Entry written = new ConfirmSkinLayout.Entry(
+                true, uuid, rgba, "123456", "{\"minecraft:geometry\":[{\"description\":{\"identifier\":\"geometry.humanoid.custom\"}}]}");
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            ConfirmSkinLayout.writePacket(buffer, List.of(written));
+            final List<ConfirmSkinLayout.Entry> decoded = ConfirmSkinLayout.readPacket(buffer);
+            assertFalse(buffer.isReadable());
+            assertEquals(1, decoded.size());
+            final ConfirmSkinLayout.Entry entry = decoded.get(0);
+            assertTrue(entry.valid());
+            assertEquals(uuid, entry.uuid());
+            assertEquals("123456", entry.uidStr());
+            assertEquals(written.geoStr(), entry.geoStr());
+            assertEquals(rgba.length, entry.skinBytes().length);
+
+            final SkinData skin = ConfirmSkinLayout.toSkinData(entry);
+            assertNotNull(skin.skinData());
+            assertEquals(64, skin.skinData().getWidth());
+            assertEquals(64, skin.skinData().getHeight());
+            assertEquals(0xFF112233, skin.skinData().getRGB(0, 0));
+            assertTrue(skin.skinResourcePatch().contains("geometry.humanoid.custom"));
+            assertEquals(written.geoStr(), skin.geometryData());
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
+    void confirmSkinInfersKnownRgbaSizes() {
+        assertEquals(new ConfirmSkinLayout.SkinSize(64, 32), ConfirmSkinLayout.inferSkinSize(64 * 32 * 4));
+        assertEquals(new ConfirmSkinLayout.SkinSize(64, 64), ConfirmSkinLayout.inferSkinSize(64 * 64 * 4));
+        assertEquals(new ConfirmSkinLayout.SkinSize(128, 128), ConfirmSkinLayout.inferSkinSize(128 * 128 * 4));
+        assertNull(ConfirmSkinLayout.inferSkinSize(7));
+    }
+
+    @Test
+    void syncSkinRoundTripsMotLayoutThenOfficialSkin() {
+        final UUID uuid = UUID.fromString("11223344-5566-7788-99aa-bbccddeeff00");
+        final SkinData skin = dummySkin();
+        final SyncSkinLayout.Entry written = new SyncSkinLayout.Entry(true, uuid, "a", "b", "c", "d");
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            SyncSkinLayout.writePacket(buffer, List.of(written), skin);
+            final SyncSkinLayout.Packet decoded = SyncSkinLayout.readPacket(buffer);
+            assertFalse(buffer.isReadable());
+            assertEquals(1, decoded.entries().size());
+            final SyncSkinLayout.Entry entry = decoded.entries().get(0);
+            assertTrue(entry.flag());
+            assertEquals(uuid, entry.uuid());
+            assertEquals("a", entry.string1());
+            assertEquals("b", entry.string2());
+            assertEquals("c", entry.string3());
+            assertEquals("d", entry.string4());
+            assertNotNull(decoded.skin());
+            assertEquals(skin.skinId(), decoded.skin().skinId());
+            assertEquals(2, decoded.skin().skinData().getWidth());
+            assertEquals(2, decoded.skin().skinData().getHeight());
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
+    void neteaseJsonParsesSetLevelGravityFromMotPayload() {
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            NeteaseJsonLayout.writeJson(buffer, "{\"eventName\":\"SET_LEVEL_GRAVITY\",\"gravity\":-0.08}");
+            final String json = NeteaseJsonLayout.readJson(buffer);
+            assertFalse(buffer.isReadable());
+            final NeteaseJsonLayout.Event event = NeteaseJsonLayout.parse(json);
+            assertEquals(NeteaseJsonLayout.EVENT_SET_LEVEL_GRAVITY, event.eventName());
+            assertEquals(-0.08f, NeteaseJsonLayout.readGravity(event), 0.0001f);
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
+    void neteaseJsonUnknownEventsKeepEventNameWithoutInventedFields() {
+        final NeteaseJsonLayout.Event event = NeteaseJsonLayout.parse("{\"eventName\":\"CAN_PLAYER_MOVE\"}");
+        assertEquals(NeteaseJsonLayout.EVENT_CAN_PLAYER_MOVE, event.eventName());
+        assertNull(NeteaseJsonLayout.readGravity(event));
+    }
+
+    private static SkinData dummySkin() {
+        final BufferedImage image = new BufferedImage(2, 2, BufferedImage.TYPE_INT_ARGB);
+        image.setRGB(0, 0, 0xFF112233);
+        return new SkinData(
+                "skin-id",
+                "playfab",
+                ConfirmSkinLayout.DEFAULT_RESOURCE_PATCH,
+                image,
+                Collections.emptyList(),
+                null,
+                "{}",
+                "1.21.124",
+                "",
+                false,
+                false,
+                false,
+                true,
+                "",
+                "full-skin-id",
+                "wide",
+                "#0",
+                Collections.emptyList(),
+                Collections.emptyList(),
+                true
+        );
+    }
+}

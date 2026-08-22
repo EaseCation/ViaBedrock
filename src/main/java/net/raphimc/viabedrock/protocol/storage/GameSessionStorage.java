@@ -54,6 +54,7 @@ public class GameSessionStorage extends StoredObject {
 
     private boolean immutableWorld;
     private TextComponent deathMessage;
+    private Float neteaseLevelGravity;
 
     public GameSessionStorage(final UserConnection user) {
         super(user);
@@ -196,6 +197,19 @@ public class GameSessionStorage extends StoredObject {
 
     public void setDeathMessage(final TextComponent deathMessage) {
         this.deathMessage = deathMessage;
+    }
+
+    /**
+     * NetEase SET_LEVEL_GRAVITY from packet 203. MOT emits {@code -0.08} on join.
+     * Java clients already simulate gravity locally; this value is applied to the
+     * Bedrock PLAYER_AUTH_INPUT velocity we report, not to Java physics.
+     */
+    public Float getNeteaseLevelGravity() {
+        return this.neteaseLevelGravity;
+    }
+
+    public void setNeteaseLevelGravity(final Float neteaseLevelGravity) {
+        this.neteaseLevelGravity = neteaseLevelGravity;
     }
 
 }

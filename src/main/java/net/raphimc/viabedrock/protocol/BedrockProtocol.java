@@ -105,6 +105,7 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
         ChatPackets.register(this);
         ClientPlayerPackets.register(this);
         OtherPlayerPackets.register(this);
+        NeteasePackets.register(this);
         WorldPackets.register(this);
         EntityPackets.register(this);
         HudPackets.register(this);

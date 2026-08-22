@@ -653,7 +653,7 @@ public class ClientPlayerPackets {
                 if (clientPlayer.effects().containsKey("minecraft:levitation")) {
                     dy += (0.05F * (clientPlayer.effects().get("minecraft:levitation").amplifier() + 1)) * 0.2F;
                 } else {
-                    dy -= ProtocolConstants.PLAYER_GRAVITY;
+                    dy -= neteaseAuthInputGravity(wrapper.user());
                 }
                 // Slow falling does not change the velocity when standing still
 
@@ -776,6 +776,20 @@ public class ClientPlayerPackets {
 
     static void removeImmobileMovementInput(final Set<PlayerAuthInputPacket_InputData> inputData) {
         inputData.removeAll(IMMOBILE_MOVEMENT_INPUTS);
+    }
+
+    static float neteaseAuthInputGravity(final UserConnection user) {
+        final GameSessionStorage gameSession = user.get(GameSessionStorage.class);
+        return neteaseAuthInputGravity(gameSession != null ? gameSession.getNeteaseLevelGravity() : null);
+    }
+
+    static float neteaseAuthInputGravity(final Float gravity) {
+        if (gravity == null) {
+            return ProtocolConstants.PLAYER_GRAVITY;
+        }
+        // MOT writes SET_LEVEL_GRAVITY as a signed acceleration (join reset = -0.08).
+        // PLAYER_AUTH_INPUT already subtracts a positive gravity constant, so take abs.
+        return Math.abs(gravity);
     }
 
     static PlayerAuthInputPacket_InputData playerCommandInputData(final PlayerCommandAction action) {

@@ -69,7 +69,10 @@ public class PlayStateTransitionQueue extends StoredObject {
             ClientboundBedrockPackets.BIOME_DEFINITION_LIST,
             ClientboundBedrockPackets.PLAYER_LIST,
             ClientboundBedrockPackets.SET_TIME,
-            ClientboundBedrockPackets.SET_DIFFICULTY
+            ClientboundBedrockPackets.SET_DIFFICULTY,
+            ClientboundBedrockPackets.CONFIRM_SKIN,
+            ClientboundBedrockPackets.SYNC_SKIN,
+            ClientboundBedrockPackets.NETEASE_JSON
     );
 
     private static final int MAX_QUEUED_PACKETS = 4096;
