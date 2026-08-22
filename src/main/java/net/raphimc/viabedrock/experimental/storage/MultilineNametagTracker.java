@@ -382,6 +382,24 @@ public class MultilineNametagTracker extends StoredObject {
                 VersionedTypes.V26_1.entityDataTypes().componentType,
                 textNbt));
 
+        // LINE_WIDTH — large enough that hologram rows do not wrap into an extra overlapping
+        // line. Avoid Integer.MAX_VALUE in case a client stores the width in a narrower int.
+        displayData.add(new EntityData(
+                textDisplayIndex(EntityDataFields.LINE_WIDTH),
+                VersionedTypes.V26_1.entityDataTypes().varIntType,
+                1_000_000));
+
+        // TEXT_DISPLAY still inherits ENTITY.CUSTOM_NAME. Keep it empty so the display's own
+        // vanilla nametag cannot stack on top of the TEXT field.
+        displayData.add(new EntityData(
+                textDisplayIndex(EntityDataFields.CUSTOM_NAME),
+                VersionedTypes.V26_1.entityDataTypes().optionalComponentType,
+                null));
+        displayData.add(new EntityData(
+                textDisplayIndex(EntityDataFields.CUSTOM_NAME_VISIBLE),
+                VersionedTypes.V26_1.entityDataTypes().booleanType,
+                false));
+
         // BILLBOARD_RENDER_CONSTRAINTS = 3 (CENTER — face camera on all axes, matches vanilla nametag rendering)
         displayData.add(new EntityData(
                 textDisplayIndex(EntityDataFields.BILLBOARD_RENDER_CONSTRAINTS),
@@ -766,16 +784,9 @@ public class MultilineNametagTracker extends StoredObject {
     private static String getEntityName(final Entity entity) {
         final EntityData nameData = entity.entityData().get(ActorDataIDs.NAME);
         final EntityData nameRawData = entity.entityData().get(ActorDataIDs.NAME_RAW_TEXT);
-        // Prefer NAME_RAW_TEXT over NAME if both present
-        if (nameRawData != null) {
-            final String raw = (String) nameRawData.getValue();
-            if (raw != null && !TextUtil.stripFormatting(raw).isEmpty()) return raw;
-        }
-        if (nameData != null) {
-            final String name = (String) nameData.getValue();
-            if (name != null && !TextUtil.stripFormatting(name).isEmpty()) return name;
-        }
-        return null;
+        final String name = nameData != null ? (String) nameData.getValue() : null;
+        final String nameRaw = nameRawData != null ? (String) nameRawData.getValue() : null;
+        return TextUtil.nametagValue(name, nameRaw);
     }
 
     private static boolean isMultilineName(final String name) {
@@ -785,7 +796,7 @@ public class MultilineNametagTracker extends StoredObject {
     private static boolean isNametagAlwaysShown(final Entity entity) {
         final EntityData alwaysShowData = entity.entityData().get(ActorDataIDs.NAMETAG_ALWAYS_SHOW);
         if (alwaysShowData != null) {
-            return ((Number) alwaysShowData.getValue()).byteValue() == 1;
+            return TextUtil.nametagAlwaysShown((Number) alwaysShowData.getValue());
         }
         // Default: true for entities with a name (Bedrock default behavior)
         return true;

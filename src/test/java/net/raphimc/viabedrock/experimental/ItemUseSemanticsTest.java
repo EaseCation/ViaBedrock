@@ -39,6 +39,8 @@ class ItemUseSemanticsTest {
                 ItemUseSemantics.releaseAction("easecation:stackable_potion_heal", null, itemUse, 31));
         assertEquals(ItemReleaseInventoryTransaction_ActionType.Use,
                 ItemUseSemantics.releaseAction("easecation:stackable_potion_heal", null, itemUse, 32));
+        assertEquals(ItemReleaseInventoryTransaction_ActionType.Use,
+                ItemUseSemantics.releaseAction("easecation:stackable_potion_heal", null, itemUse, 31, true));
     }
 
     @Test
@@ -49,6 +51,8 @@ class ItemUseSemanticsTest {
                 ItemUseSemantics.releaseAction("test:quick_food", null, itemUse, 11));
         assertEquals(ItemReleaseInventoryTransaction_ActionType.Use,
                 ItemUseSemantics.releaseAction("test:quick_food", null, itemUse, 12));
+        assertEquals(ItemReleaseInventoryTransaction_ActionType.Use,
+                ItemUseSemantics.releaseAction("test:quick_food", null, itemUse, 11, true));
     }
 
     @Test
@@ -62,13 +66,17 @@ class ItemUseSemanticsTest {
     }
 
     @Test
-    void vanillaConsumablesKeepThirtyTwoTickThreshold() {
+    void vanillaConsumablesKeepOfficialDurationAndFinishEarlyOnNetEase() {
         assertEquals(ItemReleaseInventoryTransaction_ActionType.Release,
                 ItemUseSemantics.releaseAction("minecraft:potion", null, null, 31));
         assertEquals(ItemReleaseInventoryTransaction_ActionType.Use,
                 ItemUseSemantics.releaseAction("minecraft:potion", null, null, 32));
         assertEquals(ItemReleaseInventoryTransaction_ActionType.Use,
                 ItemUseSemantics.releaseAction("minecraft:apple", Set.of("minecraft:is_food"), null, 32));
+        assertEquals(ItemReleaseInventoryTransaction_ActionType.Release,
+                ItemUseSemantics.releaseAction("minecraft:apple", Set.of("minecraft:is_food"), null, 30, true));
+        assertEquals(ItemReleaseInventoryTransaction_ActionType.Use,
+                ItemUseSemantics.releaseAction("minecraft:apple", Set.of("minecraft:is_food"), null, 31, true));
     }
 
     @Test
@@ -93,10 +101,45 @@ class ItemUseSemanticsTest {
     }
 
     @Test
-    void neteaseAutoCompletesFoodAfterTheFirstClickAir() {
-        assertTrue(ItemUseSemantics.neteaseAutoCompletesConsumable(true, true));
-        assertFalse(ItemUseSemantics.neteaseAutoCompletesConsumable(false, true));
-        assertFalse(ItemUseSemantics.neteaseAutoCompletesConsumable(true, false));
+    void neteaseConsumablesSkipMobEquipmentAndFinishWithoutRelease() {
+        assertTrue(ItemUseSemantics.skipMobEquipmentBeforeUse(true, true));
+        assertFalse(ItemUseSemantics.skipMobEquipmentBeforeUse(false, true));
+        assertFalse(ItemUseSemantics.skipMobEquipmentBeforeUse(true, false));
+        assertFalse(ItemUseSemantics.sendConsumableFinishTransaction(true, true));
+        assertTrue(ItemUseSemantics.sendConsumableFinishTransaction(false, true));
+        assertFalse(ItemUseSemantics.sendConsumableFinishTransaction(true, false));
+        assertFalse(ItemUseSemantics.delayReleaseAfterConsumableFinish(true, true));
+        assertTrue(ItemUseSemantics.delayReleaseAfterConsumableFinish(false, true));
+        assertFalse(ItemUseSemantics.delayReleaseAfterConsumableFinish(true, false));
+        assertTrue(ItemUseSemantics.keepLocalUsingAfterConsumableFinish(true, true, false));
+        assertFalse(ItemUseSemantics.keepLocalUsingAfterConsumableFinish(true, true, true));
+        assertFalse(ItemUseSemantics.keepLocalUsingAfterConsumableFinish(false, true, false));
+        assertFalse(ItemUseSemantics.keepLocalUsingAfterConsumableFinish(true, false, false));
+        assertTrue(ItemUseSemantics.javaUsingVisible(true, true, 31));
+        assertFalse(ItemUseSemantics.javaUsingVisible(true, true, 32));
+        assertTrue(ItemUseSemantics.javaUsingVisible(true, false, 40));
+        assertTrue(ItemUseSemantics.ignoreJavaConsumableRelease(true, true));
+        assertFalse(ItemUseSemantics.ignoreJavaConsumableRelease(false, true));
+        assertFalse(ItemUseSemantics.ignoreJavaConsumableRelease(true, false));
+        assertTrue(ItemUseSemantics.suppressStartSprintingWhileUsingItem(true, true));
+        assertFalse(ItemUseSemantics.suppressStartSprintingWhileUsingItem(false, true));
+        assertFalse(ItemUseSemantics.suppressStartSprintingWhileUsingItem(true, false));
+        assertTrue(ItemUseSemantics.consumableConsumedByServer(322, 8, false, 322, 7));
+        assertTrue(ItemUseSemantics.consumableConsumedByServer(322, 1, true, 0, 0));
+        assertFalse(ItemUseSemantics.consumableConsumedByServer(322, 8, false, 322, 8));
+        assertFalse(ItemUseSemantics.localUsingTimedOut(true, true, 47));
+        assertTrue(ItemUseSemantics.localUsingTimedOut(true, true, 48));
+        assertFalse(ItemUseSemantics.localUsingTimedOut(false, true, 40));
+    }
+
+    @Test
+    void neteaseConsumablesDropDuplicateStartAndAuthInputInteraction() {
+        assertTrue(ItemUseSemantics.ignoreDuplicateUseStart(true, true));
+        assertFalse(ItemUseSemantics.ignoreDuplicateUseStart(false, true));
+        assertFalse(ItemUseSemantics.ignoreDuplicateUseStart(true, false));
+        assertFalse(ItemUseSemantics.attachAuthInputItemInteraction(true, true));
+        assertTrue(ItemUseSemantics.attachAuthInputItemInteraction(false, true));
+        assertTrue(ItemUseSemantics.attachAuthInputItemInteraction(true, false));
     }
 
 }

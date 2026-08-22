@@ -29,9 +29,11 @@ import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPack
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.model.entity.CustomEntity;
 import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
+import net.raphimc.viabedrock.experimental.ItemUseSemantics;
 import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.api.model.entity.LivingEntity;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
+import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorDataIDs;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorFlags;
 import net.raphimc.viabedrock.protocol.data.generated.java.Attributes;
@@ -40,8 +42,6 @@ import net.raphimc.viabedrock.api.util.TextUtil;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand;
 import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
-
-import com.viaversion.nbt.tag.Tag;
 
 import java.util.List;
 import java.util.Set;
@@ -82,7 +82,7 @@ public class EntityMetadataRewriter {
 
                 if (entity instanceof LivingEntity) {
                     final byte livingFlags = entity == entityTracker.getClientPlayer()
-                            ? localPlayerLivingFlags(bedrockFlags, entityTracker.getClientPlayer())
+                            ? localPlayerLivingFlags(bedrockFlags, entityTracker.getClientPlayer(), user.get(ItemRewriter.class))
                             : livingFlags(bedrockFlags);
                     upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.LIVING_ENTITY_FLAGS), VersionedTypes.V26_1.entityDataTypes().byteType, livingFlags));
                 }
@@ -756,47 +756,13 @@ public class EntityMetadataRewriter {
                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received TARGET for non-GUARDIAN entity " + entity.type() + " with non-zero value " + targetId);
                 }
             }
-            case NAME, NAME_RAW_TEXT -> {
+            case NAME, NAME_RAW_TEXT, NAMETAG_ALWAYS_SHOW -> {
                 // Trim blank lines so a single-line CUSTOM_NAME never carries leading/trailing newlines
                 // (rendered as missing-glyph boxes). Vanilla Java CUSTOM_NAME also cannot render interior
                 // newlines, so only the bottom line stays here. For multiline always-show entities the
-                // tracker spawns a TEXT_DISPLAY and filters this CUSTOM_NAME out of the packet.
-                String name = TextUtil.lastLine(TextUtil.trimBlankLines((String) entityData.getValue()));
-                if (name != null && !TextUtil.stripFormatting(name).isEmpty()) {
-                    Tag nbtName = TextUtil.stringToNbt(name);
-                    javaEntityData.add(new EntityData(
-                        entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME),
-                        VersionedTypes.V26_1.entityDataTypes().optionalComponentType,
-                        nbtName));
-                    javaEntityData.add(new EntityData(
-                        entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME_VISIBLE),
-                        VersionedTypes.V26_1.entityDataTypes().booleanType,
-                        true));
-                } else {
-                    javaEntityData.add(new EntityData(
-                        entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME),
-                        VersionedTypes.V26_1.entityDataTypes().optionalComponentType,
-                        null));
-                    javaEntityData.add(new EntityData(
-                        entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME_VISIBLE),
-                        VersionedTypes.V26_1.entityDataTypes().booleanType,
-                        false));
-                }
-            }
-            case NAMETAG_ALWAYS_SHOW -> {
-                byte alwaysShow = (byte) entityData.getValue();
-                boolean hasName = false;
-                if (alwaysShow == 1) {
-                    final EntityData nameData = entity.entityData().get(ActorDataIDs.NAME);
-                    final EntityData nameRawData = entity.entityData().get(ActorDataIDs.NAME_RAW_TEXT);
-                    final String name = nameData != null ? (String) nameData.getValue() : null;
-                    final String nameRaw = nameRawData != null ? (String) nameRawData.getValue() : null;
-                    hasName = (name != null && !TextUtil.stripFormatting(name).isEmpty()) || (nameRaw != null && !TextUtil.stripFormatting(nameRaw).isEmpty());
-                }
-                javaEntityData.add(new EntityData(
-                    entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME_VISIBLE),
-                    VersionedTypes.V26_1.entityDataTypes().booleanType,
-                    alwaysShow == 1 && hasName));
+                // tracker spawns a TEXT_DISPLAY; the host last-line CUSTOM_NAME must stay hidden or
+                // ArmorStandRenderer will draw it on top of the display (an extra overlapping row).
+                writeHostNametag(entity, javaEntityData);
             }
             case RESERVED_038 -> { // SCALE (Bedrock entity data ID 38)
                 float scale = readNumber(entityData).floatValue();
@@ -856,11 +822,30 @@ public class EntityMetadataRewriter {
         return flags;
     }
 
-    static byte localPlayerLivingFlags(final Set<ActorFlags> bedrockFlags, final ClientPlayerEntity clientPlayer) {
-        return localPlayerLivingFlags(bedrockFlags, clientPlayer.isUsingItem(), clientPlayer.usingItemHand());
+    public static byte localPlayerLivingFlags(final Set<ActorFlags> bedrockFlags, final ClientPlayerEntity clientPlayer) {
+        return localPlayerLivingFlags(bedrockFlags, clientPlayer, null);
     }
 
-    static byte localPlayerLivingFlags(final Set<ActorFlags> bedrockFlags, final boolean usingItem, final InteractionHand hand) {
+    public static byte localPlayerLivingFlags(final Set<ActorFlags> bedrockFlags, final ClientPlayerEntity clientPlayer, final ItemRewriter itemRewriter) {
+        final boolean visible = ItemUseSemantics.javaUsingVisible(
+                clientPlayer.isUsingItem(),
+                isConsumableUseItem(clientPlayer, itemRewriter),
+                clientPlayer.usingItemTicks()
+        );
+        return localPlayerLivingFlags(bedrockFlags, visible, visible ? clientPlayer.usingItemHand() : null);
+    }
+
+    private static boolean isConsumableUseItem(final ClientPlayerEntity clientPlayer, final ItemRewriter itemRewriter) {
+        final ClientPlayerEntity.ItemUseSnapshot snapshot = clientPlayer.itemUseSnapshot();
+        if (snapshot == null || itemRewriter == null) {
+            return false;
+        }
+        final String identifier = itemRewriter.bedrockIdentifier(snapshot.item());
+        final Set<String> itemTags = identifier != null ? BedrockProtocol.MAPPINGS.getBedrockItemTags().get(identifier) : null;
+        return ItemUseSemantics.isConsumableUseItem(identifier, itemTags, itemRewriter.itemUseDefinition(snapshot.item()));
+    }
+
+    public static byte localPlayerLivingFlags(final Set<ActorFlags> bedrockFlags, final boolean usingItem, final InteractionHand hand) {
         byte flags = (byte) (bedrockFlags.contains(ActorFlags.DAMAGENEARBYMOBS) ? 0x04 : 0);
         if (usingItem && hand != null) {
             flags |= 0x01;
@@ -956,6 +941,57 @@ public class EntityMetadataRewriter {
         final EntityData colorData = entity.entityData().get(ActorDataIDs.COLOR_INDEX);
         final int color = colorData != null ? readNumber(colorData).intValue() : 0;
         return sheepFlags(color, entity.hasEntityFlag(ActorFlags.SHEARED));
+    }
+
+    /**
+     * Multiline always-show names are owned by {@code MultilineNametagTracker}'s TEXT_DISPLAY,
+     * so the host last line is cleared instead of being left for ArmorStandRenderer.
+     */
+    static boolean shouldHideHostNametag(final String effectiveName, final boolean alwaysShow) {
+        return alwaysShow && effectiveName != null && effectiveName.indexOf('\n') >= 0;
+    }
+
+    private static void writeHostNametag(final Entity entity, final List<EntityData> javaEntityData) {
+        final String effective = effectiveNametag(entity);
+        final boolean alwaysShow = nametagAlwaysShown(entity);
+        if (shouldHideHostNametag(effective, alwaysShow)) {
+            upsert(javaEntityData, new EntityData(
+                    entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME),
+                    VersionedTypes.V26_1.entityDataTypes().optionalComponentType,
+                    null));
+            upsert(javaEntityData, new EntityData(
+                    entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME_VISIBLE),
+                    VersionedTypes.V26_1.entityDataTypes().booleanType,
+                    false));
+            return;
+        }
+
+        final String name = TextUtil.lastLine(effective);
+        final boolean hasVisibleName = name != null && !TextUtil.stripFormatting(name).isEmpty();
+        upsert(javaEntityData, new EntityData(
+                entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME),
+                VersionedTypes.V26_1.entityDataTypes().optionalComponentType,
+                hasVisibleName ? TextUtil.stringToNbt(name) : null));
+        upsert(javaEntityData, new EntityData(
+                entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME_VISIBLE),
+                VersionedTypes.V26_1.entityDataTypes().booleanType,
+                alwaysShow && hasVisibleName));
+    }
+
+    private static String effectiveNametag(final Entity entity) {
+        final EntityData nameData = entity.entityData().get(ActorDataIDs.NAME);
+        final EntityData nameRawData = entity.entityData().get(ActorDataIDs.NAME_RAW_TEXT);
+        final String name = nameData != null ? (String) nameData.getValue() : null;
+        final String nameRaw = nameRawData != null ? (String) nameRawData.getValue() : null;
+        return TextUtil.trimBlankLines(TextUtil.nametagValue(name, nameRaw));
+    }
+
+    private static boolean nametagAlwaysShown(final Entity entity) {
+        final EntityData alwaysShowData = entity.entityData().get(ActorDataIDs.NAMETAG_ALWAYS_SHOW);
+        if (alwaysShowData != null) {
+            return TextUtil.nametagAlwaysShown((Number) alwaysShowData.getValue());
+        }
+        return true;
     }
 
     private static void applySpellCasting(final Entity entity, final List<EntityData> javaEntityData) {

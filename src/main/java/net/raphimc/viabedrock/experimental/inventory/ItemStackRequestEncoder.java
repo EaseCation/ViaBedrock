@@ -61,6 +61,9 @@ public final class ItemStackRequestEncoder {
         }
         final List<Action> stackActions = new ArrayList<>();
         final List<InventoryActionData> remaining = new ArrayList<>(actions);
+        if (prependCreative(remaining, tracker, stackActions)) {
+            return encodeActions(stackActions, tracker, emulateNetEase, protocol);
+        }
         final boolean crafting = prependCraftRecipe(remaining, tracker, stackActions);
         while (!remaining.isEmpty()) {
             final Action converted = takeNext(remaining, tracker, crafting);
@@ -98,13 +101,15 @@ public final class ItemStackRequestEncoder {
             case Drop -> ItemStackRequestLayout.writeDrop(buffer, action.count, action.source, false, emulateNetEase, protocol);
             case Consume -> ItemStackRequestLayout.writeConsume(buffer, action.count, action.source, emulateNetEase, protocol);
             case CraftRecipe -> ItemStackRequestLayout.writeCraftRecipe(buffer, action.count, 1, emulateNetEase, protocol);
+            case CraftCreative -> ItemStackRequestLayout.writeCraftCreative(buffer, action.count, 1, emulateNetEase, protocol);
+            case Destroy -> ItemStackRequestLayout.writeDestroy(buffer, action.count, action.source, emulateNetEase, protocol);
             default -> throw new IllegalStateException("Unsupported item-stack action: " + action.type);
         }
     }
 
     private static Action takeNext(final List<InventoryActionData> remaining, final InventoryTracker tracker, final boolean crafting) {
         for (final InventoryActionData action : remaining) {
-            if (isCreative(action) || (!isContainer(action) && !isWorldDrop(action) && !isCraftTodo(action))) {
+            if (!isContainer(action) && !isWorldDrop(action) && !isCraftTodo(action) && !isCreative(action)) {
                 return null;
             }
         }
@@ -177,6 +182,91 @@ public final class ItemStackRequestEncoder {
             return Action.transfer(ItemStackRequestActionType.Take, movedCount(destination), source, destinationSlot);
         }
         return null;
+    }
+
+    private static boolean prependCreative(final List<InventoryActionData> remaining, final InventoryTracker tracker,
+                                           final List<Action> stackActions) {
+        Integer creativeNetId = null;
+        InventoryActionData creativeAction = null;
+        for (final InventoryActionData action : remaining) {
+            if (!isCreative(action) || movedCount(action) <= 0) {
+                continue;
+            }
+            creativeAction = action;
+            creativeNetId = creativeNetId(tracker, destinationItem(action));
+            break;
+        }
+        if (creativeAction == null) {
+            return false;
+        }
+        if (creativeNetId == null) {
+            remaining.clear();
+            return true;
+        }
+        remaining.remove(creativeAction);
+        stackActions.add(Action.creative(creativeNetId));
+        InventoryActionData destination = null;
+        InventoryActionData drop = null;
+        for (final InventoryActionData action : remaining) {
+            if (isContainer(action) && isDestinationIncrease(action)) {
+                destination = action;
+            } else if (isWorldDrop(action)) {
+                drop = action;
+            }
+        }
+        if (drop != null) {
+            remaining.remove(drop);
+            if (destination != null) {
+                remaining.remove(destination);
+            }
+            final ItemStackRequestLayout.SlotInfo source = new ItemStackRequestLayout.SlotInfo(ContainerEnumName.CreatedOutputContainer, 50, 0);
+            stackActions.add(Action.drop(movedCount(drop), source));
+            return true;
+        }
+        if (destination == null) {
+            remaining.clear();
+            return true;
+        }
+        remaining.remove(destination);
+        final ItemStackRequestLayout.SlotInfo source = new ItemStackRequestLayout.SlotInfo(ContainerEnumName.CreatedOutputContainer, 50, 0);
+        final ItemStackRequestLayout.SlotInfo destSlot = slotInfo(destination, tracker);
+        if (destSlot == null) {
+            remaining.clear();
+            return true;
+        }
+        stackActions.add(Action.transfer(ItemStackRequestActionType.Take, movedCount(destination), source, destSlot));
+        return true;
+    }
+
+    private static Integer creativeNetId(final InventoryTracker tracker, final BedrockItem item) {
+        if (tracker == null || tracker.user() == null || item == null || item.isEmpty()) {
+            return null;
+        }
+        final net.raphimc.viabedrock.experimental.storage.CreativeContentCache cache =
+                tracker.user().get(net.raphimc.viabedrock.experimental.storage.CreativeContentCache.class);
+        return cache != null ? cache.findNetId(item) : null;
+    }
+
+    private static EncodedRequest encodeActions(final List<Action> stackActions, final InventoryTracker tracker,
+                                                final boolean emulateNetEase, final int protocol) {
+        if (stackActions.isEmpty()) {
+            return EncodedRequest.notSupported();
+        }
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 1);
+            BedrockTypes.VAR_INT.write(buffer, nextRequestId(tracker));
+            BedrockTypes.UNSIGNED_VAR_INT.write(buffer, stackActions.size());
+            for (final Action action : stackActions) {
+                writeAction(buffer, action, emulateNetEase, protocol);
+            }
+            ItemStackRequestLayout.writeRequestTrailer(buffer, emulateNetEase, protocol);
+            final byte[] payload = new byte[buffer.readableBytes()];
+            buffer.readBytes(payload);
+            return EncodedRequest.of(payload);
+        } finally {
+            buffer.release();
+        }
     }
 
     private static boolean prependCraftRecipe(final List<InventoryActionData> remaining, final InventoryTracker tracker,
@@ -513,6 +603,14 @@ public final class ItemStackRequestEncoder {
 
         static Action craft(final int recipeNetworkId) {
             return new Action(ItemStackRequestActionType.CraftRecipe, recipeNetworkId, null, null);
+        }
+
+        static Action creative(final int creativeNetId) {
+            return new Action(ItemStackRequestActionType.CraftCreative, creativeNetId, null, null);
+        }
+
+        static Action destroy(final int count, final ItemStackRequestLayout.SlotInfo source) {
+            return new Action(ItemStackRequestActionType.Destroy, count, source, null);
         }
     }
 

@@ -72,7 +72,31 @@ public class InstanceItemType extends Type<BedrockItem> {
 
     @Override
     public void write(final ByteBuf buffer, final BedrockItem value) {
-        throw new UnsupportedOperationException();
+        if (value == null || value.isEmpty()) {
+            BedrockTypes.VAR_INT.write(buffer, 0);
+            return;
+        }
+        BedrockTypes.VAR_INT.write(buffer, value.identifier());
+        buffer.writeShortLE(value.amount());
+        BedrockTypes.UNSIGNED_VAR_INT.write(buffer, (int) value.data());
+        BedrockTypes.VAR_INT.write(buffer, value.blockRuntimeId());
+
+        final ByteBuf userData = buffer.alloc().buffer();
+        try {
+            if (value.tag() != null) {
+                userData.writeShortLE(-1);
+                userData.writeByte(1);
+                BedrockTypes.TAG_LE.write(userData, value.tag());
+            } else {
+                userData.writeShortLE(0);
+            }
+            BedrockTypes.UTF8_STRING_ARRAY.write(userData, value.canPlace() != null ? value.canPlace() : new String[0]);
+            BedrockTypes.UTF8_STRING_ARRAY.write(userData, value.canBreak() != null ? value.canBreak() : new String[0]);
+            BedrockTypes.UNSIGNED_VAR_INT.write(buffer, userData.readableBytes());
+            buffer.writeBytes(userData);
+        } finally {
+            userData.release();
+        }
     }
 
 }

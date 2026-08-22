@@ -140,6 +140,7 @@ public class ChunkTracker extends StoredObject {
         this.centerX = x;
         this.centerZ = z;
         this.removeOutOfLoadDistanceChunks();
+        this.markLoadedUnsentChunksDirty();
     }
 
     public void setRadius(final int radius) {
@@ -659,23 +660,29 @@ public class ChunkTracker extends StoredObject {
     }
 
     public void sendChunk(final int chunkX, final int chunkZ) {
+        if (!this.trySendChunk(chunkX, chunkZ)) {
+            this.dirtyChunks.add(ChunkPosition.chunkKey(chunkX, chunkZ));
+        }
+    }
+
+    boolean trySendChunk(final int chunkX, final int chunkZ) {
         final BedrockChunk chunk = this.getChunk(chunkX, chunkZ);
         if (chunk == null) {
-            return;
+            return true;
         }
 
         final boolean playerChunkForGate = this.isPlayerChunk(chunkX, chunkZ);
         if (this.delayNonPlayerChunkBeforeJavaLogin(chunkX, chunkZ, playerChunkForGate)) {
-            return;
+            return false;
         }
 
-        final Chunk remappedChunk = this.remapChunk(chunk);
-        if (remappedChunk == null) {
-            return;
+        final Chunk translatableChunk = this.remapChunk(chunk);
+        if (translatableChunk == null) {
+            return false;
         }
 
         if (!this.ensureJavaLoginForPlayerChunk(chunkX, chunkZ, playerChunkForGate)) {
-            return;
+            return false;
         }
 
         final ClientLightStorage clientLightStorage = this.user().get(ClientLightStorage.class);
@@ -684,24 +691,24 @@ public class ChunkTracker extends StoredObject {
                 ViaBedrock.getPlatform().getLogger().fine("Froze ECClientLight negotiation at first chunk: " + clientLightStorage.mode());
             }
             if (clientLightStorage.isClientComputed()) {
-                if (!this.stripCustomBlockData(remappedChunk)) {
-                    return;
+                if (!this.stripCustomBlockData(translatableChunk)) {
+                    return false;
                 }
-                final int lightSectionCount = remappedChunk.getSections().length + 2;
-                this.sendChunkWithPlaceholderLight(remappedChunk, lightSectionCount);
+                final int lightSectionCount = translatableChunk.getSections().length + 2;
+                this.sendChunkWithPlaceholderLight(translatableChunk, lightSectionCount);
                 if (clientLightStorage.markClientComputedBypassLogged()) {
                     ViaBedrock.getPlatform().getLogger().fine("Sent first chunk without proxy light computation for ECClientLight");
                 }
-                return;
+                return true;
             }
         }
 
         // SERVER_COMPUTED always has one provider; a refusal means the tracker/mode invariant broke.
-        if (this.lightProvider.processAndSendChunk(this, chunkX, chunkZ, remappedChunk)) {
-            return;
+        if (this.lightProvider.processAndSendChunk(this, chunkX, chunkZ, translatableChunk)) {
+            return true;
         }
         if (this.user().get(ChunkTracker.class) != this) {
-            return;
+            return false;
         }
         throw new IllegalStateException("Current ChunkTracker has no active proxy light provider in server-computed mode");
     }
@@ -871,7 +878,11 @@ public class ChunkTracker extends StoredObject {
         if (!this.dirtyChunks.isEmpty()) {
             int count = 0;
             while (!this.dirtyChunks.isEmpty() && count < MAX_CHUNKS_PER_TICK) {
-                final Long dirtyChunk = this.levelChunksLoadStartSent ? this.pollPlayerNeighborhoodDirtyChunk() : this.pollPlayerDirtyChunk();
+                Long dirtyChunk = this.levelChunksLoadStartSent ? this.pollPlayerNeighborhoodDirtyChunk() : this.pollPlayerDirtyChunk();
+                if (dirtyChunk == null && this.levelChunksLoadStartSent && shouldFallThroughNeighborhoodGate(
+                        this.playerCompileNeighborhoodSent(), this.hasPlayerNeighborhoodDirtyChunk(), this.javaSentChunks.contains(this.playerChunkKey()), !this.dirtyChunks.isEmpty())) {
+                    dirtyChunk = this.pollNextDirtyChunk();
+                }
                 if (dirtyChunk == null) {
                     break;
                 }
@@ -1051,6 +1062,11 @@ public class ChunkTracker extends StoredObject {
         return null;
     }
 
+    static boolean shouldFallThroughNeighborhoodGate(final boolean neighborhoodSent, final boolean hasNeighborhoodDirty,
+                                                      final boolean playerColumnSent, final boolean hasAnyDirty) {
+        return !neighborhoodSent && !hasNeighborhoodDirty && playerColumnSent && hasAnyDirty;
+    }
+
     private Long pollPlayerNeighborhoodDirtyChunk() {
         if (this.playerCompileNeighborhoodSent()) {
             return this.pollNextDirtyChunk();
@@ -1086,6 +1102,26 @@ public class ChunkTracker extends StoredObject {
             this.dirtyChunks.remove((long) bestKey);
         }
         return bestKey;
+    }
+
+    private boolean hasPlayerNeighborhoodDirtyChunk() {
+        if (this.playerCompileNeighborhoodSent()) {
+            return false;
+        }
+        final EntityTracker entityTracker = this.user().get(EntityTracker.class);
+        if (entityTracker == null) {
+            return false;
+        }
+        final Position3f playerPosition = entityTracker.getClientPlayer().position();
+        final int playerChunkX = (int) Math.floor(playerPosition.x()) >> 4;
+        final int playerChunkZ = (int) Math.floor(playerPosition.z()) >> 4;
+        for (final long key : this.dirtyChunks) {
+            final ChunkPosition chunkPos = new ChunkPosition(key);
+            if (Math.abs(chunkPos.chunkX() - playerChunkX) <= 1 && Math.abs(chunkPos.chunkZ() - playerChunkZ) <= 1) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Set<SubChunkRequestTracker.Position> pollNextSubChunkRequestGroup(final int limit) {
@@ -1132,6 +1168,14 @@ public class ChunkTracker extends StoredObject {
         final int playerChunkX = (int) Math.floor(playerPosition.x()) >> 4;
         final int playerChunkZ = (int) Math.floor(playerPosition.z()) >> 4;
         return new ChunkPosition(playerChunkX, playerChunkZ);
+    }
+
+    private void markLoadedUnsentChunksDirty() {
+        for (final long chunkKey : this.chunks.keySet()) {
+            if (!this.javaSentChunks.contains(chunkKey) && this.isInLoadDistance(new ChunkPosition(chunkKey).chunkX(), new ChunkPosition(chunkKey).chunkZ())) {
+                this.dirtyChunks.add(chunkKey);
+            }
+        }
     }
 
     private void markPlayerNeighborhoodDirty(final ChunkPosition playerChunk) {

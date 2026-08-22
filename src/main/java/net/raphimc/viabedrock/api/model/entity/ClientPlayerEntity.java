@@ -101,6 +101,7 @@ public class ClientPlayerEntity extends PlayerEntity {
     private int usingItemStartAge = -1;
     private ItemUseSnapshot itemUseSnapshot;
     private boolean crossbowChargeFinishSent;
+    private boolean consumableFinishSent;
 
     // The UUID the Bedrock server assigned to the local player in the player list. It differs from
     // javaUuid (see HudPackets PLAYER_LIST remap), and is the UUID the server uses to address the
@@ -524,6 +525,7 @@ public class ClientPlayerEntity extends PlayerEntity {
         this.usingItemStartAge = -1;
         this.itemUseSnapshot = null;
         this.crossbowChargeFinishSent = false;
+        this.consumableFinishSent = false;
     }
 
     public void startUsingItem(final InteractionHand hand, final byte containerId, final int containerSlot, final int transactionHotbarSlot, final BedrockItem item) {
@@ -531,6 +533,7 @@ public class ClientPlayerEntity extends PlayerEntity {
         this.usingItemStartAge = this.age;
         this.itemUseSnapshot = new ItemUseSnapshot(hand, containerId, containerSlot, transactionHotbarSlot, item);
         this.crossbowChargeFinishSent = false;
+        this.consumableFinishSent = false;
     }
 
     public InteractionHand usingItemHand() {
@@ -551,6 +554,14 @@ public class ClientPlayerEntity extends PlayerEntity {
 
     public void setCrossbowChargeFinishSent(final boolean crossbowChargeFinishSent) {
         this.crossbowChargeFinishSent = crossbowChargeFinishSent;
+    }
+
+    public boolean isConsumableFinishSent() {
+        return this.consumableFinishSent;
+    }
+
+    public void setConsumableFinishSent(final boolean consumableFinishSent) {
+        this.consumableFinishSent = consumableFinishSent;
     }
 
     @Override

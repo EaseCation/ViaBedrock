@@ -97,6 +97,27 @@ public class TextUtil {
     }
 
     /**
+     * Picks the Bedrock nametag string Java should actually render.
+     * {@code NAME_RAW_TEXT} wins over {@code NAME} when it has visible content, matching
+     * {@code MultilineNametagTracker} so host CUSTOM_NAME and the multiline display never
+     * diverge onto different source fields.
+     */
+    public static String nametagValue(final String name, final String nameRaw) {
+        if (nameRaw != null && !stripFormatting(nameRaw).isEmpty()) return nameRaw;
+        if (name != null && !stripFormatting(name).isEmpty()) return name;
+        return null;
+    }
+
+    /**
+     * Bedrock {@code NAMETAG_ALWAYS_SHOW} is a signed byte. Vanilla/Nukkit write {@code 1}/{@code 0};
+     * some NetEase holograms write {@code -1} for always-on. Only an explicit {@code 0} is look-at-only.
+     * {@code null} means the field was omitted; Bedrock then always-shows named entities.
+     */
+    public static boolean nametagAlwaysShown(final Number value) {
+        return value == null || value.byteValue() != 0;
+    }
+
+    /**
      * Returns the last line of a (potentially multiline) nametag string.
      * Java team prefixes and vanilla player nametags cannot render {@code \n}, so the
      * extra lines have to live on virtual armor stands instead of the host prefix.

@@ -12,9 +12,37 @@ package net.raphimc.viabedrock.api.util;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TextUtilTest {
+
+    @Test
+    void nametagAlwaysShownTreatsMinusOneAsAlwaysOn() {
+        assertTrue(TextUtil.nametagAlwaysShown(null));
+        assertTrue(TextUtil.nametagAlwaysShown((byte) 1));
+        assertTrue(TextUtil.nametagAlwaysShown((byte) -1));
+        assertTrue(TextUtil.nametagAlwaysShown(255));
+        assertFalse(TextUtil.nametagAlwaysShown((byte) 0));
+    }
+
+    @Test
+    void stringToTextComponentKeepsNametagNewlines() {
+        final String json = TextUtil.textComponentToJson(TextUtil.stringToTextComponent("Title\nSubtitle"));
+        assertTrue(json.contains("Title") && json.contains("Subtitle"), json);
+        assertTrue(json.contains("\\n") || json.contains("\n"), json);
+    }
+
+    @Test
+    void nametagValuePrefersRawTextOverName() {
+        assertEquals("raw\nline", TextUtil.nametagValue("name", "raw\nline"));
+        assertEquals("name", TextUtil.nametagValue("name", ""));
+        assertEquals("name", TextUtil.nametagValue("name", "§r"));
+        assertEquals("raw", TextUtil.nametagValue(null, "raw"));
+        assertNull(TextUtil.nametagValue("§r", "§l"));
+        assertNull(TextUtil.nametagValue(null, null));
+    }
 
     @Test
     void lastLineKeepsSingleLineNames() {

@@ -44,6 +44,7 @@ import net.raphimc.viabedrock.api.model.container.*;
 import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
 import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.api.util.PacketFactory;
+import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
 import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.api.util.TextUtil;
 import net.raphimc.viabedrock.experimental.inventory.ClientAuthInventoryModule;
@@ -484,6 +485,12 @@ public class InventoryPackets {
             }
         });
         protocol.registerServerbound(ServerboundPackets26_1.SET_CREATIVE_MODE_SLOT, null, wrapper -> {
+            // NetEase 860 SAI creative clicks are owned by ClientAuthInventoryModule.
+            // Official 975 still cancels and resyncs; keep that fork here.
+            if (ViaBedrock.getConfig().shouldEnableExperimentalFeatures()
+                    && ViaBedrock.getConfig().shouldEmulateNetEaseClient()) {
+                return;
+            }
             wrapper.cancel();
             final short slot = wrapper.read(Types.SHORT); // slot
             final Item item = wrapper.read(VersionedTypes.V26_1.lengthPrefixedItem); // item
@@ -590,6 +597,14 @@ public class InventoryPackets {
         });
         protocol.registerServerbound(ServerboundPackets26_1.SET_CARRIED_ITEM, ServerboundBedrockPackets.MOB_EQUIPMENT, wrapper -> {
             final short slot = wrapper.read(Types.SHORT); // slot
+            // Nukkit's MobEquipmentProcessor always calls setUsingItem(false). Changing hotbar
+            // mid-eat would cancel the using-state that the first CLICK_AIR just started.
+            final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
+            if (ViaBedrock.getConfig().shouldEmulateNetEaseClient() && clientPlayer != null && clientPlayer.isUsingItem()) {
+                wrapper.cancel();
+                wrapper.user().get(InventoryTracker.class).getInventoryContainer().sendSelectedHotbarSlotToClient();
+                return;
+            }
             wrapper.user().get(InventoryTracker.class).getInventoryContainer().setSelectedHotbarSlot((byte) slot, wrapper); // slot
         });
         protocol.registerServerbound(ServerboundPackets26_1.PICK_ITEM_FROM_BLOCK, ServerboundBedrockPackets.BLOCK_PICK_REQUEST, wrapper -> {

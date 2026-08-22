@@ -58,8 +58,11 @@ import net.raphimc.viabedrock.experimental.entity.CustomEntityTypeResolver;
 import net.raphimc.viabedrock.experimental.npc.NpcDialogueModule;
 import net.raphimc.viabedrock.experimental.modinterface.ModUIClientModule;
 import net.raphimc.viabedrock.experimental.resourcepack.ResourcePackModule;
+import net.raphimc.viabedrock.experimental.rewriter.EntityMetadataRewriter;
 import net.raphimc.viabedrock.experimental.rewriter.ExperimentalItemRewriter;
 import net.raphimc.viabedrock.experimental.rewriter.InventoryTransactionRewriter;
+import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
+import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
 import net.raphimc.viabedrock.experimental.riding.RidingModule;
 import net.raphimc.viabedrock.experimental.tablist.TabListLatencyModule;
 import net.raphimc.viabedrock.experimental.storage.BlockPlacementAckTracker;
@@ -336,7 +339,7 @@ public class ExperimentalFeatures {
     private static ItemReleaseInventoryTransaction_ActionType releaseActionForItem(final ItemRewriter itemRewriter, final BedrockItem item, final int usingTicks) {
         final String identifier = itemRewriter.bedrockIdentifier(item);
         final Set<String> itemTags = identifier != null ? BedrockProtocol.MAPPINGS.getBedrockItemTags().get(identifier) : null;
-        return ItemUseSemantics.releaseAction(identifier, itemTags, itemRewriter.itemUseDefinition(item), usingTicks);
+        return ItemUseSemantics.releaseAction(identifier, itemTags, itemRewriter.itemUseDefinition(item), usingTicks, ViaBedrock.getConfig().shouldEmulateNetEaseClient());
     }
 
     private static boolean isContinuousUseItem(final ItemRewriter itemRewriter, final BedrockItem item) {
@@ -374,6 +377,41 @@ public class ExperimentalFeatures {
                 isBow(itemRewriter, item),
                 isCrossbow(itemRewriter, item)
         );
+    }
+
+    private static boolean shouldSkipMobEquipmentBeforeUse(final ItemRewriter itemRewriter, final BedrockItem item) {
+        return ItemUseSemantics.skipMobEquipmentBeforeUse(
+                ViaBedrock.getConfig().shouldEmulateNetEaseClient(),
+                isConsumableUseItem(itemRewriter, item)
+        );
+    }
+
+    private static boolean shouldAttachAuthInputItemInteraction(final ItemRewriter itemRewriter, final BedrockItem item) {
+        return ItemUseSemantics.attachAuthInputItemInteraction(
+                ViaBedrock.getConfig().shouldEmulateNetEaseClient(),
+                isConsumableUseItem(itemRewriter, item)
+        );
+    }
+
+    private static void beginContinuousItemUse(final UserConnection user, final InventoryTransactionRewriter inventoryTransactionRewriter,
+                                               final ClientPlayerEntity clientPlayer, final ItemRewriter itemRewriter,
+                                               final ItemUseHandContext handContext) {
+        final BedrockItem selectedItem = handContext.item();
+        if (ItemUseSemantics.ignoreDuplicateUseStart(clientPlayer.isUsingItem(), matchesUseItem(handContext, clientPlayer))) {
+            return;
+        }
+        clientPlayer.startUsingItem(handContext.hand(), handContext.containerId(), handContext.containerSlot(), handContext.transactionHotbarSlot(), selectedItem);
+        clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StartUsingItem);
+        if (shouldAttachAuthInputItemInteraction(itemRewriter, selectedItem)) {
+            clientPlayer.setAuthInputItemInteraction(createUseItemTransaction(handContext, clientPlayer));
+        }
+        if (ItemUseSemantics.suppressStartSprintingWhileUsingItem(ViaBedrock.getConfig().shouldEmulateNetEaseClient(), true)) {
+            clientPlayer.authInputData().remove(PlayerAuthInputPacket_InputData.StartSprinting);
+            clientPlayer.setSprinting(false);
+        }
+        if (shouldSendStandaloneUseTransaction(itemRewriter, selectedItem)) {
+            sendUseItemTransaction(user, inventoryTransactionRewriter, handContext, clientPlayer);
+        }
     }
 
     private static BedrockInventoryTransaction createUseItemTransaction(final ItemUseHandContext handContext, final ClientPlayerEntity clientPlayer) {
@@ -816,12 +854,33 @@ public class ExperimentalFeatures {
         );
     }
 
+    private static void syncJavaUsingItem(final UserConnection user, final ClientPlayerEntity clientPlayer) {
+        final List<EntityData> javaEntityData = new ArrayList<>();
+        javaEntityData.add(new EntityData(
+                clientPlayer.getJavaEntityDataIndex(EntityDataFields.LIVING_ENTITY_FLAGS),
+                VersionedTypes.V26_1.entityDataTypes().byteType,
+                EntityMetadataRewriter.localPlayerLivingFlags(clientPlayer.entityFlags(), clientPlayer, user.get(ItemRewriter.class))
+        ));
+        final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets26_1.SET_ENTITY_DATA, user);
+        setEntityData.write(Types.VAR_INT, clientPlayer.javaId());
+        setEntityData.write(VersionedTypes.V26_1.entityDataList, javaEntityData);
+        setEntityData.send(BedrockProtocol.class);
+    }
+
+    private static void stopUsingItem(final UserConnection user, final ClientPlayerEntity clientPlayer) {
+        if (!clientPlayer.isUsingItem()) {
+            return;
+        }
+        clientPlayer.setUsingItem(false);
+        syncJavaUsingItem(user, clientPlayer);
+    }
+
     private static void cancelUsingItem(final UserConnection user, final InventoryTransactionRewriter inventoryTransactionRewriter, final ClientPlayerEntity clientPlayer) {
         final ItemUseSnapshot snapshot = clientPlayer.itemUseSnapshot();
         if (snapshot != null) {
             sendReleaseItemTransaction(user, inventoryTransactionRewriter, createReleaseItemSnapshot(snapshot, clientPlayer), ItemReleaseInventoryTransaction_ActionType.Release);
         }
-        clientPlayer.setUsingItem(false);
+        stopUsingItem(user, clientPlayer);
     }
 
     private static ItemUseHandContext createHandContext(final ItemUseSnapshot snapshot) {
@@ -839,7 +898,7 @@ public class ExperimentalFeatures {
     }
 
     private static void sendUseItemTransaction(final UserConnection user, final InventoryTransactionRewriter inventoryTransactionRewriter, final ItemUseHandContext handContext, final ClientPlayerEntity clientPlayer, final boolean sendEquipment) {
-        if (sendEquipment && handContext.isMainHand()) {
+        if (sendEquipment && handContext.isMainHand() && !shouldSkipMobEquipmentBeforeUse(user.get(ItemRewriter.class), handContext.item())) {
             sendSelectedHotbarSlot(user, handContext, clientPlayer);
         }
         if (isBow(user.get(ItemRewriter.class), handContext.item())) {
@@ -865,13 +924,17 @@ public class ExperimentalFeatures {
 
     private static void finishConsumableUse(final UserConnection user, final InventoryTransactionRewriter inventoryTransactionRewriter, final ClientPlayerEntity clientPlayer) {
         final ItemUseSnapshot snapshot = clientPlayer.itemUseSnapshot();
-        if (snapshot == null) {
+        if (snapshot == null || clientPlayer.isConsumableFinishSent()) {
             return;
         }
-        if (ItemUseSemantics.neteaseAutoCompletesConsumable(ViaBedrock.getConfig().shouldEmulateNetEaseClient(), true)) {
+        if (!ItemUseSemantics.sendConsumableFinishTransaction(ViaBedrock.getConfig().shouldEmulateNetEaseClient(), true)) {
             return;
         }
         sendUseItemTransaction(user, inventoryTransactionRewriter, createHandContext(snapshot), clientPlayer, false);
+        clientPlayer.setConsumableFinishSent(true);
+        if (!ItemUseSemantics.delayReleaseAfterConsumableFinish(ViaBedrock.getConfig().shouldEmulateNetEaseClient(), true)) {
+            return;
+        }
         final ReleaseItemSnapshot releaseSnapshot = createReleaseItemSnapshot(snapshot, clientPlayer);
         user.getChannel().eventLoop().schedule(() -> sendReleaseItemTransaction(user, inventoryTransactionRewriter, releaseSnapshot, ItemReleaseInventoryTransaction_ActionType.Release), FINISH_USE_RELEASE_DELAY_MS, TimeUnit.MILLISECONDS);
     }
@@ -932,6 +995,12 @@ public class ExperimentalFeatures {
                     if (ExperimentalItemRewriter.isSwordBlockingAnimationItem(wrapper.user().get(ItemRewriter.class), inventoryTracker.getInventoryContainer().getSelectedHotbarItem())) {
                         return;
                     }
+                    // After a successful NetEase finish, CLIENT_TICK_END already cleared using-state
+                    // while the local inventory mirror still holds the pre-eat stack. Resyncing that
+                    // snapshot would put the eaten item back into the Java client.
+                    if (isConsumableUseItem(wrapper.user().get(ItemRewriter.class), inventoryTracker.getInventoryContainer().getSelectedHotbarItem())) {
+                        return;
+                    }
                     PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getInventoryContainer());
                     return;
                 }
@@ -949,15 +1018,20 @@ public class ExperimentalFeatures {
                 );
                 if (isCrossbow(wrapper.user().get(ItemRewriter.class), selectedItem) && clientPlayer.usingItemTicks() >= CROSSBOW_CHARGE_TICKS) {
                     finishCrossbowCharge(wrapper.user(), inventoryTransactionRewriter, handContext, clientPlayer);
-                    clientPlayer.setUsingItem(false);
+                    stopUsingItem(wrapper.user(), clientPlayer);
                     return;
                 }
                 if (releaseAction == ItemReleaseInventoryTransaction_ActionType.Use) {
                     finishConsumableUse(wrapper.user(), inventoryTransactionRewriter, clientPlayer);
-                    clientPlayer.setUsingItem(false);
+                    if (!ItemUseSemantics.keepLocalUsingAfterConsumableFinish(ViaBedrock.getConfig().shouldEmulateNetEaseClient(), true, clientPlayer.isConsumableFinishSent())) {
+                        stopUsingItem(wrapper.user(), clientPlayer);
+                    }
                     return;
                 }
-                clientPlayer.setUsingItem(false);
+                if (ItemUseSemantics.ignoreJavaConsumableRelease(ViaBedrock.getConfig().shouldEmulateNetEaseClient(), isConsumableUseItem(wrapper.user().get(ItemRewriter.class), selectedItem))) {
+                    return;
+                }
+                stopUsingItem(wrapper.user(), clientPlayer);
 
                 sendReleaseItemTransaction(wrapper.user(), inventoryTransactionRewriter, handContext, clientPlayer, releaseAction);
             } else if (action == PlayerActionAction.DROP_ITEM || action == PlayerActionAction.DROP_ALL_ITEMS) {
@@ -1072,7 +1146,22 @@ public class ExperimentalFeatures {
             }
             if (actionType == ItemReleaseInventoryTransaction_ActionType.Use) {
                 finishConsumableUse(wrapper.user(), wrapper.user().get(InventoryTransactionRewriter.class), clientPlayer);
-                clientPlayer.setUsingItem(false);
+                if (!ItemUseSemantics.keepLocalUsingAfterConsumableFinish(ViaBedrock.getConfig().shouldEmulateNetEaseClient(), true, clientPlayer.isConsumableFinishSent())) {
+                    stopUsingItem(wrapper.user(), clientPlayer);
+                    return;
+                }
+            }
+            if (ItemUseSemantics.keepLocalUsingAfterConsumableFinish(ViaBedrock.getConfig().shouldEmulateNetEaseClient(), isConsumableUseItem(itemRewriter, selectedItem), clientPlayer.isConsumableFinishSent())) {
+                final ItemUseSnapshot snapshot = clientPlayer.itemUseSnapshot();
+                if (snapshot != null && (ItemUseSemantics.consumableConsumedByServer(
+                        snapshot.item().identifier(),
+                        snapshot.item().amount(),
+                        selectedItem.isEmpty(),
+                        selectedItem.identifier(),
+                        selectedItem.amount()
+                ) || ItemUseSemantics.localUsingTimedOut(true, true, clientPlayer.usingItemTicks()))) {
+                    stopUsingItem(wrapper.user(), clientPlayer);
+                }
             }
         });
 
@@ -1092,12 +1181,7 @@ public class ExperimentalFeatures {
             final ItemUseHandContext handContext = ItemUseHandContext.resolve(inventoryTracker, hand);
             final BedrockItem selectedItem = handContext.item();
             if (isContinuousUseItem(itemRewriter, selectedItem)) {
-                clientPlayer.startUsingItem(handContext.hand(), handContext.containerId(), handContext.containerSlot(), handContext.transactionHotbarSlot(), selectedItem);
-                clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StartUsingItem);
-                clientPlayer.setAuthInputItemInteraction(createUseItemTransaction(handContext, clientPlayer));
-                if (shouldSendStandaloneUseTransaction(itemRewriter, selectedItem)) {
-                    sendUseItemTransaction(wrapper.user(), inventoryTransactionRewriter, handContext, clientPlayer);
-                }
+                beginContinuousItemUse(wrapper.user(), inventoryTransactionRewriter, clientPlayer, itemRewriter, handContext);
                 wrapper.clearPacket();
                 wrapper.cancel();
                 if (sequence > 0) {
@@ -1135,7 +1219,7 @@ public class ExperimentalFeatures {
         // Handle COMPLETED_USING_ITEM from server (sent when item use completes, e.g. eating)
         protocol.registerClientbound(ClientboundBedrockPackets.COMPLETED_USING_ITEM, null, wrapper -> {
             wrapper.cancel();
-            wrapper.user().get(EntityTracker.class).getClientPlayer().setUsingItem(false);
+            stopUsingItem(wrapper.user(), wrapper.user().get(EntityTracker.class).getClientPlayer());
         });
 
         protocol.registerServerbound(ServerboundPackets26_1.USE_ITEM_ON, null, wrapper -> {
@@ -1173,12 +1257,7 @@ public class ExperimentalFeatures {
             final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
             final BedrockItem selectedItem = handContext.item();
             if (isContinuousUseItem(itemRewriter, selectedItem)) {
-                clientPlayer.startUsingItem(handContext.hand(), handContext.containerId(), handContext.containerSlot(), handContext.transactionHotbarSlot(), selectedItem);
-                clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StartUsingItem);
-                clientPlayer.setAuthInputItemInteraction(createUseItemTransaction(handContext, clientPlayer));
-                if (shouldSendStandaloneUseTransaction(itemRewriter, selectedItem)) {
-                    sendUseItemTransaction(wrapper.user(), inventoryTransactionRewriter, handContext, clientPlayer);
-                }
+                beginContinuousItemUse(wrapper.user(), inventoryTransactionRewriter, clientPlayer, itemRewriter, handContext);
 
                 if (sequence > 0) {
                     PacketFactory.sendJavaBlockChangedAck(wrapper.user(), sequence);

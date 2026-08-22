@@ -17,7 +17,9 @@
  */
 package net.raphimc.viabedrock.experimental.inventory;
 
+import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
+import net.raphimc.viabedrock.protocol.packet.ItemStackRequestLayout;
 import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.atomic.AtomicReference;
@@ -66,5 +68,31 @@ class ClientAuthInventoryModuleTest {
         assertFalse(ClientAuthInventoryModule.needsBedrockPlayerInventoryOpen(
                 ContainerID.CONTAINER_ID_INVENTORY.getValue(), true));
         assertFalse(ClientAuthInventoryModule.needsBedrockPlayerInventoryOpen(4, false));
+    }
+
+    @Test
+    void creativeDestinationsKeepJavaSlotSemantics() {
+        final ClientAuthInventoryModule.CreativeDestination cursor = ClientAuthInventoryModule.resolveCreativeDestination(
+                new ItemStackRequestLayout.SlotInfo(ContainerEnumName.CursorContainer, 0, 0));
+        assertEquals(ContainerID.CONTAINER_ID_PLAYER_ONLY_UI.getValue(), cursor.containerId());
+        assertEquals(0, cursor.slot());
+        assertEquals(CreativeSlotSemantics.JAVA_CURSOR_SLOT, cursor.javaSlot());
+
+        final ClientAuthInventoryModule.CreativeDestination hotbar = ClientAuthInventoryModule.resolveCreativeDestination(
+                new ItemStackRequestLayout.SlotInfo(ContainerEnumName.HotbarContainer, 3, 0));
+        assertEquals(ContainerID.CONTAINER_ID_INVENTORY.getValue(), hotbar.containerId());
+        assertEquals(3, hotbar.slot());
+        assertEquals(39, hotbar.javaSlot());
+
+        final ClientAuthInventoryModule.CreativeDestination armor = ClientAuthInventoryModule.resolveCreativeDestination(
+                new ItemStackRequestLayout.SlotInfo(ContainerEnumName.ArmorContainer, 1, 0));
+        assertEquals(ContainerID.CONTAINER_ID_ARMOR.getValue(), armor.containerId());
+        assertEquals(1, armor.slot());
+        assertEquals(6, armor.javaSlot());
+
+        final ClientAuthInventoryModule.CreativeDestination offhand = ClientAuthInventoryModule.resolveCreativeDestination(
+                new ItemStackRequestLayout.SlotInfo(ContainerEnumName.OffhandContainer, 0, 0));
+        assertEquals(ContainerID.CONTAINER_ID_OFFHAND.getValue(), offhand.containerId());
+        assertEquals(45, offhand.javaSlot());
     }
 }

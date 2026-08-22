@@ -178,6 +178,15 @@ public final class ItemStackRequestLayout {
         }
     }
 
+    public static void writeCraftCreative(final ByteBuf buffer, final int creativeItemNetworkId, final int timesCrafted,
+                                          final boolean emulateNetEase, final int protocol) {
+        writeActionType(buffer, ItemStackRequestActionType.CraftCreative, emulateNetEase, protocol);
+        BedrockTypes.UNSIGNED_VAR_INT.write(buffer, creativeItemNetworkId);
+        if (!emulateNetEase || protocol >= 712) {
+            buffer.writeByte(timesCrafted);
+        }
+    }
+
     public static DecodedRequestTrailer readRequestTrailer(final ByteBuf buffer, final boolean emulateNetEase, final int protocol) {
         final int filterCount = (!emulateNetEase || protocol >= FILTER_STRINGS_PROTOCOL)
                 ? BedrockTypes.UNSIGNED_VAR_INT.read(buffer)

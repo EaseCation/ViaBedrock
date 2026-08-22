@@ -26,8 +26,12 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventorySourceType;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventorySource_InventorySourceFlags;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemStackRequestActionType;
+import net.raphimc.viabedrock.test.StubUserConnection;
+import io.netty.channel.embedded.EmbeddedChannel;
+import net.raphimc.viabedrock.experimental.storage.CreativeContentCache;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
 import net.raphimc.viabedrock.protocol.packet.ItemStackRequestLayout;
+import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 import org.junit.jupiter.api.Test;
 
@@ -186,7 +190,7 @@ class ItemStackRequestEncoderTest {
     }
 
     @Test
-    void creativeCloneStaysUnsupported() {
+    void creativeCloneStaysUnsupportedWithoutCache() {
         final BedrockItem cloned = item(1, 64, 0);
         final ItemStackRequestEncoder.EncodedRequest encoded = encode(List.of(
                 new InventoryActionData(
@@ -195,6 +199,51 @@ class ItemStackRequestEncoderTest {
                 cursorAction(BedrockItem.empty(), cloned)
         ), true, 860);
         assertTrue(encoded.unsupported());
+    }
+
+    @Test
+    void netease860CreativeSpawnWritesCraftCreativeAndTake() {
+        final BedrockItem cloned = item(35, 64, 0);
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final StubUserConnection user = new StubUserConnection(channel);
+            final InventoryTracker tracker = new InventoryTracker(user);
+            user.put(tracker);
+            final CreativeContentCache cache = new CreativeContentCache(user);
+            cache.replace(List.of(new CreativeContentCache.Entry(7, cloned.copy())));
+            user.put(cache);
+
+            final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encode(List.of(
+                    new InventoryActionData(
+                            new InventorySource(InventorySourceType.CreativeInventory, ContainerID.CONTAINER_ID_NONE.getValue(), InventorySource_InventorySourceFlags.NoFlag),
+                            0, BedrockItem.empty(), cloned),
+                    cursorAction(BedrockItem.empty(), cloned)
+            ), tracker, true, 860);
+
+            assertFalse(encoded.unsupported());
+            final ByteBuf buffer = Unpooled.wrappedBuffer(encoded.payload());
+            try {
+                assertEquals(1, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                BedrockTypes.VAR_INT.read(buffer);
+                assertEquals(2, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                assertEquals(ItemStackRequestActionType.CraftCreative.getValue(), buffer.readUnsignedByte());
+                assertEquals(7, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                assertEquals(1, buffer.readUnsignedByte());
+                assertEquals(ItemStackRequestActionType.Take.getValue(), buffer.readUnsignedByte());
+                assertEquals(64, buffer.readUnsignedByte());
+                final ItemStackRequestLayout.DecodedSlotInfo source = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ContainerEnumName.CreatedOutputContainer, source.container());
+                assertEquals(50, source.slot());
+                final ItemStackRequestLayout.DecodedSlotInfo destination = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ContainerEnumName.CursorContainer, destination.container());
+                ItemStackRequestLayout.readRequestTrailer(buffer, true, 860);
+                assertFalse(buffer.isReadable());
+            } finally {
+                buffer.release();
+            }
+        } finally {
+            channel.finishAndReleaseAll();
+        }
     }
 
     @Test

@@ -22,7 +22,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemReleaseI
 
 import java.util.Set;
 
-final class ItemUseSemantics {
+public final class ItemUseSemantics {
 
     private static final int DEFAULT_CONSUMABLE_USE_TICKS = 32;
     private static final String FOOD_ITEM_TAG = "minecraft:is_food";
@@ -49,7 +49,7 @@ final class ItemUseSemantics {
                 || itemUse != null;
     }
 
-    static boolean isConsumableUseItem(final String identifier, final Set<String> itemTags, final ItemUseDefinition itemUse) {
+    public static boolean isConsumableUseItem(final String identifier, final Set<String> itemTags, final ItemUseDefinition itemUse) {
         return consumableUseTicks(identifier, itemTags, itemUse) > 0;
     }
 
@@ -65,21 +65,119 @@ final class ItemUseSemantics {
     }
 
     /**
-     * Official Bedrock still finishes food with a second USE_ITEM plus delayed Release.
-     * NetEase 860 auto-completes after the first CLICK_AIR, so repeating that sequence
-     * would start eating the next stack item.
+     * Nukkit's MobEquipmentProcessor always calls {@code setUsingItem(false)}. Sending
+     * MOB_EQUIPMENT immediately before a NetEase consumable CLICK_AIR therefore cancels
+     * the using-state that the first click just started.
      */
-    static boolean neteaseAutoCompletesConsumable(final boolean emulateNetEase, final boolean consumable) {
+    static boolean skipMobEquipmentBeforeUse(final boolean emulateNetEase, final boolean consumable) {
         return emulateNetEase && consumable;
     }
 
+    /**
+     * Java may emit USE_ITEM_ON then USE_ITEM for the same right-click. Nukkit 860 treats a
+     * second CLICK_AIR while already using as a finish attempt, so the extra packet must be
+     * dropped until the held duration is ready.
+     */
+    static boolean ignoreDuplicateUseStart(final boolean alreadyUsing, final boolean sameItem) {
+        return alreadyUsing && sameItem;
+    }
+
+    /**
+     * Official 975 starts food from AuthInput START_USING_ITEM + PERFORM_ITEM_INTERACTION.
+     * NetEase 860 Nukkit parses that payload but never handles it, so the same interaction
+     * must travel as a standalone USE_ITEM instead of being duplicated into AuthInput.
+     */
+    static boolean attachAuthInputItemInteraction(final boolean emulateNetEase, final boolean consumable) {
+        return !emulateNetEase || !consumable;
+    }
+
+    /**
+     * Official 975 still finishes food with a second USE_ITEM plus delayed ItemRelease.
+     * Nukkit 860 treats a second CLICK_AIR as {@code onUse(ticksUsed)} and always clears
+     * using-state first. If that packet arrives before {@code eatingTick} (apple = 31),
+     * {@code onUse} fails and {@code processAutoCompletion()} can never consume.
+     * <p>
+     * Java chewing is hidden separately by {@code javaUsingVisible()}. NetEase therefore
+     * must not send a finish click at all and let Nukkit auto-complete while protocol
+     * using-state stays true.
+     */
+    static boolean sendConsumableFinishTransaction(final boolean emulateNetEase, final boolean consumable) {
+        return consumable && !emulateNetEase;
+    }
+
+    /**
+     * Official 975 still follows that second USE_ITEM with a delayed ItemRelease; Nukkit
+     * 860 ignores ItemRelease Consume here, so NetEase must not send it.
+     */
+    static boolean delayReleaseAfterConsumableFinish(final boolean emulateNetEase, final boolean consumable) {
+        return consumable && !emulateNetEase;
+    }
+
+    /**
+     * Official 975 can drop the local using-state as soon as the finish packet is queued.
+     * NetEase still has to keep protocol-side using-state until the finish USE_ITEM is
+     * actually sent, otherwise START_SPRINTING / MOB_EQUIPMENT cancel Nukkit first.
+     * Java chewing itself is driven separately by {@code javaUsingVisible()}.
+     */
+    static boolean keepLocalUsingAfterConsumableFinish(final boolean emulateNetEase, final boolean consumable, final boolean finishSent) {
+        return emulateNetEase && consumable && !finishSent;
+    }
+
+    /**
+     * Java always sends RELEASE_USE_ITEM when the local eat animation ends. Official 975
+     * still translates a too-early release into ItemRelease; Nukkit 860's ItemRelease
+     * handler has a finally that always calls {@code setUsingItem(false)}, which would
+     * cancel eating before {@code processAutoCompletion()} can consume. NetEase therefore
+     * must ignore that Java release and keep waiting for auto-complete.
+     */
+    static boolean ignoreJavaConsumableRelease(final boolean emulateNetEase, final boolean consumable) {
+        return emulateNetEase && consumable;
+    }
+
+    static boolean consumableConsumedByServer(final int startedId, final int startedAmount,
+                                             final boolean currentEmpty, final int currentId, final int currentAmount) {
+        if (startedId == 0 || startedAmount <= 0) {
+            return false;
+        }
+        if (currentEmpty || currentId == 0) {
+            return true;
+        }
+        return currentId == startedId && currentAmount < startedAmount;
+    }
+
+    static boolean localUsingTimedOut(final boolean emulateNetEase, final boolean consumable, final int usingTicks) {
+        return emulateNetEase && consumable && usingTicks >= DEFAULT_CONSUMABLE_USE_TICKS + 16;
+    }
+
+    /**
+     * Java's eat animation is local. Once the vanilla duration has elapsed, stop rewriting
+     * LIVING_ENTITY_FLAGS so a later SET_ENTITY_DATA cannot restart chewing after the
+     * client already released the item.
+     */
+    public static boolean javaUsingVisible(final boolean usingItem, final boolean consumable, final int usingTicks) {
+        return usingItem && (!consumable || usingTicks < DEFAULT_CONSUMABLE_USE_TICKS);
+    }
+
+    /**
+     * Nukkit START_SPRINTING always calls {@code setUsingItem(false)}. Java starts sprinting
+     * from movement even while the eating animation is held, so NetEase must drop that
+     * command until the consumable finishes.
+     */
+    public static boolean suppressStartSprintingWhileUsingItem(final boolean emulateNetEase, final boolean usingItem) {
+        return emulateNetEase && usingItem;
+    }
+
     static ItemReleaseInventoryTransaction_ActionType releaseAction(final String identifier, final Set<String> itemTags, final ItemUseDefinition itemUse, final int usingTicks) {
+        return releaseAction(identifier, itemTags, itemUse, usingTicks, false);
+    }
+
+    static ItemReleaseInventoryTransaction_ActionType releaseAction(final String identifier, final Set<String> itemTags, final ItemUseDefinition itemUse, final int usingTicks, final boolean emulateNetEase) {
         if (identifier == null || RELEASE_ON_RELEASE_ITEMS.contains(identifier)) {
             return ItemReleaseInventoryTransaction_ActionType.Release;
         }
 
         final int useDurationTicks = consumableUseTicks(identifier, itemTags, itemUse);
-        return useDurationTicks > 0 && usingTicks >= useDurationTicks
+        return useDurationTicks > 0 && usingTicks >= finishReadyTicks(useDurationTicks, emulateNetEase)
                 ? ItemReleaseInventoryTransaction_ActionType.Use
                 : ItemReleaseInventoryTransaction_ActionType.Release;
     }
@@ -89,6 +187,21 @@ final class ItemUseSemantics {
             return DEFAULT_CONSUMABLE_USE_TICKS;
         }
         return itemUse != null ? itemUse.useDurationTicks() : -1;
+    }
+
+    /**
+     * CLIENT_TICK_END inspects {@code usingItemTicks} before {@code Entity.age} advances.
+     * Nukkit counts {@code serverTick - startAction} after the same game tick, so duration
+     * {@code N} is ready at {@code N - 1} Java ticks.
+     */
+    private static int finishReadyTicks(final int useDurationTicks, final boolean emulateNetEase) {
+        if (!emulateNetEase) {
+            return useDurationTicks;
+        }
+        // CLIENT_TICK_END inspects usingItemTicks before Entity.age advances. Official 975
+        // still finishes at the configured duration; NetEase 860 needs the packet one tick
+        // earlier so Nukkit's serverTick - startAction reaches eatingTick (apple = 31).
+        return Math.max(1, useDurationTicks - 1);
     }
 
     private static boolean isFood(final Set<String> itemTags) {

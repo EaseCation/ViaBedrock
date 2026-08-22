@@ -104,6 +104,20 @@ class EntityMetadataRewriterTest {
     }
 
     @Test
+    void hidesHostNametagForMultilineAlwaysShowNames() {
+        assertTrue(EntityMetadataRewriter.shouldHideHostNametag("Title\nSubtitle", true));
+        assertTrue(EntityMetadataRewriter.shouldHideHostNametag("[开发中]ReBlock\n游玩总人数:0", true));
+    }
+
+    @Test
+    void keepsHostNametagForSingleLineOrLookAtOnlyNames() {
+        assertFalse(EntityMetadataRewriter.shouldHideHostNametag("Title", true));
+        assertFalse(EntityMetadataRewriter.shouldHideHostNametag("Title\nSubtitle", false));
+        assertFalse(EntityMetadataRewriter.shouldHideHostNametag(null, true));
+        assertFalse(EntityMetadataRewriter.shouldHideHostNametag("", true));
+    }
+
+    @Test
     void preservesBedrockGravitySemanticsForOtherEntities() {
         assertTrue(EntityMetadataRewriter.noGravity(
                 EntityTypes1_21_11.ARMOR_STAND, EnumSet.noneOf(ActorFlags.class)));

@@ -38,6 +38,7 @@ import net.raphimc.viabedrock.api.util.InstantBreakBlocks;
 import net.raphimc.viabedrock.api.util.MathUtil;
 import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
+import net.raphimc.viabedrock.experimental.ItemUseSemantics;
 import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
 import net.raphimc.viabedrock.experimental.inventory.ItemUseHandContext;
 import net.raphimc.viabedrock.experimental.model.PlayerAuthInputContext;
@@ -386,6 +387,11 @@ public class ClientPlayerPackets {
             final PlayerAuthInputPacket_InputData inputData = playerCommandInputData(action);
 
             if (action == PlayerCommandAction.START_SPRINTING) {
+                // Nukkit START_SPRINTING calls setUsingItem(false). Keep eating from being cancelled
+                // by a Java sprint that started after the use animation began.
+                if (ItemUseSemantics.suppressStartSprintingWhileUsingItem(ViaBedrock.getConfig().shouldEmulateNetEaseClient(), clientPlayer.isUsingItem())) {
+                    return;
+                }
                 clientPlayer.setSprinting(true);
             } else if (action == PlayerCommandAction.STOP_SPRINTING) {
                 clientPlayer.setSprinting(false);
@@ -449,8 +455,8 @@ public class ClientPlayerPackets {
                     PacketFactory.sendJavaContainerSetContent(wrapper.user(), wrapper.user().get(InventoryTracker.class).getInventoryContainer());
                 }
                 case RELEASE_USE_ITEM -> {
-                    // TODO: Implement RELEASE_USE_ITEM
-                    PacketFactory.sendJavaContainerSetContent(wrapper.user(), wrapper.user().get(InventoryTracker.class).getInventoryContainer());
+                    // ExperimentalFeatures owns the Bedrock finish/cancel translation. Resyncing
+                    // here would overwrite Nukkit's just-consumed stack with the pre-eat snapshot.
                 }
                 case SWAP_ITEM_WITH_OFFHAND -> {
                     if (!ExperimentalFeatures.tryHandleSwapHands(wrapper.user())) {
@@ -611,7 +617,8 @@ public class ClientPlayerPackets {
             if (clientPlayer.inputFlags().contains(InputFlag.SHIFT)) {
                 clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.SneakDown, PlayerAuthInputPacket_InputData.Sneaking, PlayerAuthInputPacket_InputData.WantDown, PlayerAuthInputPacket_InputData.SneakCurrentRaw);
             }
-            if (clientPlayer.inputFlags().contains(InputFlag.SPRINT)) {
+            if (clientPlayer.inputFlags().contains(InputFlag.SPRINT)
+                    && !ItemUseSemantics.suppressStartSprintingWhileUsingItem(ViaBedrock.getConfig().shouldEmulateNetEaseClient(), clientPlayer.isUsingItem())) {
                 clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.SprintDown, PlayerAuthInputPacket_InputData.Sprinting);
             }
             if (clientPlayer.inputFlags().contains(InputFlag.JUMP) && !prevInputFlags.contains(InputFlag.JUMP)) {
