@@ -51,6 +51,13 @@ class PlayerLatencyPacketsTest {
     }
 
     @Test
+    void acceptsCanonicalAndLegacyChannelIds() {
+        assertTrue(PlayerLatencyPackets.isLatencyMessage("waterdog:player_latency_v1"));
+        assertTrue(PlayerLatencyPackets.isLatencyMessage("easecation:player_latency_v1"));
+        assertTrue(!PlayerLatencyPackets.isLatencyMessage("ganquanonline:player_latency_v1"));
+    }
+
+    @Test
     void rejectsMalformedAndOversizedSnapshots() {
         assertThrows(RuntimeException.class, () -> PlayerLatencyPackets.parseSnapshot("not-json"));
         assertThrows(RuntimeException.class, () -> PlayerLatencyPackets.parseSnapshot("[]"));

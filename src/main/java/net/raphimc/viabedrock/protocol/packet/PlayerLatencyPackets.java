@@ -37,11 +37,16 @@ import java.util.logging.Level;
 
 public final class PlayerLatencyPackets {
 
-    static final String MESSAGE_ID = "easecation:player_latency_v1";
+    static final String MESSAGE_ID = "waterdog:player_latency_v1";
+    static final String LEGACY_MESSAGE_ID = "easecation:player_latency_v1";
     static final int MAX_PAYLOAD_LENGTH = 262_144;
     static final int MAX_ENTRIES = 4_096;
 
     private PlayerLatencyPackets() {
+    }
+
+    static boolean isLatencyMessage(final String messageId) {
+        return MESSAGE_ID.equals(messageId) || LEGACY_MESSAGE_ID.equals(messageId);
     }
 
     static void handle(final PacketWrapper wrapper, final String payload) {

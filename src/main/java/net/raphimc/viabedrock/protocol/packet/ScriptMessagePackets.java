@@ -34,7 +34,7 @@ public final class ScriptMessagePackets {
 
             if (JavaCustomPayloadBridge.bridgeClientbound(messageId, payload, wrapper.user())) {
                 return;
-            } else if (PlayerLatencyPackets.MESSAGE_ID.equals(messageId)) {
+            } else if (PlayerLatencyPackets.isLatencyMessage(messageId)) {
                 PlayerLatencyPackets.handle(wrapper, payload);
             } else if (SpectatorCameraPackets.MESSAGE_ID_V1.equals(messageId)) {
                 SpectatorCameraPackets.handleLegacy(wrapper, payload);
