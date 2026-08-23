@@ -433,7 +433,9 @@ public class InventoryPackets {
             final int slot = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // selected slot
             final byte containerId = wrapper.read(Types.BYTE); // container id
             final boolean shouldSelectSlot = wrapper.read(Types.BOOLEAN); // should select slot
+            PacketLeftoverLayout.discardUnreadInput(wrapper);
             if (slot >= 0 && slot < 9 && containerId == inventoryContainer.containerId() && shouldSelectSlot) {
+                inventoryContainer.setSelectedHotbarSlotLocally((byte) slot);
                 wrapper.write(Types.VAR_INT, slot); // slot
             } else {
                 wrapper.cancel();
@@ -489,6 +491,7 @@ public class InventoryPackets {
                 wrapper.write(Types.BYTE, (byte) (equipmentSlot.ordinal() | (i < (size - 1) ? Byte.MIN_VALUE : 0))); // slot
                 wrapper.write(VersionedTypes.V26_1.item, wrapper.user().get(ItemRewriter.class).javaItem(item)); // item
             }
+            PacketLeftoverLayout.discardUnreadInput(wrapper);
         });
 
         protocol.registerServerbound(ServerboundPackets26_1.CONTAINER_BUTTON_CLICK, null, wrapper -> {

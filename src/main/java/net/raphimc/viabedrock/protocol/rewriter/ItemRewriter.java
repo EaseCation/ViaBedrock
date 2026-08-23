@@ -138,7 +138,18 @@ public class ItemRewriter extends StoredObject {
     }
 
     public Item javaItem(final BedrockItem bedrockItem) {
-        if (bedrockItem.isEmpty()) return StructuredItem.empty();
+        try {
+            return this.javaItem0(bedrockItem);
+        } catch (final RuntimeException e) {
+            // MOT 860 custom/unmapped block items (askyblockwar:*, cinnabar walls) used to NPE
+            // IntSortedSet.firstInt() inside ADD_PLAYER / MOB_EQUIPMENT and kick Java 1.21.11.
+            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to rewrite Bedrock item id=" + (bedrockItem != null ? bedrockItem.identifier() : -1), e);
+            return StructuredItem.empty();
+        }
+    }
+
+    private Item javaItem0(final BedrockItem bedrockItem) {
+        if (bedrockItem == null || bedrockItem.isEmpty()) return StructuredItem.empty();
 
         final String identifier = this.items.inverse().get(bedrockItem.identifier());
         if (identifier == null) {
@@ -150,18 +161,20 @@ public class ItemRewriter extends StoredObject {
         final Map<BlockState, BedrockMappingData.JavaItemMapping> blockItemMappings = BedrockProtocol.MAPPINGS.getBedrockToJavaBlockItems().get(identifier);
         if (blockItemMappings != null) {
             if (bedrockItem.blockRuntimeId() == 0) { // Manually constructed items might not have a valid block state set
-                final IntSortedSet validBlockStates = this.blockItemValidBlockStates.get(bedrockItem.identifier());
-                bedrockItem.setBlockRuntimeId(validBlockStates.firstInt());
+                // MOT 860 / NetEase extras can list the identifier without a session palette.
+                // firstInt() on a missing IntSortedSet used to NPE ADD_PLAYER / MOB_EQUIPMENT.
+                bedrockItem.setBlockRuntimeId(BlockItemMappingLayout.fallbackBlockRuntimeId(
+                        this.blockItemValidBlockStates.get(bedrockItem.identifier())));
             }
-            javaItemMapping = blockItemMappings.get(this.user().get(BlockStateRewriter.class).blockState(bedrockItem.blockRuntimeId()));
+            javaItemMapping = this.javaBlockItemMapping(blockItemMappings, bedrockItem.blockRuntimeId());
         } else {
             final int meta = bedrockItem.data() & 0xFFFF;
             final String newIdentifier = BedrockProtocol.MAPPINGS.getBedrockItemUpgrader().upgradeMetaItem(identifier, meta);
             if (newIdentifier != null) {
                 final Map<BlockState, BedrockMappingData.JavaItemMapping> newBlockItemMappings = BedrockProtocol.MAPPINGS.getBedrockToJavaBlockItems().get(newIdentifier);
                 if (newBlockItemMappings != null) {
-                    final IntSortedSet validBlockStates = this.blockItemValidBlockStates.get(bedrockItem.identifier());
-                    javaItemMapping = newBlockItemMappings.get(this.user().get(BlockStateRewriter.class).blockState(validBlockStates.firstInt()));
+                    javaItemMapping = this.javaBlockItemMapping(newBlockItemMappings, BlockItemMappingLayout.fallbackBlockRuntimeId(
+                            this.blockItemValidBlockStates.get(bedrockItem.identifier())));
                 } else {
                     javaItemMapping = null;
                 }
@@ -298,6 +311,20 @@ public class ItemRewriter extends StoredObject {
         }
 
         return javaItem;
+    }
+
+    private BedrockMappingData.JavaItemMapping javaBlockItemMapping(
+            final Map<BlockState, BedrockMappingData.JavaItemMapping> blockItemMappings,
+            final int blockRuntimeId
+    ) {
+        if (blockItemMappings == null || blockRuntimeId == 0) {
+            return null;
+        }
+        final BlockState blockState = this.user().get(BlockStateRewriter.class).blockState(blockRuntimeId);
+        if (blockState == null) {
+            return null;
+        }
+        return blockItemMappings.get(blockState);
     }
 
     private Integer applyDyedColor(final String identifier, final CompoundTag bedrockTag, final Item javaItem) {

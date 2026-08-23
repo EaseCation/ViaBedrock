@@ -32,6 +32,7 @@ import net.lenni0451.mcstructs_bedrock.text.components.TranslationBedrockCompone
 import net.lenni0451.mcstructs_bedrock.text.serializer.BedrockComponentSerializer;
 import net.lenni0451.mcstructs_bedrock.text.utils.BedrockTranslator;
 import net.raphimc.viabedrock.ViaBedrock;
+import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
 import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
 import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.api.model.scoreboard.ScoreboardEntry;
@@ -222,6 +223,7 @@ public class HudPackets {
             wrapper.read(BedrockTypes.STRING); // xuid
             wrapper.read(BedrockTypes.STRING); // platform online id
             wrapper.read(BedrockTypes.STRING); // filtered text
+            PacketLeftoverLayout.discardUnreadInput(wrapper);
 
             final Function<String, String> translator = wrapper.user().get(ResourcePackStorage.class).getTexts().lookup();
             final String originalText = text;
@@ -544,15 +546,22 @@ public class HudPackets {
             }
         });
         protocol.registerClientbound(ClientboundBedrockPackets.GUI_DATA_PICK_ITEM, ClientboundPackets26_1.SYSTEM_CHAT, wrapper -> {
-            final String itemName = wrapper.read(BedrockTypes.STRING); // item name
-            final String itemEffects = wrapper.read(BedrockTypes.STRING); // item effects
-            wrapper.read(BedrockTypes.INT_LE); // hotbar slot (Unused by the vanilla client)
-
-            if (!itemEffects.isEmpty()) {
-                wrapper.write(Types.TAG, TextUtil.stringToNbt(itemName + "\n" + itemEffects)); // message
-            } else {
-                wrapper.write(Types.TAG, TextUtil.stringToNbt(itemName)); // message
+            // Official Bedrock: string name + string effects + LE int slot.
+            // MOT 860 GUIDataPickItemPacket.encode() is only putLInt(hotbarSlot).
+            final boolean emulateNetEase = ViaBedrock.getConfig().shouldEmulateNetEaseClient();
+            final int neteaseProtocol = emulateNetEase ? ViaBedrock.getConfig().getNetEaseProtocolVersion() : 0;
+            final GuiDataPickItemLayout.Packet pick = GuiDataPickItemLayout.read(wrapper, emulateNetEase, neteaseProtocol);
+            PacketLeftoverLayout.discardUnreadInput(wrapper);
+            if (GuiDataPickItemLayout.isHotbarSlot(pick.hotbarSlot())) {
+                final InventoryContainer inventoryContainer = wrapper.user().get(InventoryTracker.class).getInventoryContainer();
+                inventoryContainer.setSelectedHotbarSlotLocally((byte) pick.hotbarSlot());
+                inventoryContainer.sendSelectedHotbarSlotToClient();
             }
+            if (!GuiDataPickItemLayout.hasOverlayText(pick)) {
+                wrapper.cancel();
+                return;
+            }
+            wrapper.write(Types.TAG, TextUtil.stringToNbt(GuiDataPickItemLayout.overlayText(pick))); // message
             wrapper.write(Types.BOOLEAN, true); // overlay
         });
         // MOT ToastRequestPacket (186): string title + string content.

@@ -121,6 +121,15 @@ public class InventoryContainer extends Container {
         setHeldSlot.send(BedrockProtocol.class);
     }
 
+    /**
+     * Updates the mirrored selected hotbar slot without telling the Bedrock server.
+     * Use this for server-initiated packets (PLAYER_HOTBAR / GUI_DATA_PICK_ITEM);
+     * echoing MOB_EQUIPMENT or INTERACT would look like a second client change.
+     */
+    public void setSelectedHotbarSlotLocally(final byte slot) {
+        this.selectedHotbarSlot = slot;
+    }
+
     public void setSelectedHotbarSlot(final byte slot, final PacketWrapper mobEquipment) {
         final BedrockItem oldItem = this.getItem(this.selectedHotbarSlot);
         final BedrockItem newItem = this.getItem(slot);

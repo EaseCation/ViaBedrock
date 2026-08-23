@@ -88,6 +88,9 @@ class ItemUseSemanticsTest {
         assertFalse(ItemUseSemantics.isConsumableUseItem("minecraft:bow", null, null));
         assertFalse(ItemUseSemantics.isConsumableUseItem("minecraft:shield", null, null));
         assertFalse(ItemUseSemantics.isConsumableUseItem("minecraft:paper", null, null));
+        assertTrue(ItemUseSemantics.isConsumableUseItem("minecraft:ominous_bottle", null, null));
+        assertTrue(ItemUseSemantics.isConsumableUseItem("minecraft:glow_berries", Set.of("minecraft:is_food"), null));
+        assertTrue(ItemUseSemantics.isContinuousUseItem("minecraft:ominous_bottle", null, null, false));
     }
 
     @Test

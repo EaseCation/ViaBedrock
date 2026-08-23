@@ -28,7 +28,10 @@ public final class ItemUseSemantics {
     private static final String FOOD_ITEM_TAG = "minecraft:is_food";
     private static final Set<String> CONSUME_ON_RELEASE_ITEMS = Set.of(
             "minecraft:potion",
-            "minecraft:milk_bucket"
+            "minecraft:milk_bucket",
+            // MOT ItemOminousBottle.onUse() requires ticksUsed >= getUseDuration()-2 (32).
+            // It is not in minecraft:is_food; without this set Java right-click is a no-op.
+            "minecraft:ominous_bottle"
     );
     private static final Set<String> RELEASE_ON_RELEASE_ITEMS = Set.of(
             "minecraft:bow",

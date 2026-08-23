@@ -396,12 +396,12 @@ public class ClientPlayerPackets {
             wrapper.read(Types.BOOLEAN); // show name tags
             wrapper.read(Types.BOOLEAN); // auto jump
         });
-        protocol.registerClientbound(ClientboundBedrockPackets.OPEN_SIGN, ClientboundPackets26_1.OPEN_SIGN_EDITOR, new PacketHandlers() {
-            @Override
-            protected void register() {
-                map(BedrockTypes.BLOCK_POSITION, Types.BLOCK_POSITION1_14); // position
-                map(Types.BOOLEAN); // front
-            }
+        protocol.registerClientbound(ClientboundBedrockPackets.OPEN_SIGN, ClientboundPackets26_1.OPEN_SIGN_EDITOR, wrapper -> {
+            // MOT OpenSignPacket.encode() is getBlockVector3() + boolean. The mapped
+            // Java OPEN_SIGN_EDITOR has no trailer; leftover Bedrock bytes kick 1.21.11.
+            wrapper.write(Types.BLOCK_POSITION1_14, wrapper.read(BedrockTypes.BLOCK_POSITION)); // position
+            wrapper.write(Types.BOOLEAN, wrapper.read(Types.BOOLEAN)); // front
+            PacketLeftoverLayout.discardUnreadInput(wrapper);
         });
 
         protocol.registerServerbound(ServerboundPackets26_1.CLIENT_COMMAND, ServerboundBedrockPackets.RESPAWN, wrapper -> {
