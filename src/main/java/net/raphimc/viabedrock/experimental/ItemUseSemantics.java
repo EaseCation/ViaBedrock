@@ -68,7 +68,7 @@ public final class ItemUseSemantics {
     );
 
     static boolean isContinuousUseItem(final String identifier, final Set<String> itemTags, final ItemUseDefinition itemUse, final boolean chargedCrossbow) {
-        if (identifier == null || ("minecraft:crossbow".equals(identifier) && chargedCrossbow)) {
+        if (identifier == null || ("minecraft:crossbow".equals(identifier) && chargedCrossbow) || isGoatHorn(identifier)) {
             return false;
         }
         return RELEASE_ON_RELEASE_ITEMS.contains(identifier)
@@ -220,6 +220,15 @@ public final class ItemUseSemantics {
 
     static boolean isSpyglass(final String identifier) {
         return "minecraft:spyglass".equals(identifier);
+    }
+
+    /**
+     * MOT {@code ItemGoatHorn.onClickAir} is a one-shot cooldown (140 ticks),
+     * not hold-to-use. Resource-pack {@code use_duration} must not swallow that
+     * CLICK_AIR into {@code beginContinuousItemUse}.
+     */
+    static boolean isGoatHorn(final String identifier) {
+        return "minecraft:goat_horn".equals(identifier);
     }
 
     /**

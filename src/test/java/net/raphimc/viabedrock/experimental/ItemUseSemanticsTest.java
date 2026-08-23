@@ -72,6 +72,15 @@ class ItemUseSemanticsTest {
     }
 
     @Test
+    void goatHornStaysClickAirEvenWhenResourcePackDefinesUseDuration() {
+        final ItemUseDefinition itemUse = new ItemUseDefinition(32, UseAnimation.EAT);
+        assertFalse(ItemUseSemantics.isGoatHorn("minecraft:bow"));
+        assertTrue(ItemUseSemantics.isGoatHorn("minecraft:goat_horn"));
+        assertFalse(ItemUseSemantics.isContinuousUseItem("minecraft:goat_horn", null, itemUse, false));
+        assertTrue(ItemUseSemantics.isContinuousUseItem("easecation:stackable_potion_heal", null, itemUse, false));
+    }
+
+    @Test
     void vanillaConsumablesKeepOfficialDurationAndFinishEarlyOnNetEase() {
         assertEquals(ItemReleaseInventoryTransaction_ActionType.Release,
                 ItemUseSemantics.releaseAction("minecraft:potion", null, null, 31));

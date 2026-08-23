@@ -665,7 +665,8 @@ public class ClientPlayerPackets {
                     prevOnGround,
                     clientPlayer.isOnGround(),
                     clientPlayer.inputFlags().contains(InputFlag.JUMP),
-                    prevInputFlags.contains(InputFlag.JUMP))) {
+                    prevInputFlags.contains(InputFlag.JUMP),
+                    isLocalRiding(wrapper.user()))) {
                 clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StartJumping);
             }
 
@@ -910,7 +911,18 @@ public class ClientPlayerPackets {
      */
     static boolean shouldEmitStartJumping(final boolean prevOnGround, final boolean onGround,
                                           final boolean jumpHeld, final boolean prevJumpHeld) {
-        if (!jumpHeld || (!prevOnGround && !onGround)) {
+        return shouldEmitStartJumping(prevOnGround, onGround, jumpHeld, prevJumpHeld, false);
+    }
+
+    /**
+     * Riding JUMP is Java START_RIDING_JUMP, not a player jump. MOT 860 never
+     * applies horse jump from START_JUMPING, and GanAC AirJump scores that bit
+     * while the passenger is airborne.
+     */
+    static boolean shouldEmitStartJumping(final boolean prevOnGround, final boolean onGround,
+                                          final boolean jumpHeld, final boolean prevJumpHeld,
+                                          final boolean riding) {
+        if (riding || !jumpHeld || (!prevOnGround && !onGround)) {
             return false;
         }
         return !prevJumpHeld || !prevOnGround;

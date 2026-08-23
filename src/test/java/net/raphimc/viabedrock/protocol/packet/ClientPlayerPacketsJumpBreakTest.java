@@ -42,6 +42,14 @@ class ClientPlayerPacketsJumpBreakTest {
     }
 
     @Test
+    void startJumpingNeverPulsesWhileRiding() {
+        assertFalse(ClientPlayerPackets.shouldEmitStartJumping(true, true, true, false, true));
+        assertFalse(ClientPlayerPackets.shouldEmitStartJumping(false, true, true, true, true));
+        assertFalse(ClientPlayerPackets.shouldEmitStartJumping(true, false, true, false, true));
+        assertTrue(ClientPlayerPackets.shouldEmitStartJumping(true, true, true, false, false));
+    }
+
+    @Test
     void abortDestroyFacingPrefersPacketThenCachedStartFace() {
         final ClientPlayerEntity.BlockBreakingInfo info = new ClientPlayerEntity.BlockBreakingInfo(
                 new BlockPosition(1, 64, 1), Direction.NORTH);
