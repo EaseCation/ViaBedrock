@@ -813,7 +813,7 @@ public class ExperimentalFeatures {
         return new ReleaseItemSnapshot(
                 handContext.transactionHotbarSlot(),
                 handContext.item().copy(),
-                clientPlayer.position().add(0F, clientPlayer.eyeOffset(), 0F)
+                releaseHeadPosition(clientPlayer)
         );
     }
 
@@ -821,8 +821,16 @@ public class ExperimentalFeatures {
         return new ReleaseItemSnapshot(
                 itemUseSnapshot.transactionHotbarSlot(),
                 itemUseSnapshot.item().copy(),
-                clientPlayer.position().add(0F, clientPlayer.eyeOffset(), 0F)
+                releaseHeadPosition(clientPlayer)
         );
+    }
+
+    /**
+     * MOT ReleaseItem.headRot is the player eye/head position. ClientPlayerEntity.position()
+     * already stores that eye position, so adding eyeOffset again would sit 1.62 blocks too high.
+     */
+    static Position3f releaseHeadPosition(final ClientPlayerEntity clientPlayer) {
+        return clientPlayer == null ? Position3f.ZERO : clientPlayer.position();
     }
 
     private static void sendReleaseItemTransaction(final UserConnection user, final InventoryTransactionRewriter inventoryTransactionRewriter, final ReleaseItemSnapshot snapshot, final ItemReleaseInventoryTransaction_ActionType actionType) {
