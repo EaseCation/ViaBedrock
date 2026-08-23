@@ -45,7 +45,13 @@ public final class InventoryBootstrapQueue extends StoredObject {
     private static final EnumSet<ClientboundBedrockPackets> INVENTORY_PACKETS = EnumSet.of(
             ClientboundBedrockPackets.INVENTORY_CONTENT,
             ClientboundBedrockPackets.INVENTORY_SLOT,
-            ClientboundBedrockPackets.PLAYER_HOTBAR
+            ClientboundBedrockPackets.PLAYER_HOTBAR,
+            // MOT processLogin() sends CREATIVE_CONTENT / MOB_EQUIPMENT after
+            // ItemComponent (ITEM_REGISTRY). Replay them only after the rewriter
+            // is populated so the first held-item rewrite is not empty.
+            ClientboundBedrockPackets.CREATIVE_CONTENT,
+            ClientboundBedrockPackets.MOB_EQUIPMENT,
+            ClientboundBedrockPackets.MOB_ARMOR_EQUIPMENT
     );
 
     private final Queue<DeferredPacket> inventoryPackets = new ArrayDeque<>();

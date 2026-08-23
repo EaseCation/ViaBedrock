@@ -68,6 +68,8 @@ class ClientAuthInventoryModuleTest {
         assertFalse(ClientAuthInventoryModule.needsBedrockPlayerInventoryOpen(
                 ContainerID.CONTAINER_ID_INVENTORY.getValue(), true));
         assertFalse(ClientAuthInventoryModule.needsBedrockPlayerInventoryOpen(4, false));
+        assertFalse(ClientAuthInventoryModule.needsBedrockPlayerInventoryOpen(
+                ContainerID.CONTAINER_ID_INVENTORY.getValue(), false, true));
     }
 
     @Test

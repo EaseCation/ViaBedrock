@@ -169,6 +169,9 @@ class ItemUseSemanticsTest {
                 ItemUseSemantics.releaseAction("minecraft:wooden_spear", Set.of("minecraft:is_spear"), null, 40, true));
         assertTrue(ItemUseSemantics.emulateShieldAsSneak(true, true));
         assertFalse(ItemUseSemantics.emulateShieldAsSneak(false, true));
+        assertTrue(ItemUseSemantics.stopSprintingOnShieldSneakStart(true, true, true));
+        assertFalse(ItemUseSemantics.stopSprintingOnShieldSneakStart(true, true, false));
+        assertFalse(ItemUseSemantics.stopSprintingOnShieldSneakStart(false, true, true));
         assertTrue(ItemUseSemantics.rejectNetEaseOffhandUse(true, true, false));
         assertFalse(ItemUseSemantics.rejectNetEaseOffhandUse(true, true, true));
         assertFalse(ItemUseSemantics.canStartBow(true, true, false, false));

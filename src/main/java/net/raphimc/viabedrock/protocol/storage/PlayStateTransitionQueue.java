@@ -98,9 +98,8 @@ public class PlayStateTransitionQueue extends StoredObject {
             // handlers can use START_GAME storages.
             ClientboundBedrockPackets.UPDATE_ABILITIES,
             ClientboundBedrockPackets.UPDATE_ADVENTURE_SETTINGS,
-            ClientboundBedrockPackets.CREATIVE_CONTENT,
-            ClientboundBedrockPackets.MOB_EQUIPMENT,
-            ClientboundBedrockPackets.MOB_ARMOR_EQUIPMENT,
+            // CREATIVE_CONTENT / MOB_EQUIPMENT wait for ITEM_REGISTRY in
+            // InventoryBootstrapQueue so the first rewrite is not empty.
             ClientboundBedrockPackets.TRIM_DATA,
             ClientboundBedrockPackets.CAMERA_PRESETS,
             ClientboundBedrockPackets.SYNC_ENTITY_PROPERTY,

@@ -248,6 +248,15 @@ public final class ItemUseSemantics {
     }
 
     /**
+     * MOT processes START_SPRINTING before START_SNEAKING and does not clear
+     * an already-sprinting player. Java shield-block is standing, so the
+     * shield-as-sneak start must emit StopSprinting when the player is sprinting.
+     */
+    static boolean stopSprintingOnShieldSneakStart(final boolean emulateNetEase, final boolean shield, final boolean sprinting) {
+        return emulateShieldAsSneak(emulateNetEase, shield) && sprinting;
+    }
+
+    /**
      * MOT {@code ItemCrossbow.launchArrow} requires {@code serverTick - loadTick > 10}.
      * Firing on the same tick charge completes starts a new charge instead of shooting.
      */

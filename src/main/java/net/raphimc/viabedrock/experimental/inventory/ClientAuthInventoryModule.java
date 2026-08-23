@@ -273,8 +273,7 @@ public class ClientAuthInventoryModule implements FeatureModule {
             PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
             return true;
         }
-        final boolean openedForThisAction = needsBedrockPlayerInventoryOpen(
-                ContainerID.CONTAINER_ID_INVENTORY.getValue(), tracker.isBedrockPlayerInventoryOpen());
+        final boolean openedForThisAction = needsBedrockPlayerInventoryOpen(tracker, ContainerID.CONTAINER_ID_INVENTORY.getValue());
         if (openedForThisAction) {
             PacketFactory.sendBedrockOpenInventory(user);
         }
@@ -345,8 +344,7 @@ public class ClientAuthInventoryModule implements FeatureModule {
             PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
             return true;
         }
-        final boolean openedForThisAction = needsBedrockPlayerInventoryOpen(
-                ContainerID.CONTAINER_ID_INVENTORY.getValue(), tracker.isBedrockPlayerInventoryOpen());
+        final boolean openedForThisAction = needsBedrockPlayerInventoryOpen(tracker, ContainerID.CONTAINER_ID_INVENTORY.getValue());
         if (openedForThisAction) {
             PacketFactory.sendBedrockOpenInventory(user);
         }
@@ -378,7 +376,7 @@ public class ClientAuthInventoryModule implements FeatureModule {
             return false;
         }
         if (!actions.isEmpty()) {
-            if (needsBedrockPlayerInventoryOpen(ContainerID.CONTAINER_ID_INVENTORY.getValue(), tracker.isBedrockPlayerInventoryOpen())) {
+            if (needsBedrockPlayerInventoryOpen(tracker, ContainerID.CONTAINER_ID_INVENTORY.getValue())) {
                 PacketFactory.sendBedrockOpenInventory(user);
             }
             if (!sendPredictedActions(user, actions)) {
@@ -852,7 +850,31 @@ public class ClientAuthInventoryModule implements FeatureModule {
     }
 
     static boolean needsBedrockPlayerInventoryOpen(final int containerId, final boolean bedrockInventoryOpen) {
-        return containerId == ContainerID.CONTAINER_ID_INVENTORY.getValue() && !bedrockInventoryOpen;
+        return needsBedrockPlayerInventoryOpen(containerId, bedrockInventoryOpen, false);
+    }
+
+    /**
+     * Interact.OpenInventory is only for a transient SAI handshake when no
+     * MOT window is already current. Java F/Q with a chest/table open must not
+     * send action 6: MOT then emits CONTAINER_OPEN type=-1, ViaBedrock used to
+     * bounce CONTAINER_CLOSE -1, and Player.java:4065-4076 closes the chest.
+     * DropActionProcessor / SwapActionProcessor do not require inventoryOpen.
+     */
+    static boolean needsBedrockPlayerInventoryOpen(final InventoryTracker tracker, final int containerId) {
+        if (tracker == null) {
+            return false;
+        }
+        return needsBedrockPlayerInventoryOpen(
+                containerId,
+                tracker.isBedrockPlayerInventoryOpen(),
+                tracker.getCurrentContainer() != null || tracker.getPendingCloseContainer() != null);
+    }
+
+    static boolean needsBedrockPlayerInventoryOpen(final int containerId, final boolean bedrockInventoryOpen,
+                                                   final boolean containerAlreadyOpen) {
+        return containerId == ContainerID.CONTAINER_ID_INVENTORY.getValue()
+                && !bedrockInventoryOpen
+                && !containerAlreadyOpen;
     }
 
     /**

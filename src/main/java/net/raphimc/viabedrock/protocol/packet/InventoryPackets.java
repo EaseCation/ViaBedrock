@@ -95,6 +95,14 @@ public class InventoryPackets {
             PacketLeftoverLayout.discardUnreadInput(wrapper);
 
             if (inventoryTracker.isAnyScreenOpen()) {
+                if (type == ContainerType.INVENTORY) {
+                    // MOT echoes type=-1 after Interact.OpenInventory. If a chest
+                    // is already current, bouncing CONTAINER_CLOSE -1 would close
+                    // that chest (Player.java:4065-4076). Do not acknowledge as
+                    // player-inventory-open while another window is current.
+                    wrapper.cancel();
+                    return;
+                }
                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Server tried to open container while another container is open");
                 PacketFactory.sendBedrockContainerClose(wrapper.user(), (byte) -1, ContainerType.NONE);
                 wrapper.cancel();

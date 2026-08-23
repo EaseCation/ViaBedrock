@@ -470,6 +470,14 @@ public class ExperimentalFeatures {
                 clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StartSneaking, PlayerAuthInputPacket_InputData.SneakPressedRaw);
                 clientPlayer.setShieldSneakEmulated(true);
             }
+            // MOT processes START_SPRINTING before START_SNEAKING and does not
+            // clear an already-sprinting player. Java shield-block is standing;
+            // emit StopSprinting so MOT is not sprinting+sneaking.
+            if (ItemUseSemantics.stopSprintingOnShieldSneakStart(emulateNetEase, true, clientPlayer.isSprinting())) {
+                clientPlayer.authInputData().remove(PlayerAuthInputPacket_InputData.StartSprinting);
+                clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StopSprinting);
+                clientPlayer.setSprinting(false);
+            }
             clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.SneakDown, PlayerAuthInputPacket_InputData.Sneaking, PlayerAuthInputPacket_InputData.WantDown, PlayerAuthInputPacket_InputData.SneakCurrentRaw);
             return;
         }

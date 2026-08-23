@@ -36,9 +36,6 @@ class PlayStateTransitionQueueTest {
         // sendCreativeContents(), sendHeldItemIfNotAir(), TrimDataPacket.
         assertTrue(PlayStateTransitionQueue.shouldDefer(ClientboundBedrockPackets.UPDATE_ABILITIES));
         assertTrue(PlayStateTransitionQueue.shouldDefer(ClientboundBedrockPackets.UPDATE_ADVENTURE_SETTINGS));
-        assertTrue(PlayStateTransitionQueue.shouldDefer(ClientboundBedrockPackets.CREATIVE_CONTENT));
-        assertTrue(PlayStateTransitionQueue.shouldDefer(ClientboundBedrockPackets.MOB_EQUIPMENT));
-        assertTrue(PlayStateTransitionQueue.shouldDefer(ClientboundBedrockPackets.MOB_ARMOR_EQUIPMENT));
         assertTrue(PlayStateTransitionQueue.shouldDefer(ClientboundBedrockPackets.TRIM_DATA));
         assertTrue(PlayStateTransitionQueue.shouldDefer(ClientboundBedrockPackets.CAMERA_PRESETS));
         assertTrue(PlayStateTransitionQueue.shouldDefer(ClientboundBedrockPackets.SYNC_ENTITY_PROPERTY));
@@ -49,5 +46,8 @@ class PlayStateTransitionQueueTest {
         assertTrue(PlayStateTransitionQueue.shouldDefer(ClientboundBedrockPackets.BOSS_EVENT));
         assertFalse(PlayStateTransitionQueue.shouldDefer(ClientboundBedrockPackets.ITEM_REGISTRY));
         assertFalse(PlayStateTransitionQueue.shouldDefer(ClientboundBedrockPackets.INVENTORY_CONTENT));
+        assertFalse(PlayStateTransitionQueue.shouldDefer(ClientboundBedrockPackets.CREATIVE_CONTENT));
+        assertFalse(PlayStateTransitionQueue.shouldDefer(ClientboundBedrockPackets.MOB_EQUIPMENT));
+        assertFalse(PlayStateTransitionQueue.shouldDefer(ClientboundBedrockPackets.MOB_ARMOR_EQUIPMENT));
     }
 }
