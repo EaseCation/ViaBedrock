@@ -20,6 +20,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class InventorySnapshotTest {
@@ -70,5 +71,22 @@ class InventorySnapshotTest {
         snapshot.restore(this.tracker);
         assertEquals(1, this.tracker.getCurrentContainer().getItem(0).identifier());
         assertEquals(8, this.tracker.getCurrentContainer().getItem(0).amount());
+    }
+
+    @Test
+    void pendingItemStackRequestsAreKeyedById() {
+        final InventorySnapshot first = InventorySnapshot.capture(this.tracker);
+        this.tracker.getInventoryContainer().setItemSilent(0, new BedrockItem(264, (short) 0, (byte) 1));
+        final InventorySnapshot second = InventorySnapshot.capture(this.tracker);
+
+        this.tracker.rememberPendingItemStackRequest(-1, first);
+        this.tracker.rememberPendingItemStackRequest(-3, second);
+        assertEquals(2, this.tracker.pendingItemStackRequestCount());
+
+        assertTrue(this.tracker.takePendingItemStackRequest(-1) != null);
+        assertEquals(1, this.tracker.pendingItemStackRequestCount());
+        assertNull(this.tracker.takePendingItemStackRequest(-1));
+        assertTrue(this.tracker.takePendingItemStackRequest(-3) != null);
+        assertEquals(0, this.tracker.pendingItemStackRequestCount());
     }
 }

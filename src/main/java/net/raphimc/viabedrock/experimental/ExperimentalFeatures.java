@@ -1406,7 +1406,10 @@ public class ExperimentalFeatures {
                 }
                 return;
             }
-            if (isContinuousUseItem(itemRewriter, selectedItem)) {
+            // MOT Level.useItemOn runs block.onActivate first unless sneaking.
+            // Starting hold-to-use here swallows chests/tables while holding food/bow.
+            if (ItemUseSemantics.shouldStartContinuousUseFromUseItemOn(ViaBedrock.getConfig().shouldEmulateNetEaseClient())
+                    && isContinuousUseItem(itemRewriter, selectedItem)) {
                 beginContinuousItemUse(wrapper.user(), inventoryTransactionRewriter, clientPlayer, itemRewriter, handContext);
 
                 if (sequence > 0) {

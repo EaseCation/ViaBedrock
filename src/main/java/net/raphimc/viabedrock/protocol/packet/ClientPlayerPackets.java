@@ -531,7 +531,8 @@ public class ClientPlayerPackets {
                     // Ref: MOT Player.java AuthInputAction.START_SPIN_ATTACK -> onSpinAttack.
                     clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StartSpinAttack);
                     clientPlayer.sendPlayerActionPacketToServer(PlayerActionType.StartSpinAttack);
-                    clientPlayer.beginRiptideSpin(ItemUseSemantics.riptideDurationTicks(1));
+                    final net.raphimc.viabedrock.protocol.model.BedrockItem held = wrapper.user().get(InventoryTracker.class).getInventoryContainer().getSelectedHotbarItem();
+                    clientPlayer.beginRiptideSpin(ItemUseSemantics.riptideDurationTicks(ItemUseSemantics.riptideLevel(held != null ? held.tag() : null)));
                 }
                 default -> throw new IllegalStateException("Unhandled PlayerActionAction: " + action);
             }
@@ -584,6 +585,15 @@ public class ClientPlayerPackets {
             }
             if (hand != InteractionHand.MAIN_HAND && !ViaBedrock.getConfig().shouldEnableExperimentalFeatures()) {
                 wrapper.cancel();
+                return;
+            }
+            // MOT entity INTERACT equalsFast against main hand, then getItemInHand().
+            // Forwarding an offhand stack would consume/resync the selected hotbar item.
+            if (hand != InteractionHand.MAIN_HAND && ViaBedrock.getConfig().shouldEmulateNetEaseClient()) {
+                wrapper.cancel();
+                final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
+                PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getInventoryContainer());
+                PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getOffhandContainer());
                 return;
             }
             final ItemUseHandContext handContext = ItemUseHandContext.resolve(wrapper.user().get(InventoryTracker.class), hand);

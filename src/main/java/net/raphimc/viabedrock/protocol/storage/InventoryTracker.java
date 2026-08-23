@@ -49,6 +49,7 @@ import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.logging.Level;
 
@@ -109,7 +110,7 @@ public class InventoryTracker extends StoredObject {
      * Ref: MOT Player.java Interact action 6 / CONTAINER_CLOSE windowId -1.
      */
     private boolean suppressNextBedrockPlayerInventoryOpen;
-    private PendingItemStackRequest pendingItemStackRequest;
+    private final Map<Integer, PendingItemStackRequest> pendingItemStackRequests = new LinkedHashMap<>();
     private NpcDialogueState currentNpcDialogue = null;
     private int nextItemStackRequestId = -1;
 
@@ -323,25 +324,36 @@ public class InventoryTracker extends StoredObject {
         if (requestId == 0 || snapshot == null) {
             return;
         }
-        this.pendingItemStackRequest = new PendingItemStackRequest(requestId, snapshot);
+        this.pendingItemStackRequests.put(requestId, new PendingItemStackRequest(requestId, snapshot));
     }
 
     public net.raphimc.viabedrock.experimental.inventory.InventorySnapshot takePendingItemStackRequest(final int requestId) {
-        final PendingItemStackRequest pending = this.pendingItemStackRequest;
-        if (pending == null) {
-            return null;
+        if (requestId == 0) {
+            return this.takeLatestPendingItemStackRequest();
         }
-        if (requestId != 0 && pending.requestId() != requestId) {
-            return null;
-        }
-        this.pendingItemStackRequest = null;
-        return pending.snapshot();
+        final PendingItemStackRequest pending = this.pendingItemStackRequests.remove(requestId);
+        return pending != null ? pending.snapshot() : null;
+    }
+
+    public net.raphimc.viabedrock.experimental.inventory.InventorySnapshot peekPendingItemStackRequest(final int requestId) {
+        final PendingItemStackRequest pending = this.pendingItemStackRequests.get(requestId);
+        return pending != null ? pending.snapshot() : null;
     }
 
     public net.raphimc.viabedrock.experimental.inventory.InventorySnapshot takeLatestPendingItemStackRequest() {
-        final PendingItemStackRequest pending = this.pendingItemStackRequest;
-        this.pendingItemStackRequest = null;
+        if (this.pendingItemStackRequests.isEmpty()) {
+            return null;
+        }
+        Integer lastKey = null;
+        for (final Integer key : this.pendingItemStackRequests.keySet()) {
+            lastKey = key;
+        }
+        final PendingItemStackRequest pending = lastKey != null ? this.pendingItemStackRequests.remove(lastKey) : null;
         return pending != null ? pending.snapshot() : null;
+    }
+
+    public int pendingItemStackRequestCount() {
+        return this.pendingItemStackRequests.size();
     }
 
     public int nextItemStackRequestId() {

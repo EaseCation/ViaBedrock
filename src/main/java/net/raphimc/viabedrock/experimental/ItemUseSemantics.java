@@ -61,7 +61,10 @@ public final class ItemUseSemantics {
             "minecraft:experience_bottle",
             "minecraft:wind_charge",
             "minecraft:fishing_rod",
-            "minecraft:empty_map"
+            "minecraft:empty_map",
+            // MOT ItemFirework.onActivate places on pass-through blocks, then onClickAir
+            // boosts while gliding. Java USE_ITEM_ON+USE_ITEM would consume two rockets.
+            "minecraft:firework_rocket"
     );
 
     static boolean isContinuousUseItem(final String identifier, final Set<String> itemTags, final ItemUseDefinition itemUse, final boolean chargedCrossbow) {
@@ -287,6 +290,41 @@ public final class ItemUseSemantics {
     public static int riptideDurationTicks(final int riptideLevel) {
         final int level = riptideLevel > 0 ? riptideLevel : 1;
         return 50 + (level << 5);
+    }
+
+    /**
+     * MOT {@code ItemTrident.onRelease} reads {@code Enchantment.getEnchantmentLevel(RIPTIDE)}.
+     * Bedrock stores that as a short {@code id}/{@code lvl} pair in {@code ench}.
+     */
+    public static int riptideLevel(final com.viaversion.nbt.tag.CompoundTag tag) {
+        if (tag == null) {
+            return 1;
+        }
+        if (!(tag.get("ench") instanceof com.viaversion.nbt.tag.ListTag<?> enchantments)) {
+            return 1;
+        }
+        int level = 0;
+        for (final com.viaversion.nbt.tag.Tag enchantment : enchantments) {
+            if (!(enchantment instanceof com.viaversion.nbt.tag.CompoundTag compoundTag)) {
+                continue;
+            }
+            if (!(compoundTag.get("id") instanceof com.viaversion.nbt.tag.NumberTag idTag)
+                    || !(compoundTag.get("lvl") instanceof com.viaversion.nbt.tag.NumberTag lvlTag)) {
+                continue;
+            }
+            if (idTag.asInt() == net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.Enchant_Type.Riptide.getValue()) {
+                level = Math.max(level, lvlTag.asInt());
+            }
+        }
+        return level > 0 ? level : 1;
+    }
+
+    /**
+     * MOT {@code Level.useItemOn} activates the block first unless sneaking.
+     * Hold-to-use (food/bow/shield) must start from Java {@code USE_ITEM}, not {@code USE_ITEM_ON}.
+     */
+    public static boolean shouldStartContinuousUseFromUseItemOn(final boolean emulateNetEase) {
+        return !emulateNetEase;
     }
 
     static boolean isFilledPlaceBucket(final String identifier) {

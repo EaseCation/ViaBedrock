@@ -203,6 +203,19 @@ class ItemUseSemanticsTest {
         assertEquals(114, ItemUseSemantics.riptideDurationTicks(2));
         assertEquals(146, ItemUseSemantics.riptideDurationTicks(3));
         assertEquals(82, ItemUseSemantics.riptideDurationTicks(0));
+        assertTrue(ItemUseSemantics.dropDuplicateAirClickAfterUseOn(true, "minecraft:firework_rocket", true));
+        assertFalse(ItemUseSemantics.dropDuplicateAirClickAfterUseOn(true, "minecraft:goat_horn", true));
+        assertFalse(ItemUseSemantics.shouldStartContinuousUseFromUseItemOn(true));
+        assertTrue(ItemUseSemantics.shouldStartContinuousUseFromUseItemOn(false));
+        final com.viaversion.nbt.tag.CompoundTag ench = new com.viaversion.nbt.tag.CompoundTag();
+        final com.viaversion.nbt.tag.ListTag<com.viaversion.nbt.tag.CompoundTag> list = new com.viaversion.nbt.tag.ListTag<>(com.viaversion.nbt.tag.CompoundTag.class);
+        final com.viaversion.nbt.tag.CompoundTag riptide = new com.viaversion.nbt.tag.CompoundTag();
+        riptide.putShort("id", (short) 30);
+        riptide.putShort("lvl", (short) 3);
+        list.add(riptide);
+        ench.put("ench", list);
+        assertEquals(3, ItemUseSemantics.riptideLevel(ench));
+        assertEquals(1, ItemUseSemantics.riptideLevel(null));
     }
 
 }

@@ -408,13 +408,42 @@ public class ClientAuthInventoryModule implements FeatureModule {
         if (tracker == null) {
             return;
         }
+        if (decoded.entries() != null && !decoded.entries().isEmpty()) {
+            boolean restored = false;
+            for (final ItemStackResponseLayout.DecodedEntry entry : decoded.entries()) {
+                if (entry.ok()) {
+                    tracker.takePendingItemStackRequest(entry.requestId());
+                    continue;
+                }
+                final InventorySnapshot snapshot = tracker.takePendingItemStackRequest(entry.requestId());
+                if (snapshot != null) {
+                    snapshot.restore(tracker);
+                    restored = true;
+                }
+            }
+            applyStackResponse(tracker, decoded);
+            if (restored) {
+                PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
+                if (tracker.getCurrentContainer() != null && tracker.getCurrentContainer() != tracker.getInventoryContainer()) {
+                    PacketFactory.sendJavaContainerSetContent(user, tracker.getCurrentContainer());
+                }
+                sendJavaCursor(user, tracker);
+            }
+            return;
+        }
         if (!decoded.anyRejected()) {
             // MOT success responses include the authoritative stackNetworkId.
             // The actor is not resent INVENTORY_SLOT/CONTENT, so the predicted
             // mirror must stamp those ids or the next click fails netId check.
             // Ref: MOT ItemStackRequestHandler.handleRequests OK path and
             // TransferItemActionProcessor.buildContainer.
-            tracker.takeLatestPendingItemStackRequest();
+            if (decoded.requestIds() != null) {
+                for (final int requestId : decoded.requestIds()) {
+                    tracker.takePendingItemStackRequest(requestId);
+                }
+            } else {
+                tracker.takeLatestPendingItemStackRequest();
+            }
             applyStackResponse(tracker, decoded);
             return;
         }

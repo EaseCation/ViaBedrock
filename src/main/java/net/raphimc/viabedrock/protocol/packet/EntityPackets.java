@@ -817,6 +817,9 @@ public class EntityPackets {
             case LOVE_HEARTS -> net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent.LOVE_HEARTS;
             case VILLAGER_ANGRY -> net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent.VILLAGER_ANGRY;
             case VILLAGER_HAPPY -> net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent.VILLAGER_HAPPY;
+            // MOT Entity.java totem uses ActorEvent 65 (TALISMAN_ACTIVATE / CONSUME_TOTEM).
+            // Java 1.21 expects PROTECTED_FROM_DEATH(35); without this the pop is cancelled.
+            case TALISMAN_ACTIVATE -> net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent.PROTECTED_FROM_DEATH;
             case WITCH_HAT_MAGIC -> net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent.WITCH_HAT_MAGIC;
             case FIREWORKS_EXPLODE -> net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent.FIREWORKS_EXPLODE;
             case IN_LOVE_HEARTS -> net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent.IN_LOVE_HEARTS;

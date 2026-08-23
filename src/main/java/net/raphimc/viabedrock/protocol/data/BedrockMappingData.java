@@ -117,6 +117,8 @@ public class BedrockMappingData extends MappingDataBase {
     // Items
     private ItemUpgrader bedrockItemUpgrader;
     private BiMap<String, Integer> javaItems;
+    private Map<String, Integer> bedrockLegacyItems;
+    private Int2ObjectMap<String> bedrockLegacyItemIdentifiers;
     private int[] javaItemMaxStackSizes;
     private Set<String> bedrockBlockItems;
     private Set<String> bedrockMetaItems;
@@ -429,6 +431,20 @@ public class BedrockMappingData extends MappingDataBase {
 
         { // Items
             this.bedrockItemUpgrader = new ItemUpgrader();
+
+            // MOT NBTIO.putItemHelper writes unsigned short id (or Name for custom 255).
+            // The MOT jar table has 18 alias pairs (boat/oak_boat, scute/turtle_scute, ...);
+            // HashBiMap cannot hold duplicate values. Keep every name→id alias and let the
+            // last (modern) identifier win for reverse lookup.
+            final JsonObject bedrockLegacyItemsJson = this.readJson("bedrock/legacy_item_ids.json");
+            this.bedrockLegacyItems = new HashMap<>(bedrockLegacyItemsJson.size());
+            this.bedrockLegacyItemIdentifiers = new Int2ObjectOpenHashMap<>(bedrockLegacyItemsJson.size());
+            for (Map.Entry<String, JsonElement> entry : bedrockLegacyItemsJson.entrySet()) {
+                final String identifier = Key.namespaced(entry.getKey());
+                final int legacyId = entry.getValue().getAsInt();
+                this.bedrockLegacyItems.put(identifier, legacyId);
+                this.bedrockLegacyItemIdentifiers.put(legacyId, identifier);
+            }
 
             final JsonArray javaItemsJson = javaViaMappingJson.get("items").getAsJsonArray();
             this.javaItems = HashBiMap.create(javaItemsJson.size());
@@ -1230,6 +1246,14 @@ public class BedrockMappingData extends MappingDataBase {
 
     public ItemUpgrader getBedrockItemUpgrader() {
         return this.bedrockItemUpgrader;
+    }
+
+    public Map<String, Integer> getBedrockLegacyItems() {
+        return this.bedrockLegacyItems;
+    }
+
+    public String getBedrockLegacyItemIdentifier(final int legacyId) {
+        return this.bedrockLegacyItemIdentifiers != null ? this.bedrockLegacyItemIdentifiers.get(legacyId) : null;
     }
 
     public BiMap<String, Integer> getJavaItems() {

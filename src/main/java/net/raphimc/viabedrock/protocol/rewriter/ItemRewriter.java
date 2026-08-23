@@ -341,18 +341,40 @@ public class ItemRewriter extends StoredObject {
     }
 
     public CompoundTag javaItem(final CompoundTag bedrockTag) {
+        final Item javaItem = this.javaItemFromNbt(bedrockTag);
         final CompoundTag javaTag = new CompoundTag();
-        javaTag.putString("id", "minecraft:stone");
-        return javaTag; // TODO: Support converting nbt items
+        if (javaItem == null || javaItem.isEmpty()) {
+            javaTag.putString("id", "minecraft:air");
+            javaTag.putInt("count", 0);
+            return javaTag;
+        }
+        final com.google.common.collect.BiMap<String, Integer> javaItems = BedrockProtocol.MAPPINGS.getJavaItems();
+        final String identifier = javaItems != null ? javaItems.inverse().get(javaItem.identifier()) : null;
+        javaTag.putString("id", identifier != null ? identifier : "minecraft:air");
+        javaTag.putInt("count", Math.max(1, javaItem.amount()));
+        if (bedrockTag != null && bedrockTag.get("Slot") instanceof NumberTag slotTag) {
+            javaTag.putByte("Slot", (byte) slotTag.asInt());
+        }
+        return javaTag;
     }
 
     public Item javaItemFromNbt(final CompoundTag itemTag) {
         if (itemTag == null) return StructuredItem.empty();
 
-        final String name = itemTag.getString("Name", null);
+        String name = itemTag.getString("Name", null);
+        if (name == null && itemTag.get("id") instanceof NumberTag idTag) {
+            int legacyId = idTag.asInt();
+            if (legacyId > 32767) {
+                legacyId -= 65536;
+            }
+            if (legacyId != 255) {
+                name = BedrockProtocol.MAPPINGS.getBedrockLegacyItemIdentifier(legacyId);
+            }
+        }
         if (name == null) return StructuredItem.empty();
+        name = Key.namespaced(name);
 
-        final Integer id = this.items.get(name);
+        Integer id = this.items.get(name);
         if (id == null) {
             ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown nbt item identifier: " + name);
             return StructuredItem.empty();

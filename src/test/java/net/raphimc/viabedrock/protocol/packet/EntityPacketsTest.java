@@ -180,7 +180,8 @@ class EntityPacketsTest {
                 () -> assertEquals(EntityEvent.EAT_GRASS, EntityPackets.javaEntityEvent(ActorEvent.EAT_GRASS, EntityTypes1_21_11.SHEEP)),
                 () -> assertEquals(EntityEvent.VILLAGER_ANGRY, EntityPackets.javaEntityEvent(ActorEvent.VILLAGER_ANGRY, EntityTypes1_21_11.VILLAGER)),
                 () -> assertEquals(EntityEvent.CANCEL_SHAKE_WETNESS, EntityPackets.javaEntityEvent(ActorEvent.SHAKE_WETNESS_STOP, EntityTypes1_21_11.WOLF)),
-                () -> assertNull(EntityPackets.javaEntityEvent(ActorEvent.FINISHED_CHARGING_ITEM, EntityTypes1_21_11.PILLAGER))
+                () -> assertNull(EntityPackets.javaEntityEvent(ActorEvent.FINISHED_CHARGING_ITEM, EntityTypes1_21_11.PILLAGER)),
+                () -> assertEquals(EntityEvent.PROTECTED_FROM_DEATH, EntityPackets.javaEntityEvent(ActorEvent.TALISMAN_ACTIVATE, EntityTypes1_21_11.PLAYER))
         );
     }
 

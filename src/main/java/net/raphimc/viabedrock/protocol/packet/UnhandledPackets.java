@@ -93,6 +93,17 @@ public class UnhandledPackets {
         protocol.cancelClientbound(ClientboundBedrockPackets.COMPRESSED_BIOME_DEFINITION_LIST);
         protocol.cancelClientbound(ClientboundBedrockPackets.SET_MOVEMENT_AUTHORITY);
         protocol.cancelClientbound(ClientboundBedrockPackets.PARTY_CHANGED);
+        protocol.cancelClientbound(ClientboundBedrockPackets.TICK_SYNC);
+        protocol.cancelClientbound(ClientboundBedrockPackets.LEVEL_SOUND_EVENT_V1);
+        protocol.cancelClientbound(ClientboundBedrockPackets.ENTITY_FALL);
+        protocol.cancelClientbound(ClientboundBedrockPackets.CRAFTING_EVENT);
+        protocol.cancelClientbound(ClientboundBedrockPackets.ADVENTURE_SETTINGS);
+        protocol.cancelClientbound(ClientboundBedrockPackets.ITEM_FRAME_DROP_ITEM);
+        protocol.cancelClientbound(ClientboundBedrockPackets.LEVEL_SOUND_EVENT_V2);
+        protocol.cancelClientbound(ClientboundBedrockPackets.LECTERN_UPDATE);
+        protocol.cancelClientbound(ClientboundBedrockPackets.VIDEO_STREAM_CONNECT);
+        protocol.cancelClientbound(ClientboundBedrockPackets.SCRIPT_CUSTOM_EVENT);
+        protocol.cancelClientbound(ClientboundBedrockPackets.UPDATE_BLOCK_PROPERTIES);
         protocol.cancelClientbound(ClientboundBedrockPackets.UPDATE_SOUND_DATA);
         protocol.cancelClientbound(ClientboundBedrockPackets.SEND_PARTY_DESTINATION_COOKIE);
         protocol.cancelClientbound(ClientboundBedrockPackets.PARTY_DESTINATION_COOKIE_RESPONSE);

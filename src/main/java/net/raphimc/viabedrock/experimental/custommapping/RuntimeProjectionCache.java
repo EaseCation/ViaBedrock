@@ -13,7 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 public final class RuntimeProjectionCache {
-    private static final int KEY_SCHEMA_VERSION = 2;
+    private static final int KEY_SCHEMA_VERSION = 3;
     private static final String PROJECTION_ALGORITHM_VERSION = "runtime-projection-v2-source-synthetic";
     private static final String SOURCE_ALLOCATION_ALGORITHM_VERSION = "source-allocation-v2-stage-target-bounded";
     private static final String LIGHT_SEMANTIC_ALGORITHM_VERSION = "block-light-semantics-v1";
@@ -74,7 +74,9 @@ public final class RuntimeProjectionCache {
         hash = fnv1a(hash, blockEntitySourceBase);
         hash = fnv1a(hash, pipelineRegistryKey);
         hash = fnv1a(hash, LIGHT_SEMANTIC_ALGORITHM_VERSION);
-        hash = fnv1a(hash, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
+        hash = fnv1a(hash, net.raphimc.viabedrock.ViaBedrock.getConfig() != null && net.raphimc.viabedrock.ViaBedrock.getConfig().shouldEmulateNetEaseClient()
+                ? net.raphimc.viabedrock.ViaBedrock.getConfig().getNetEaseProtocolVersion()
+                : ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
         hash = fnv1a(hash, ProtocolConstants.BEDROCK_VERSION_NAME);
         hash = fnv1a(hash, hashedRuntimeBlockIds ? 1 : 0);
         hash = fnv1a(hash, blockProperties.length);

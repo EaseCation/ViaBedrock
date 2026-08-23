@@ -12,7 +12,7 @@ public final class CustomMappingProfileCache {
     public static final long EMPTY_KEY = 0x9ae16a3b2f90404fL;
     public static final long UNKNOWN_KEY = 0L;
     public static final String SYNC_MAPPING_VERSION = "viabedrock-custom-mapping-v3";
-    private static final int KEY_SCHEMA_VERSION = 2;
+    private static final int KEY_SCHEMA_VERSION = 3;
     private static final String PROFILE_ALGORITHM_VERSION = "snapshot-profile-v1";
     private static final String LIGHT_SEMANTIC_ALGORITHM_VERSION = "block-light-semantics-v1";
     private static final int MAX_ENTRIES = 128;
@@ -49,7 +49,9 @@ public final class CustomMappingProfileCache {
         hash = fnv1a(hash, SYNC_MAPPING_VERSION);
         hash = fnv1a(hash, PROFILE_ALGORITHM_VERSION);
         hash = fnv1a(hash, LIGHT_SEMANTIC_ALGORITHM_VERSION);
-        hash = fnv1a(hash, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
+        hash = fnv1a(hash, net.raphimc.viabedrock.ViaBedrock.getConfig() != null && net.raphimc.viabedrock.ViaBedrock.getConfig().shouldEmulateNetEaseClient()
+                ? net.raphimc.viabedrock.ViaBedrock.getConfig().getNetEaseProtocolVersion()
+                : ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
         hash = fnv1a(hash, ProtocolConstants.BEDROCK_VERSION_NAME);
         hash = fnv1a(hash, bytes.length);
         for (final byte b : bytes) {
