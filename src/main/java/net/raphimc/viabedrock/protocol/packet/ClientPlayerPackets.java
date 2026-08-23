@@ -429,7 +429,16 @@ public class ClientPlayerPackets {
             wrapper.read(Types.VAR_INT); // entity id
             final PlayerCommandAction action = PlayerCommandAction.values()[wrapper.read(Types.VAR_INT)]; // action
             final int data = wrapper.read(Types.VAR_INT); // data
+            if (action == PlayerCommandAction.STOP_SLEEPING) {
+                // Java leave-bed is PLAYER_COMMAND. MOT 860 stopSleep() is PlayerAction 6.
+                // Ref: MOT Player.java case 6 / PlayerActionPacket.ACTION_STOP_SLEEPING.
+                clientPlayer.sendPlayerActionPacketToServer(PlayerActionType.StopSleeping);
+                return;
+            }
             final PlayerAuthInputPacket_InputData inputData = playerCommandInputData(action);
+            if (inputData == null) {
+                return;
+            }
 
             if (action == PlayerCommandAction.START_SPRINTING) {
                 // Nukkit START_SPRINTING calls setUsingItem(false). Keep eating from being cancelled
@@ -441,7 +450,11 @@ public class ClientPlayerPackets {
             } else if (action == PlayerCommandAction.STOP_SPRINTING) {
                 clientPlayer.setSprinting(false);
             } else if (action == PlayerCommandAction.START_FALL_FLYING) {
-                clientPlayer.setGliding(true);
+                // Do not emit StartGliding on this packet. Java often still reports
+                // onGround; GanAC ElytraF would suppress it. Emit on the first
+                // airborne AuthInput instead (applyJavaGlideStart).
+                clientPlayer.requestStartGliding();
+                return;
             }
             clientPlayer.addAuthInputData(inputData);
         });
@@ -509,6 +522,12 @@ public class ClientPlayerPackets {
                     }
                 }
                 case STAB -> {
+                    // Java riptide is PLAYER_ACTION.STAB. MOT 860 only starts spin from
+                    // AuthInput START_SPIN_ATTACK (protocol >= 748). Wire bit 58 still fits
+                    // the NetEase 860 64-bit mask (ordinal 56 + 2 extra flags).
+                    // Ref: MOT Player.java AuthInputAction.START_SPIN_ATTACK -> onSpinAttack.
+                    clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StartSpinAttack);
+                    clientPlayer.sendPlayerActionPacketToServer(PlayerActionType.StartSpinAttack);
                 }
                 default -> throw new IllegalStateException("Unhandled PlayerActionAction: " + action);
             }
@@ -717,17 +736,20 @@ public class ClientPlayerPackets {
                 authInputContext.setDelta(Position3f.ZERO);
             }
 
+            // wrapDegrees(180)==-180. Write the wrapped heading so GanAC BadPacketB
+            // and MOT AuthInput stay in (-180, 180]. Java yRot can be +180.
+            // Ref: MOT PlayerAuthInputPacket.decode() LFloat yaw; GanAC MathUtil.wrapDegrees.
             wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().x()); // pitch
-            wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().y()); // yaw
+            wrapper.write(BedrockTypes.FLOAT_LE, MathUtil.wrapDegrees(clientPlayer.rotation().y())); // yaw
             wrapper.write(BedrockTypes.POSITION_3F, authInputContext.position()); // position
             wrapper.write(BedrockTypes.POSITION_2F, immobile ? new Position2f(0F, 0F) : MathUtil.calculateMovementDirections(clientPlayer.authInputData(), clientPlayer.isSneaking())); // move vector
-            wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().z()); // head yaw
+            wrapper.write(BedrockTypes.FLOAT_LE, MathUtil.wrapDegrees(clientPlayer.rotation().z())); // head yaw
             wrapper.write(BedrockTypes.UNSIGNED_VAR_BIG_INTEGER, PlayerAuthInputLayout.encodeBitmask(clientPlayer.authInputData())); // input flags
             wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, InputMode.Mouse.getValue()); // input mode
             wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, ClientPlayMode.Screen.getValue()); // play mode
             wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, NewInteractionModel.Crosshair.getValue()); // interaction mode
             wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().x()); // interact pitch
-            wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().y()); // interact yaw
+            wrapper.write(BedrockTypes.FLOAT_LE, MathUtil.wrapDegrees(clientPlayer.rotation().y())); // interact yaw
             wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG, (long) clientPlayer.age()); // tick
             wrapper.write(BedrockTypes.POSITION_3F, authInputContext.delta()); // delta
             if (PlayerAuthInputLayout.usesCameraDeparted()) {
@@ -852,21 +874,24 @@ public class ClientPlayerPackets {
             case START_SPRINTING -> PlayerAuthInputPacket_InputData.StartSprinting;
             case STOP_SPRINTING -> PlayerAuthInputPacket_InputData.StopSprinting;
             case START_FALL_FLYING -> PlayerAuthInputPacket_InputData.StartGliding;
-            default -> throw new IllegalStateException("Unhandled PlayerCommandAction: " + action);
+            case STOP_SLEEPING, START_RIDING_JUMP, STOP_RIDING_JUMP, OPEN_INVENTORY -> null;
         };
     }
 
     /**
      * Java never emits Bedrock {@code START/STOP_SWIMMING} or {@code STOP_GLIDING}. MOT 860 and
      * GanAC only enter the swimming/gliding pose from those AuthInput flags, so translate the
-     * Java sprint-in-water and land-while-gliding edges here.
+     * Java sprint-in-water and land/water/unequip/vehicle glide-stop edges here.
+     * Java jump-to-cancel is not synthesized: fireworks keep JUMP held while gliding.
+     * Ref: MOT Player.java START_GLIDING/STOP_GLIDING and onGround/chestplate clear.
      */
     static void applyJavaPoseTransitions(final UserConnection user, final ClientPlayerEntity clientPlayer) {
         if (clientPlayer == null) {
             return;
         }
+        applyJavaGlideStart(user, clientPlayer);
+        applyJavaGlideStop(user, clientPlayer);
         applyJavaSwimTransition(user, clientPlayer);
-        applyJavaGlideStop(clientPlayer);
     }
 
     static void applyJavaSwimTransition(final UserConnection user, final ClientPlayerEntity clientPlayer) {
@@ -880,8 +905,40 @@ public class ClientPlayerPackets {
         }
     }
 
-    static void applyJavaGlideStop(final ClientPlayerEntity clientPlayer) {
-        if (shouldStopGliding(clientPlayer.isGliding(), clientPlayer.isOnGround())) {
+    static void applyJavaGlideStart(final UserConnection user, final ClientPlayerEntity clientPlayer) {
+        if (!clientPlayer.pendingStartGliding()) {
+            return;
+        }
+        if (clientPlayer.isGliding() || shouldCancelPendingStartGliding(
+                isInsideOfWater(user, clientPlayer),
+                isLocalRiding(user),
+                wearingElytra(user))) {
+            clientPlayer.consumePendingStartGliding();
+            return;
+        }
+        if (shouldEmitStartGliding(true, clientPlayer.isOnGround())
+                && clientPlayer.consumePendingStartGliding()) {
+            clientPlayer.setGliding(true);
+            clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StartGliding);
+        }
+    }
+
+    static boolean shouldEmitStartGliding(final boolean pending, final boolean onGround) {
+        return pending && !onGround;
+    }
+
+    static boolean shouldCancelPendingStartGliding(final boolean inWater, final boolean riding,
+                                                   final boolean wearingElytra) {
+        return inWater || riding || !wearingElytra;
+    }
+
+    static void applyJavaGlideStop(final UserConnection user, final ClientPlayerEntity clientPlayer) {
+        if (shouldStopGliding(
+                clientPlayer.isGliding(),
+                clientPlayer.isOnGround(),
+                isInsideOfWater(user, clientPlayer),
+                isLocalRiding(user),
+                wearingElytra(user))) {
             clientPlayer.setGliding(false);
             clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StopGliding);
         }
@@ -898,7 +955,33 @@ public class ClientPlayerPackets {
     }
 
     static boolean shouldStopGliding(final boolean gliding, final boolean onGround) {
-        return gliding && onGround;
+        return shouldStopGliding(gliding, onGround, false, false, true);
+    }
+
+    /**
+     * MOT auto-clears GLIDING on land, missing/broken chestplate, or vehicle. Java water
+     * also cancels fall-flying; jump-to-cancel is omitted so firework boosts stay gliding.
+     */
+    static boolean shouldStopGliding(final boolean gliding, final boolean onGround,
+                                     final boolean inWater, final boolean riding,
+                                     final boolean wearingElytra) {
+        return gliding && (onGround || inWater || riding || !wearingElytra);
+    }
+
+    static boolean wearingElytra(final UserConnection user) {
+        if (user == null) {
+            return true;
+        }
+        final InventoryTracker inventoryTracker = user.get(InventoryTracker.class);
+        final ItemRewriter itemRewriter = user.get(ItemRewriter.class);
+        if (inventoryTracker == null || itemRewriter == null) {
+            return true;
+        }
+        final String identifier = itemRewriter.bedrockIdentifier(inventoryTracker.getArmorContainer().getItem(1));
+        if (identifier == null) {
+            return false;
+        }
+        return "minecraft:elytra".equals(identifier) || identifier.endsWith(":elytra");
     }
 
     static boolean wantsJavaSwim(final boolean gliding, final boolean flying, final boolean riding,

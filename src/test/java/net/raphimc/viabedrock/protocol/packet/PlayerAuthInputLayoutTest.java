@@ -56,7 +56,21 @@ class PlayerAuthInputLayoutTest {
         assertEquals(46, PlayerAuthInputLayout.wireBit(PlayerAuthInputPacket_InputData.ClientAckServerData.getValue(), 2));
         assertEquals(50, PlayerAuthInputLayout.wireBit(PlayerAuthInputPacket_InputData.BlockBreakingDelayEnabled.getValue(), 2));
         assertEquals(52, PlayerAuthInputLayout.wireBit(PlayerAuthInputPacket_InputData.VerticalCollision.getValue(), 2));
+        assertEquals(58, PlayerAuthInputLayout.wireBit(PlayerAuthInputPacket_InputData.StartSpinAttack.getValue(), 2));
         assertEquals(66, PlayerAuthInputLayout.wireBit(PlayerAuthInputPacket_InputData.SneakCurrentRaw.getValue(), 2));
+    }
+
+    @Test
+    void netease860KeepsStartSpinAttackInsideThe64BitMask() {
+        final Set<PlayerAuthInputPacket_InputData> input = EnumSet.of(
+                PlayerAuthInputPacket_InputData.StartSpinAttack,
+                PlayerAuthInputPacket_InputData.StartUsingItem
+        );
+        final BigInteger wire = PlayerAuthInputLayout.encodeBitmask(input, true, 860);
+        assertTrue(wire.testBit(58), "StartSpinAttack ordinal 56 + 2 extra bits must stay under 64");
+        assertTrue(wire.testBit(55), "StartUsingItem ordinal 53 + 2 extra bits must stay under 64");
+        assertEquals(input, PlayerAuthInputLayout.decodeToInputData(wire, 2));
+        assertTrue(unsignedVarLongByteLength(wire) <= 10);
     }
 
     @Test

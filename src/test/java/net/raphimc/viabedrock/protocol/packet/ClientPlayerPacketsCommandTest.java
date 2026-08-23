@@ -22,7 +22,7 @@ import net.raphimc.viabedrock.protocol.data.enums.java.generated.PlayerCommandAc
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 class ClientPlayerPacketsCommandTest {
 
@@ -37,9 +37,11 @@ class ClientPlayerPacketsCommandTest {
     }
 
     @Test
-    void rejectsUnsupportedJavaPlayerCommands() {
-        assertThrows(IllegalStateException.class,
-                () -> ClientPlayerPackets.playerCommandInputData(PlayerCommandAction.OPEN_INVENTORY));
+    void leaveBedAndRidingJumpDoNotThrow() {
+        assertNull(ClientPlayerPackets.playerCommandInputData(PlayerCommandAction.STOP_SLEEPING));
+        assertNull(ClientPlayerPackets.playerCommandInputData(PlayerCommandAction.OPEN_INVENTORY));
+        assertNull(ClientPlayerPackets.playerCommandInputData(PlayerCommandAction.START_RIDING_JUMP));
+        assertNull(ClientPlayerPackets.playerCommandInputData(PlayerCommandAction.STOP_RIDING_JUMP));
     }
 
 }

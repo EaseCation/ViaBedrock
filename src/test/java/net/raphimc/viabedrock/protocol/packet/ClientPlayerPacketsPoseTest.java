@@ -17,6 +17,7 @@
  */
 package net.raphimc.viabedrock.protocol.packet;
 
+import net.raphimc.viabedrock.api.util.MathUtil;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAuthInputPacket_InputData;
 import org.junit.jupiter.api.Test;
 
@@ -52,10 +53,44 @@ class ClientPlayerPacketsPoseTest {
     }
 
     @Test
+    void authInputYawWrapsSouthEndpointAndAccumulatedLook() {
+        assertEquals(-180.0f, MathUtil.wrapDegrees(180.0f), 0.0f);
+        assertEquals(-180.0f, MathUtil.wrapDegrees(-180.0f), 0.0f);
+        assertEquals(0.0f, MathUtil.wrapDegrees(360.0f), 0.0f);
+        assertEquals(-179.0f, MathUtil.wrapDegrees(181.0f), 0.0f);
+    }
+
+    @Test
     void landingWhileGlidingEmitsStopGliding() {
         assertTrue(ClientPlayerPackets.shouldStopGliding(true, true));
         assertFalse(ClientPlayerPackets.shouldStopGliding(true, false));
         assertFalse(ClientPlayerPackets.shouldStopGliding(false, true));
+    }
+
+    @Test
+    void waterVehicleOrMissingElytraStopsGliding() {
+        assertTrue(ClientPlayerPackets.shouldStopGliding(true, false, true, false, true));
+        assertTrue(ClientPlayerPackets.shouldStopGliding(true, false, false, true, true));
+        assertTrue(ClientPlayerPackets.shouldStopGliding(true, false, false, false, false));
+        assertFalse(ClientPlayerPackets.shouldStopGliding(true, false, false, false, true));
+        assertFalse(ClientPlayerPackets.shouldStopGliding(false, false, true, true, false));
+    }
+
+    @Test
+    void jumpHeldInAirDoesNotStopGliding() {
+        // Firework boost keeps JUMP down. Do not treat that as Java air-cancel.
+        assertFalse(ClientPlayerPackets.shouldStopGliding(true, false, false, false, true));
+    }
+
+    @Test
+    void startGlidingWaitsUntilAirborne() {
+        assertFalse(ClientPlayerPackets.shouldEmitStartGliding(true, true));
+        assertTrue(ClientPlayerPackets.shouldEmitStartGliding(true, false));
+        assertFalse(ClientPlayerPackets.shouldEmitStartGliding(false, false));
+        assertFalse(ClientPlayerPackets.shouldCancelPendingStartGliding(false, false, true));
+        assertTrue(ClientPlayerPackets.shouldCancelPendingStartGliding(true, false, true));
+        assertTrue(ClientPlayerPackets.shouldCancelPendingStartGliding(false, true, true));
+        assertTrue(ClientPlayerPackets.shouldCancelPendingStartGliding(false, false, false));
     }
 
     @Test

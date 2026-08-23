@@ -95,6 +95,9 @@ public class ClientPlayerEntity extends PlayerEntity {
     // translated pose so AuthInput can emit the one-tick MOT flags GanAC needs.
     private boolean swimming;
     private boolean gliding;
+    // Java START_FALL_FLYING can arrive while onGround is still true. MOT/GanAC
+    // ElytraF suppress StartGliding on that tick, so hold it until airborne.
+    private boolean pendingStartGliding;
     // MOT UPDATE_CLIENT_INPUT_LOCKS bit 4. Protocol 560+ no longer sets ActorFlags.NOAI
     // for movement locks, so Java would otherwise keep walking while the backend is frozen.
     private boolean inputMovementLocked;
@@ -468,6 +471,25 @@ public class ClientPlayerEntity extends PlayerEntity {
 
     public void setGliding(final boolean gliding) {
         this.gliding = gliding;
+        if (!gliding) {
+            this.pendingStartGliding = false;
+        }
+    }
+
+    public void requestStartGliding() {
+        this.pendingStartGliding = true;
+    }
+
+    public boolean pendingStartGliding() {
+        return this.pendingStartGliding;
+    }
+
+    public boolean consumePendingStartGliding() {
+        if (!this.pendingStartGliding) {
+            return false;
+        }
+        this.pendingStartGliding = false;
+        return true;
     }
 
     public void setSprinting(final boolean sprinting) {
