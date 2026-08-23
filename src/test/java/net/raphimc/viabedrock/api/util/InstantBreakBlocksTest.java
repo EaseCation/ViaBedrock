@@ -33,4 +33,29 @@ class InstantBreakBlocksTest {
         assertFalse(InstantBreakBlocks.isShearsInstantBreak(null, "easecation:hxgz_planks"));
     }
 
+    @Test
+    void creativeStartCompletesEvenForHardBlocks() {
+        assertTrue(InstantBreakBlocks.shouldCompleteOnJavaStart(true, "stone", null, "minecraft:diamond_pickaxe", null));
+    }
+
+    @Test
+    void survivalStoneDoesNotCompleteOnStart() {
+        assertFalse(InstantBreakBlocks.shouldCompleteOnJavaStart(false, "stone", null, "minecraft:diamond_pickaxe", null));
+    }
+
+    @Test
+    void survivalZeroHardnessStillCompletesOnStart() {
+        assertTrue(InstantBreakBlocks.shouldCompleteOnJavaStart(false, "wheat", null, "minecraft:air", null));
+    }
+
+    @Test
+    void customZeroSecondsCompletesOnStart() {
+        assertTrue(InstantBreakBlocks.shouldCompleteOnJavaStart(false, "mod_block", 0.0F, "minecraft:air", null));
+    }
+
+    @Test
+    void unknownCustomSecondsDoesNotCompleteOnStart() {
+        assertFalse(InstantBreakBlocks.shouldCompleteOnJavaStart(false, "stone", Float.NaN, "minecraft:air", null));
+    }
+
 }

@@ -42,6 +42,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.AnimatePacke
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.LevelEvent;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerActionType;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAuthInputPacket_InputData;
+import net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.PlayerActionAction;
 import net.raphimc.viabedrock.protocol.model.BlockChangeEntry;
@@ -254,22 +255,23 @@ public final class BlockBreakingProgressModule implements FeatureModule {
     }
 
     private boolean isInstantBreak(final UserConnection user, final ChunkTracker chunkTracker, final BlockPosition position) {
+        final ClientPlayerEntity clientPlayer = user.get(EntityTracker.class).getClientPlayer();
         final int javaBlockStateId = chunkTracker.getJavaBlockState(position);
         final BlockState javaBlockState = BedrockProtocol.MAPPINGS.getJavaBlockStates().inverse().get(javaBlockStateId);
-        if (javaBlockState != null && InstantBreakBlocks.isVanillaInstantBreak(javaBlockState.identifier())) {
-            return true;
-        }
         final CustomMappingSyncStorage customMappingSync = user.get(CustomMappingSyncStorage.class);
-        if (customMappingSync != null && customMappingSync.access().secondsToDestroy(javaBlockStateId) == 0.0F) {
-            return true;
-        }
-
         final String heldIdentifier = user.get(ItemRewriter.class).bedrockIdentifier(
                 user.get(InventoryTracker.class).getInventoryContainer().getSelectedHotbarItem());
         final String customIdentifier = customMappingSync != null
                 ? customMappingSync.access().identifierByJavaBlockStateId(javaBlockStateId) : null;
-        return "minecraft:shears".equals(heldIdentifier)
-                && InstantBreakBlocks.isShearsInstantBreak(javaBlockState != null ? javaBlockState.identifier() : null, customIdentifier);
+        final Float customSeconds = customMappingSync != null
+                ? customMappingSync.access().secondsToDestroy(javaBlockStateId) : null;
+        return InstantBreakBlocks.shouldCompleteOnJavaStart(
+                clientPlayer != null && clientPlayer.javaGameMode() == GameMode.CREATIVE,
+                javaBlockState != null ? javaBlockState.identifier() : null,
+                customSeconds,
+                heldIdentifier,
+                customIdentifier
+        );
     }
 
     private void sendBedrockSwing(final UserConnection user, final ClientPlayerEntity clientPlayer) {

@@ -131,23 +131,23 @@ public class ClientPlayerPackets {
     }
 
     private static boolean isInstantBreak(final UserConnection user, final ChunkTracker chunkTracker, final BlockPosition position) {
+        final ClientPlayerEntity clientPlayer = user.get(EntityTracker.class).getClientPlayer();
         final int javaBlockStateId = chunkTracker.getJavaBlockState(position);
         final BlockState javaBlockState = BedrockProtocol.MAPPINGS.getJavaBlockStates().inverse().get(javaBlockStateId);
-        if (javaBlockState != null && InstantBreakBlocks.isVanillaInstantBreak(javaBlockState.identifier())) {
-            return true; // vanilla 0-hardness block
-        }
         final CustomMappingSyncStorage customMappingSync = user.get(CustomMappingSyncStorage.class);
-        // Custom (mod) blocks: seconds_to_destroy synced from BedrockLoader; 0 means instant break.
-        if (customMappingSync != null && customMappingSync.access().secondsToDestroy(javaBlockStateId) == 0.0F) {
-            return true;
-        }
-
         final String heldIdentifier = user.get(ItemRewriter.class).bedrockIdentifier(
                 user.get(InventoryTracker.class).getInventoryContainer().getSelectedHotbarItem());
         final String customIdentifier = customMappingSync != null
                 ? customMappingSync.access().identifierByJavaBlockStateId(javaBlockStateId) : null;
-        return "minecraft:shears".equals(heldIdentifier)
-                && InstantBreakBlocks.isShearsInstantBreak(javaBlockState != null ? javaBlockState.identifier() : null, customIdentifier);
+        final Float customSeconds = customMappingSync != null
+                ? customMappingSync.access().secondsToDestroy(javaBlockStateId) : null;
+        return InstantBreakBlocks.shouldCompleteOnJavaStart(
+                clientPlayer != null && clientPlayer.javaGameMode() == GameMode.CREATIVE,
+                javaBlockState != null ? javaBlockState.identifier() : null,
+                customSeconds,
+                heldIdentifier,
+                customIdentifier
+        );
     }
 
     private static void finishBlockBreak(final UserConnection user, final GameSessionStorage gameSession, final ClientPlayerEntity clientPlayer, final ChunkTracker chunkTracker, final BlockPosition position, final Direction direction) {
@@ -444,17 +444,15 @@ public class ClientPlayerPackets {
                 case START_DESTROY_BLOCK -> {
                     clientPlayer.sendSwingPacketToServer();
                     clientPlayer.cancelNextSwingPacket();
-                    // TODO: Handle creative mode mining
+                    // Creative and hardness-0 blocks: Java only sends START_DESTROY_BLOCK.
                     // TODO: Test breaking fire
                     // TODO: The java client keeps spamming swing packets while waiting for the block break cooldown. Those need to be cancelled
 
                     clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.StartDestroyBlock, position, direction.ordinal()));
                     if (isInstantBreak(wrapper.user(), chunkTracker, position)) {
-                        // Instant-break blocks (0 destroy time, e.g. crops/flowers): the vanilla Java client only
-                        // sends START_DESTROY_BLOCK and never a STOP, so finish the Bedrock break in this same tick
-                        // (StartDestroyBlock above + the finishing actions). Without this the Bedrock server never
-                        // receives PredictDestroyBlock, never breaks the block, and the client prediction is reverted
-                        // by the block_changed_ack sent below.
+                        // Instant-break cases (creative, 0 destroy time, shears on leaves): Java only
+                        // sends START_DESTROY_BLOCK and never a STOP. MOT SAI ignores CreativeDestroyBlock(13)
+                        // and only breaks on PredictDestroyBlock, so finish in this same tick.
                         finishBlockBreak(wrapper.user(), gameSession, clientPlayer, chunkTracker, position, direction);
                     } else {
                         clientPlayer.setBlockBreakingInfo(new ClientPlayerEntity.BlockBreakingInfo(position, direction));

@@ -86,6 +86,31 @@ public final class InstantBreakBlocks {
     }
 
     /**
+     * Java creative (and hardness-0 / shears-instant blocks) only send {@code START_DESTROY_BLOCK}.
+     * Nukkit-MOT SAI never handles {@code CreativeDestroyBlock(13)}; it only breaks on
+     * {@code PredictDestroyBlock}. ViaBedrock must therefore finish the Bedrock break in the START
+     * handler for these cases.
+     */
+    public static boolean shouldCompleteOnJavaStart(
+            final boolean creative,
+            final String javaIdentifier,
+            final Float customSecondsToDestroy,
+            final String heldIdentifier,
+            final String customBedrockIdentifier) {
+        if (creative) {
+            return true;
+        }
+        if (javaIdentifier != null && isVanillaInstantBreak(javaIdentifier)) {
+            return true;
+        }
+        if (customSecondsToDestroy != null && customSecondsToDestroy.floatValue() == 0.0F) {
+            return true;
+        }
+        return "minecraft:shears".equals(heldIdentifier)
+                && isShearsInstantBreak(javaIdentifier, customBedrockIdentifier);
+    }
+
+    /**
      * @param javaIdentifier the Java block identifier without namespace (e.g. {@code wheat})
      * @return whether the vanilla block always breaks instantly (hardness 0)
      */
