@@ -729,13 +729,33 @@ public class ExperimentalFeatures {
         clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(
                 PlayerActionType.StartDestroyBlock, position, direction.ordinal()));
         if (clientPlayer.javaGameMode() == GameMode.CREATIVE) {
-            clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(
-                    PlayerActionType.PredictDestroyBlock, position, direction.ordinal()));
-            clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(
-                    PlayerActionType.AbortDestroyBlock, position, 0));
+            // MOT PredictDestroy already aborts then completes. A trailing Abort
+            // is stored in MOT's EnumMap before Predict, so GanAC/MOT would see
+            // Abort first and drop the break. Mirror finishBlockBreak: Start+Predict.
+            for (PlayerActionType type : overlayCreativeBreakActions()) {
+                clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(
+                        type, position, direction.ordinal()));
+            }
         } else {
             clientPlayer.setBlockBreakingInfo(new ClientPlayerEntity.BlockBreakingInfo(position, direction));
         }
+    }
+
+    /**
+     * MOT PredictDestroy already aborts then completes. Do not append Abort after
+     * Predict: MOT EnumMap would iterate Abort first and drop the break.
+     */
+    static List<PlayerActionType> overlayCreativeBreakActions() {
+        return List.of(PlayerActionType.PredictDestroyBlock);
+    }
+
+    static List<String> overlayCreativeBreakActionNames() {
+        final List<String> names = new ArrayList<>();
+        names.add(PlayerActionType.StartDestroyBlock.name());
+        for (PlayerActionType type : overlayCreativeBreakActions()) {
+            names.add(type.name());
+        }
+        return names;
     }
 
     public static boolean tryHandleSwapHands(final UserConnection user) {
