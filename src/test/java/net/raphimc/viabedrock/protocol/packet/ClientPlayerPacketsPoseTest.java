@@ -131,4 +131,10 @@ class ClientPlayerPacketsPoseTest {
         assertEquals(Boolean.TRUE, ClientPlayerPackets.waterSampleFromChunkState(true, true, true, true));
         assertEquals(Boolean.FALSE, ClientPlayerPackets.waterSampleFromChunkState(true, true, true, false));
     }
+
+    @Test
+    void solidCeilingIsCrawlEvidenceAndAirIsNot() {
+        assertTrue(ClientPlayerPackets.isSolidCrawlCeiling(null, 0) == false);
+        assertFalse(ClientPlayerPackets.isSolidCrawlCeiling(null, 1));
+    }
 }

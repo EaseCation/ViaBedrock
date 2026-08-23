@@ -64,6 +64,8 @@ class ItemUseHandContextTest {
         assertEquals(0, context.containerSlot());
         assertEquals(ItemUseHandContext.JAVA_OFFHAND_HOTBAR_SLOT, context.transactionHotbarSlot());
         assertSame(offhandItem, context.item());
+        assertEquals(6, context.entityTransactionHotbarSlot(6));
+        assertEquals(0, context.entityTransactionHotbarSlot(-4));
     }
 
 }

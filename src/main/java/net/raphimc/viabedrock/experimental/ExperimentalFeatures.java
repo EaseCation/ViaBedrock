@@ -35,6 +35,7 @@ import net.raphimc.viabedrock.api.model.container.Container;
 import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
 import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity.ItemUseSnapshot;
 import net.raphimc.viabedrock.api.model.entity.Entity;
+import net.raphimc.viabedrock.api.util.InstantBreakBlocks;
 import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.experimental.model.inventory.BedrockInventoryTransaction;
 import net.raphimc.viabedrock.experimental.model.inventory.InventoryActionData;
@@ -394,8 +395,11 @@ public class ExperimentalFeatures {
                 || "minecraft:trident".equals(identifier)
                 || isSpear(itemRewriter, item)
                 || "minecraft:shield".equals(identifier)
-                || "minecraft:spyglass".equals(identifier)
-                || "minecraft:brush".equals(identifier);
+                || "minecraft:spyglass".equals(identifier);
+    }
+
+    private static boolean isSpyglass(final ItemRewriter itemRewriter, final BedrockItem item) {
+        return ItemUseSemantics.isSpyglass(itemRewriter.bedrockIdentifier(item));
     }
 
     private static boolean isChargedCrossbow(final BedrockItem item) {
@@ -425,7 +429,8 @@ public class ExperimentalFeatures {
                 isBow(itemRewriter, item),
                 isCrossbow(itemRewriter, item),
                 isTrident(itemRewriter, item),
-                isSpear(itemRewriter, item)
+                isSpear(itemRewriter, item),
+                isSpyglass(itemRewriter, item)
         );
     }
 
@@ -499,6 +504,12 @@ public class ExperimentalFeatures {
         }
         if (ItemUseSemantics.suppressStartSprintingWhileUsingItem(emulateNetEase, true)) {
             clientPlayer.authInputData().remove(PlayerAuthInputPacket_InputData.StartSprinting);
+            if (clientPlayer.isSprinting()) {
+                // MOT START_SPRINTING sets sprinting=true and usingItem=false. Java eat/draw
+                // cancels sprint; dropping StartSprinting is not enough — emit StopSprinting
+                // so MOT/GanAC SprintCheck sees the use-start edge.
+                clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StopSprinting);
+            }
             clientPlayer.setSprinting(false);
         }
         if (shouldSendStandaloneUseTransaction(itemRewriter, selectedItem)) {
@@ -834,9 +845,31 @@ public class ExperimentalFeatures {
                 clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(
                         type, position, direction.ordinal()));
             }
+        } else if (overlaySurvivalInstantBreak(user, position)) {
+            // Survival overlay is Java ATTACK on a fake display — there is no STOP_DESTROY.
+            // MOT only finishes on PredictDestroyBlock. Instant (hardness 0) overlays must
+            // Start+Predict like creative. Non-instant overlays keep CrackBlock via SWING.
+            for (PlayerActionType type : overlayCreativeBreakActions()) {
+                clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(
+                        type, position, direction.ordinal()));
+            }
         } else {
             clientPlayer.setBlockBreakingInfo(new ClientPlayerEntity.BlockBreakingInfo(position, direction));
         }
+    }
+
+    static boolean overlaySurvivalInstantBreak(final UserConnection user, final BlockPosition position) {
+        if (user == null || position == null) {
+            return false;
+        }
+        final ChunkTracker chunkTracker = user.get(ChunkTracker.class);
+        if (chunkTracker == null) {
+            return false;
+        }
+        final int javaBlockStateId = chunkTracker.getJavaBlockState(position);
+        final BlockState javaBlockState = BedrockProtocol.MAPPINGS.getJavaBlockStates().inverse().get(javaBlockStateId);
+        final String javaIdentifier = javaBlockState != null ? javaBlockState.identifier() : null;
+        return InstantBreakBlocks.shouldCompleteOnJavaStart(false, javaIdentifier, null, null, null);
     }
 
     /**
@@ -1185,85 +1218,11 @@ public class ExperimentalFeatures {
 
                 sendReleaseItemTransaction(wrapper.user(), inventoryTransactionRewriter, handContext, clientPlayer, releaseAction);
             } else if (action == PlayerActionAction.DROP_ITEM || action == PlayerActionAction.DROP_ALL_ITEMS) {
-                final BedrockItem currentItem = inventoryTracker.getInventoryContainer().getSelectedHotbarItem();
-
+                // MOT 860 SAI drops TYPE_NORMAL InventoryTransaction. Q/Ctrl-Q must
+                // travel as ITEM_STACK_REQUEST Drop, matching inventory-window drops.
+                // Ref: MOT Player.java isInventorySAIGateActive; DropActionProcessor.
                 wrapper.cancel();
-                if (currentItem.isEmpty()) {
-                    return;
-                }
-                if (!canDropLockedItem(currentItem)) {
-                    PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getInventoryContainer());
-                    return;
-                }
-
-                BedrockItem predictedAmount = currentItem.copy();
-                if (action == PlayerActionAction.DROP_ITEM) {
-                    predictedAmount.setAmount(1); // Drop a single item
-                }
-
-                BedrockItem predictedToItem = currentItem.copy();
-                if (action == PlayerActionAction.DROP_ITEM) {
-                    if (predictedToItem.amount() > 1) {
-                        predictedToItem.setAmount(currentItem.amount() - 1);
-                    } else {
-                        predictedToItem = BedrockItem.empty();
-                    }
-                } else {
-                    predictedToItem = BedrockItem.empty();
-                }
-
-                final PacketWrapper transactionPacket = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, wrapper.user());
-
-                BedrockInventoryTransaction inventoryTransaction = new BedrockInventoryTransaction(
-                        0,
-                        null,
-                        List.of(
-                                new InventoryActionData(
-                                        new InventorySource(InventorySourceType.WorldInteraction, ContainerID.CONTAINER_ID_NONE.getValue(), InventorySource_InventorySourceFlags.NoFlag),
-                                        0,
-                                        BedrockItem.empty(),
-                                        predictedAmount
-                                ),
-                                new InventoryActionData(
-                                        new InventorySource(InventorySourceType.ContainerInventory, ContainerID.CONTAINER_ID_INVENTORY.getValue(), InventorySource_InventorySourceFlags.NoFlag),
-                                        inventoryTracker.getInventoryContainer().getSelectedHotbarSlot(),
-                                        currentItem,
-                                        predictedToItem
-                                )
-                        ),
-
-                        ComplexInventoryTransaction_Type.NormalTransaction,
-                        new InventoryTransactionData.NormalTransactionData()
-                );
-
-                transactionPacket.write(inventoryTransactionRewriter.getInventoryTransactionType(), inventoryTransaction);
-
-                transactionPacket.sendToServer(BedrockProtocol.class);
-
-                // Update mirror optimistically so rapid consecutive drops read the correct count
-                inventoryTracker.getInventoryContainer().setItemSilent(
-                        inventoryTracker.getInventoryContainer().getSelectedHotbarSlot(),
-                        predictedToItem
-                );
-
-                //TODO: I think vanilla client also sends these and im not sure what their purposes are but it works without them
-                    /*final PacketWrapper interactPacket = PacketWrapper.create(ServerboundBedrockPackets.INTERACT, wrapper.user());
-
-                    interactPacket.write(Types.BYTE, (byte) InteractPacket_Action.InteractUpdate.getValue());
-                    interactPacket.write(BedrockTypes.UNSIGNED_VAR_LONG, clientPlayer.runtimeId());
-                    interactPacket.write(BedrockTypes.POSITION_3F, new Position3f(0, 0, 0));
-
-                    interactPacket.sendToServer(BedrockProtocol.class);
-
-                    final PacketWrapper mobEquipPacket = PacketWrapper.create(ServerboundBedrockPackets.MOB_EQUIPMENT, wrapper.user());
-
-                    mobEquipPacket.write(BedrockTypes.UNSIGNED_VAR_LONG, clientPlayer.runtimeId());
-                    mobEquipPacket.write(itemRewriter.newItemType(), predictedToItem);
-                    mobEquipPacket.write(Types.BYTE, inventoryTracker.getInventoryContainer().getSelectedHotbarSlot());
-                    mobEquipPacket.write(Types.BYTE, inventoryTracker.getInventoryContainer().getSelectedHotbarSlot());
-                    mobEquipPacket.write(Types.BYTE, (byte) ContainerID.CONTAINER_ID_INVENTORY.getValue());
-
-                    mobEquipPacket.sendToServer(BedrockProtocol.class);*/
+                ClientAuthInventoryModule.tryHandleHotbarDrop(wrapper.user(), action == PlayerActionAction.DROP_ALL_ITEMS);
             }
 
 
@@ -1341,6 +1300,9 @@ public class ExperimentalFeatures {
             if (ItemUseSemantics.dropDuplicateAirClickAfterUseOn(
                     ViaBedrock.getConfig().shouldEmulateNetEaseClient(),
                     itemRewriter.bedrockIdentifier(selectedItem),
+                    itemRewriter.bedrockIdentifier(selectedItem) != null
+                            ? BedrockProtocol.MAPPINGS.getBedrockItemTags().get(itemRewriter.bedrockIdentifier(selectedItem))
+                            : null,
                     clientPlayer.lastUseOnAge() == clientPlayer.age())) {
                 wrapper.cancel();
                 if (sequence > 0) {
@@ -1434,6 +1396,16 @@ public class ExperimentalFeatures {
             final ItemUseHandContext handContext = ItemUseHandContext.resolve(inventoryTracker, hand);
             final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
             final BedrockItem selectedItem = handContext.item();
+            if (ItemUseSemantics.rejectNetEaseOffhandUse(ViaBedrock.getConfig().shouldEmulateNetEaseClient(), !handContext.isMainHand(), isShield(itemRewriter, selectedItem))) {
+                // MOT CLICK_BLOCK always uses inventory.getItemInHand() after equipItem.
+                // An offhand Place would therefore consume the main-hand stack.
+                PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getInventoryContainer());
+                PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getOffhandContainer());
+                if (sequence > 0) {
+                    PacketFactory.sendJavaBlockChangedAck(wrapper.user(), sequence);
+                }
+                return;
+            }
             if (isContinuousUseItem(itemRewriter, selectedItem)) {
                 beginContinuousItemUse(wrapper.user(), inventoryTransactionRewriter, clientPlayer, itemRewriter, handContext);
 

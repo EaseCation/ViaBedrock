@@ -101,6 +101,11 @@ public class ClientPlayerEntity extends PlayerEntity {
     // MOT UPDATE_CLIENT_INPUT_LOCKS bit 4. Protocol 560+ no longer sets ActorFlags.NOAI
     // for movement locks, so Java would otherwise keep walking while the backend is frozen.
     private boolean inputMovementLocked;
+    // MOT SAI STOP_SPIN_ATTACK is the only path that clears DATA_FLAG_SPIN_ATTACK.
+    // Java never sends a stop pose; pulse Stop after MOT duration 50+(level<<5).
+    private boolean riptideSpinning;
+    private int riptideSpinStartAge = -1;
+    private int riptideSpinDurationTicks;
 
     // Misc data
     private GameType gameType;
@@ -495,6 +500,28 @@ public class ClientPlayerEntity extends PlayerEntity {
         return true;
     }
 
+    public void beginRiptideSpin(final int durationTicks) {
+        this.riptideSpinning = true;
+        this.riptideSpinStartAge = this.age;
+        this.riptideSpinDurationTicks = Math.max(1, durationTicks);
+    }
+
+    public boolean shouldStopRiptideSpin() {
+        return this.riptideSpinning
+                && this.riptideSpinStartAge >= 0
+                && this.age - this.riptideSpinStartAge >= this.riptideSpinDurationTicks;
+    }
+
+    public void clearRiptideSpin() {
+        this.riptideSpinning = false;
+        this.riptideSpinStartAge = -1;
+        this.riptideSpinDurationTicks = 0;
+    }
+
+    public boolean isRiptideSpinning() {
+        return this.riptideSpinning;
+    }
+
     public void setSprinting(final boolean sprinting) {
         this.sprinting = sprinting;
 
@@ -718,7 +745,7 @@ public class ClientPlayerEntity extends PlayerEntity {
             return false;
         }
         // Is in unloaded chunk
-        if (chunkTracker.isInUnloadedChunkSection(this.position)) {
+        if (chunkTracker.isInUnloadedChunkSection(this.position, this.eyeOffset())) {
             this.wasInsideUnloadedChunk = true;
             if (!this.position.equals(newPosition)) {
                 this.beginPositionSync(Relative.ROTATION);
@@ -730,7 +757,7 @@ public class ClientPlayerEntity extends PlayerEntity {
             return false;
         }
         // Loaded -> Unloaded chunk
-        if (newPosition != null && chunkTracker.isInUnloadedChunkSection(newPosition)) {
+        if (newPosition != null && chunkTracker.isInUnloadedChunkSection(newPosition, this.eyeOffset())) {
             this.beginPositionSync(Relative.ROTATION);
             return false;
         }
@@ -792,7 +819,7 @@ public class ClientPlayerEntity extends PlayerEntity {
                 final int elapsed = this.age - this.dimensionChangeStartAge;
                 if (this.dimensionChangeStartAge >= 0
                         && elapsed > ViaBedrock.getConfig().getMovementWatchdogDimensionChangeTimeoutTicks()
-                        && !chunkTracker.isInUnloadedChunkSection(this.position)) { // only once the new world is actually ready
+                        && !chunkTracker.isInUnloadedChunkSection(this.position, this.eyeOffset())) { // only once the new world is actually ready
                     if (active) {
                         final Long loadingScreenId = this.dimensionChangeInfo.loadingScreenId();
                         // Replicates the standard ChangeDimensionAck finalization (ClientPlayerPackets). Idempotent:
@@ -811,7 +838,7 @@ public class ClientPlayerEntity extends PlayerEntity {
             }
 
             // Link B: stuck in an unloaded chunk section (chunks never delivered) -> preMove rubber-bands forever.
-            if (chunkTracker.isInUnloadedChunkSection(this.position)) {
+            if (chunkTracker.isInUnloadedChunkSection(this.position, this.eyeOffset())) {
                 if (this.chunkStuckStartAge < 0) {
                     this.chunkStuckStartAge = this.age;
                 }

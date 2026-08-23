@@ -277,6 +277,15 @@ class EntityPacketsTest {
         return new Entity(null, 1L, runtimeId, "test:entity", 3, UUID.randomUUID(), javaType);
     }
 
+    @Test
+    void boatEyeOffsetMatchesMotBaseOffset() {
+        final Entity boat = new Entity(null, 1L, 2L, "minecraft:boat", 3, UUID.randomUUID(), EntityTypes1_21_11.OAK_BOAT);
+        final Entity chestBoat = new Entity(null, 1L, 2L, "minecraft:chest_boat", 3, UUID.randomUUID(), EntityTypes1_21_11.OAK_CHEST_BOAT);
+        assertEquals(0.375F, boat.eyeOffset(), 1.0E-6F);
+        assertEquals(0.375F, chestBoat.eyeOffset(), 1.0E-6F);
+        assertEquals(0F, entity(EntityTypes1_21_11.ITEM).eyeOffset(), 1.0E-6F);
+    }
+
     private static LivingEntity livingEntity(final EntityTypes1_21_11 javaType) {
         return livingEntity(javaType, 2L);
     }

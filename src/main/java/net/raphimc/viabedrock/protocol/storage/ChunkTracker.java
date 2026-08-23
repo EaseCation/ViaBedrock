@@ -368,7 +368,16 @@ public class ChunkTracker extends StoredObject {
     }
 
     public boolean isInUnloadedChunkSection(final Position3f playerPosition) {
-        final BlockPosition chunkSectionPosition = new BlockPosition((int) Math.floor(playerPosition.x()) >> 4, (int) Math.floor((playerPosition.y() - 1.62F)) >> 4, (int) Math.floor(playerPosition.z()) >> 4);
+        return isInUnloadedChunkSection(playerPosition, 1.62F);
+    }
+
+    /**
+     * MOT AuthInput Y is eye-space. The freeze gate must use feet Y so swim/crawl
+     * near a subchunk border does not freeze while the feet section is loaded.
+     */
+    public boolean isInUnloadedChunkSection(final Position3f playerPosition, final float eyeOffset) {
+        final float feetY = playerPosition.y() - eyeOffset;
+        final BlockPosition chunkSectionPosition = new BlockPosition((int) Math.floor(playerPosition.x()) >> 4, (int) Math.floor(feetY) >> 4, (int) Math.floor(playerPosition.z()) >> 4);
         final ChunkPosition chunkPos = new ChunkPosition(chunkSectionPosition.x(), chunkSectionPosition.z());
         if (!this.isChunkLoaded(chunkPos)) {
             return true;

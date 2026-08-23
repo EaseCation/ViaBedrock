@@ -286,6 +286,67 @@ public class ClientAuthInventoryModule implements FeatureModule {
         return true;
     }
 
+    /**
+     * Java Q / Ctrl-Q is PLAYER_ACTION DROP_ITEM / DROP_ALL_ITEMS. MOT 860 with
+     * SAI enabled drops legacy TYPE_NORMAL InventoryTransaction, so the same
+     * predicted slot delta has to travel as ITEM_STACK_REQUEST Drop.
+     * Ref: MOT Player.java isInventorySAIGateActive; DropActionProcessor.
+     */
+    public static boolean tryHandleHotbarDrop(final UserConnection user, final boolean dropAll) {
+        final InventoryTracker tracker = user.get(InventoryTracker.class);
+        if (tracker == null) {
+            return false;
+        }
+        if (tracker.getPendingCloseContainer() != null) {
+            PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
+            return true;
+        }
+        final BedrockItem currentItem = tracker.getInventoryContainer().getSelectedHotbarItem();
+        if (currentItem == null || currentItem.isEmpty()) {
+            return true;
+        }
+        final int dropped = dropAll ? currentItem.amount() : 1;
+        if (dropped <= 0) {
+            return true;
+        }
+        BedrockItem remaining = currentItem.copy();
+        if (dropAll || remaining.amount() <= dropped) {
+            remaining = BedrockItem.empty();
+        } else {
+            remaining.setAmount(currentItem.amount() - dropped);
+        }
+        final BedrockItem droppedStack = currentItem.copy();
+        droppedStack.setAmount(dropped);
+        final List<InventoryActionData> actions = List.of(
+                new InventoryActionData(
+                        new InventorySource(InventorySourceType.WorldInteraction, ContainerID.CONTAINER_ID_NONE.getValue(), InventorySource_InventorySourceFlags.NoFlag),
+                        0,
+                        BedrockItem.empty(),
+                        droppedStack
+                ),
+                new InventoryActionData(
+                        new InventorySource(InventorySourceType.ContainerInventory, ContainerID.CONTAINER_ID_INVENTORY.getValue(), InventorySource_InventorySourceFlags.NoFlag),
+                        tracker.getInventoryContainer().getSelectedHotbarSlot(),
+                        currentItem,
+                        remaining
+                )
+        );
+        if (!allowsLockedActions(actions)) {
+            PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
+            return true;
+        }
+        if (needsBedrockPlayerInventoryOpen(ContainerID.CONTAINER_ID_INVENTORY.getValue(), tracker.isBedrockPlayerInventoryOpen())) {
+            PacketFactory.sendBedrockOpenInventory(user);
+        }
+        if (!sendPredictedActions(user, actions)) {
+            PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
+            return true;
+        }
+        applyMirrorUpdates(actions, tracker);
+        PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
+        return true;
+    }
+
     public static boolean returnCursorBeforeClose(final UserConnection user) {
         final InventoryTracker tracker = user.get(InventoryTracker.class);
         final List<InventoryActionData> actions = runOrRollback(

@@ -57,9 +57,19 @@ public final class JavaPlayerStateStorage implements StorableObject {
         return this.hasDesiredState && (this.desiredStateFlags & flag) != 0;
     }
 
+    /**
+     * Prefer ViaBedrockUtility {@code player_state} when it has ever reported a pose.
+     * Workspace VBU has no sender, so Java 1-block crawl would otherwise never reach
+     * MOT SAI START/STOP_CRAWLING. Infer only while VBU is silent.
+     */
     public PlayerAuthInputPacket_InputData consumeCrawlingTransition() {
-        final boolean desiredCrawling = this.hasState(FLAG_CRAWLING);
-        if (!this.hasDesiredState
+        return consumeCrawlingTransition(false);
+    }
+
+    public PlayerAuthInputPacket_InputData consumeCrawlingTransition(final boolean inferredCrawling) {
+        final boolean desiredCrawling = this.hasDesiredState ? this.hasState(FLAG_CRAWLING) : inferredCrawling;
+        // VBU-silent inference still has to emit StopCrawling after StartCrawling.
+        if ((!this.hasDesiredState && !inferredCrawling && !this.forwardedCrawling && !this.forceNextCrawlingTransition)
                 || (!this.forceNextCrawlingTransition && desiredCrawling == this.forwardedCrawling)) {
             return null;
         }

@@ -164,6 +164,11 @@ public class Entity {
     }
 
     public float eyeOffset() {
+        // MOT ADD/MOVE for boats already includes getBaseOffset() (0.375). GanAC then
+        // subtracts the same offset. Writing raw MOT Y would place the JE AABB 0.375 too high.
+        if ("minecraft:boat".equals(this.type) || "minecraft:chest_boat".equals(this.type)) {
+            return 0.375F;
+        }
         return 0F;
     }
 

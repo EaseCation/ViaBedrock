@@ -65,6 +65,10 @@ class ItemUseSemanticsTest {
         assertTrue(ItemUseSemantics.isContinuousUseItem("minecraft:netherite_spear", null, null, false));
         assertFalse(ItemUseSemantics.isContinuousUseItem("minecraft:crossbow", null, null, true));
         assertFalse(ItemUseSemantics.isContinuousUseItem("minecraft:paper", null, null, false));
+        assertTrue(ItemUseSemantics.isContinuousUseItem("minecraft:spyglass", null, null, false));
+        assertFalse(ItemUseSemantics.isContinuousUseItem("minecraft:brush", null, null, false));
+        assertFalse(ItemUseSemantics.isContinuousUseItem("minecraft:goat_horn", null, null, false));
+        assertFalse(ItemUseSemantics.isContinuousUseItem("minecraft:snowball", null, null, false));
     }
 
     @Test
@@ -156,6 +160,8 @@ class ItemUseSemanticsTest {
         assertFalse(ItemUseSemantics.needsStandaloneUseTransaction(true, false, false, false, false));
         assertTrue(ItemUseSemantics.needsStandaloneUseTransaction(true, false, false, false, false, true));
         assertFalse(ItemUseSemantics.needsStandaloneUseTransaction(false, false, false, false, false, true));
+        assertTrue(ItemUseSemantics.needsStandaloneUseTransaction(true, false, false, false, false, false, true));
+        assertFalse(ItemUseSemantics.needsStandaloneUseTransaction(false, false, false, false, false, false, true));
         assertTrue(ItemUseSemantics.isSpear("minecraft:iron_spear", Set.of("minecraft:is_spear")));
         assertTrue(ItemUseSemantics.isSpear("minecraft:copper_spear"));
         assertFalse(ItemUseSemantics.isSpear("minecraft:trident"));
@@ -172,12 +178,31 @@ class ItemUseSemanticsTest {
         assertFalse(ItemUseSemantics.crossbowFireReady(true, true, 10));
         assertTrue(ItemUseSemantics.crossbowFireReady(true, true, 11));
         assertTrue(ItemUseSemantics.dropDuplicateAirClickAfterUseOn(true, "minecraft:ender_pearl", true));
+        assertTrue(ItemUseSemantics.dropDuplicateAirClickAfterUseOn(true, "minecraft:snowball", true));
+        assertTrue(ItemUseSemantics.dropDuplicateAirClickAfterUseOn(true, "minecraft:egg", true));
+        assertTrue(ItemUseSemantics.dropDuplicateAirClickAfterUseOn(true, "minecraft:ender_eye", true));
+        assertTrue(ItemUseSemantics.dropDuplicateAirClickAfterUseOn(true, "minecraft:splash_potion", true));
+        assertTrue(ItemUseSemantics.dropDuplicateAirClickAfterUseOn(true, "minecraft:lingering_potion", true));
+        assertTrue(ItemUseSemantics.dropDuplicateAirClickAfterUseOn(true, "minecraft:experience_bottle", true));
+        assertTrue(ItemUseSemantics.dropDuplicateAirClickAfterUseOn(true, "minecraft:wind_charge", true));
+        assertTrue(ItemUseSemantics.dropDuplicateAirClickAfterUseOn(true, "minecraft:fishing_rod", true));
+        assertTrue(ItemUseSemantics.dropDuplicateAirClickAfterUseOn(true, "minecraft:empty_map", true));
+        assertTrue(ItemUseSemantics.dropDuplicateAirClickAfterUseOn(true, "minecraft:iron_helmet", Set.of("minecraft:is_armor"), true));
+        assertTrue(ItemUseSemantics.dropDuplicateAirClickAfterUseOn(true, "minecraft:elytra", Set.of("minecraft:is_armor"), true));
         assertFalse(ItemUseSemantics.dropDuplicateAirClickAfterUseOn(true, "minecraft:bow", true));
+        assertFalse(ItemUseSemantics.dropDuplicateAirClickAfterUseOn(true, "minecraft:snowball", false));
+        assertFalse(ItemUseSemantics.dropDuplicateAirClickAfterUseOn(false, "minecraft:snowball", true));
+        assertTrue(ItemUseSemantics.isSpyglass("minecraft:spyglass"));
+        assertFalse(ItemUseSemantics.isSpyglass("minecraft:brush"));
         assertTrue(ItemUseSemantics.chargedCrossbowUsesMotTag(true, true, false));
         assertFalse(ItemUseSemantics.chargedCrossbowUsesMotTag(true, false, true));
         assertTrue(ItemUseSemantics.chargedCrossbowUsesMotTag(false, false, true));
         assertTrue(ItemUseSemantics.matchesUseItem(true, 1, (short) 0, 9, "a", 1, (short) 0, 8, "b"));
         assertFalse(ItemUseSemantics.matchesUseItem(false, 1, (short) 0, 9, "a", 1, (short) 0, 8, "b"));
+        assertEquals(82, ItemUseSemantics.riptideDurationTicks(1));
+        assertEquals(114, ItemUseSemantics.riptideDurationTicks(2));
+        assertEquals(146, ItemUseSemantics.riptideDurationTicks(3));
+        assertEquals(82, ItemUseSemantics.riptideDurationTicks(0));
     }
 
 }

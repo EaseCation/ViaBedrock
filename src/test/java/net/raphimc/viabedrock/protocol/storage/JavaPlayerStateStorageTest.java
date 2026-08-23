@@ -96,6 +96,21 @@ class JavaPlayerStateStorageTest {
         assertEquals(PlayerAuthInputPacket_InputData.StopCrawling, storage.consumeCrawlingTransition());
     }
 
+    @Test
+    void infersCrawlWhenVbuNeverReportsPose() {
+        final JavaPlayerStateStorage storage = new JavaPlayerStateStorage();
+        assertEquals(PlayerAuthInputPacket_InputData.StartCrawling, storage.consumeCrawlingTransition(true));
+        assertNull(storage.consumeCrawlingTransition(true));
+        assertEquals(PlayerAuthInputPacket_InputData.StopCrawling, storage.consumeCrawlingTransition(false));
+    }
+
+    @Test
+    void vbuPayloadWinsOverProxyInference() {
+        final JavaPlayerStateStorage storage = new JavaPlayerStateStorage();
+        assertTrue(storage.updateFromPayload(payload(0)));
+        assertNull(storage.consumeCrawlingTransition(true));
+    }
+
     private static byte[] payload(final int stateFlags) {
         final ByteBuf buffer = Unpooled.buffer();
         try {

@@ -511,7 +511,8 @@ public class ClientPlayerPackets {
                     finishBlockBreak(wrapper.user(), gameSession, clientPlayer, chunkTracker, position, direction);
                 }
                 case DROP_ALL_ITEMS, DROP_ITEM -> {
-                    // TODO: Implement DROP_ALL_ITEMS, DROP_ITEM (Currently experimental)
+                    // ExperimentalFeatures prepend owns this when experimental inventory is on.
+                    // Keep a resync fallback for the official non-experimental path.
                     PacketFactory.sendJavaContainerSetContent(wrapper.user(), wrapper.user().get(InventoryTracker.class).getInventoryContainer());
                 }
                 case RELEASE_USE_ITEM -> {
@@ -530,6 +531,7 @@ public class ClientPlayerPackets {
                     // Ref: MOT Player.java AuthInputAction.START_SPIN_ATTACK -> onSpinAttack.
                     clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StartSpinAttack);
                     clientPlayer.sendPlayerActionPacketToServer(PlayerActionType.StartSpinAttack);
+                    clientPlayer.beginRiptideSpin(ItemUseSemantics.riptideDurationTicks(1));
                 }
                 default -> throw new IllegalStateException("Unhandled PlayerActionAction: " + action);
             }
@@ -593,7 +595,8 @@ public class ClientPlayerPackets {
             wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, 0); // actions count
             wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG, entity.runtimeId()); // entity runtime id
             wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, ItemUseOnActorInventoryTransaction_ActionType.Interact.getValue()); // action type
-            wrapper.write(BedrockTypes.VAR_INT, handContext.transactionHotbarSlot()); // hotbar slot
+            wrapper.write(BedrockTypes.VAR_INT, handContext.entityTransactionHotbarSlot(
+                    wrapper.user().get(InventoryTracker.class).getInventoryContainer().getSelectedHotbarSlot())); // hotbar slot
             wrapper.write(wrapper.user().get(ItemRewriter.class).itemType(), handContext.item()); // held item
             wrapper.write(BedrockTypes.POSITION_3F, entityTracker.getClientPlayer().position()); // player position
             final Vector3d location = wrapper.read(Types.LOW_PRECISION_VECTOR); // location
@@ -663,7 +666,7 @@ public class ClientPlayerPackets {
 
             final PlayerAuthInputPacket_InputData crawlingTransition = wrapper.user()
                     .get(JavaPlayerStateStorage.class)
-                    .consumeCrawlingTransition();
+                    .consumeCrawlingTransition(inferJavaCrawling(wrapper.user(), clientPlayer));
             if (crawlingTransition != null) {
                 clientPlayer.addAuthInputData(crawlingTransition);
             }
@@ -932,6 +935,76 @@ public class ClientPlayerPackets {
         applyJavaGlideStart(user, clientPlayer);
         applyJavaGlideStop(user, clientPlayer);
         applyJavaSwimTransition(user, clientPlayer);
+        applyJavaRiptideStop(clientPlayer);
+    }
+
+    /**
+     * MOT SAI STOP_SPIN_ATTACK is what clears DATA_FLAG_SPIN_ATTACK. riptideTicks
+     * only skips speed checks and never drops the flag. Pulse Stop after MOT
+     * duration {@code 50+(level<<5)}.
+     */
+    static void applyJavaRiptideStop(final ClientPlayerEntity clientPlayer) {
+        if (clientPlayer == null || !clientPlayer.shouldStopRiptideSpin()) {
+            return;
+        }
+        clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StopSpinAttack);
+        clientPlayer.sendPlayerActionPacketToServer(PlayerActionType.StopSpinAttack);
+        clientPlayer.clearRiptideSpin();
+    }
+
+    /**
+     * Java auto-crawls in a 1-block gap. MOT 860 only enters crawl from AuthInput
+     * START_CRAWLING. Infer when VBU never reports pose: sneak + onGround + a
+     * solid 1.5 blocks above the feet (standing AABB would collide).
+     */
+    static boolean inferJavaCrawling(final UserConnection user, final ClientPlayerEntity clientPlayer) {
+        if (clientPlayer == null || !clientPlayer.isSneaking() || !clientPlayer.isOnGround()
+                || clientPlayer.isSwimming() || clientPlayer.isGliding() || isLocalRiding(user)) {
+            return false;
+        }
+        return hasSolidAboveFeet(user, clientPlayer, 1);
+    }
+
+    static boolean hasSolidAboveFeet(final UserConnection user, final ClientPlayerEntity clientPlayer, final int blocksAbove) {
+        if (user == null || clientPlayer == null || clientPlayer.position() == null) {
+            return false;
+        }
+        final ChunkTracker chunkTracker = user.get(ChunkTracker.class);
+        final BlockStateRewriter blockStateRewriter = user.get(BlockStateRewriter.class);
+        if (chunkTracker == null || blockStateRewriter == null) {
+            return false;
+        }
+        final BlockPosition feet = feetBlockPosition(clientPlayer);
+        final BlockPosition head = new BlockPosition(feet.x(), feet.y() + blocksAbove, feet.z());
+        return isSolidCrawlCeiling(blockStateRewriter, chunkTracker.getBlockState(0, head));
+    }
+
+    static boolean isSolidCrawlCeiling(final BlockStateRewriter blockStateRewriter, final int bedrockBlockStateId) {
+        if (blockStateRewriter == null || bedrockBlockStateId <= 0) {
+            return false;
+        }
+        final BlockState state = blockStateRewriter.blockState(bedrockBlockStateId);
+        if (state == null) {
+            return false;
+        }
+        final String identifier = state.identifier();
+        if (identifier == null || identifier.isEmpty()) {
+            return false;
+        }
+        if ("air".equals(identifier) || "cave_air".equals(identifier) || "void_air".equals(identifier)
+                || isWaterIdentifier(identifier) || "lava".equals(identifier) || "flowing_lava".equals(identifier)) {
+            return false;
+        }
+        return !identifier.endsWith("_slab")
+                && !identifier.endsWith("_stairs")
+                && !identifier.endsWith("_carpet")
+                && !identifier.contains("trapdoor")
+                && !identifier.contains("sign")
+                && !identifier.endsWith("_button")
+                && !identifier.endsWith("_pressure_plate")
+                && !identifier.endsWith("_torch")
+                && !identifier.equals("fire")
+                && !identifier.equals("soul_fire");
     }
 
     static void applyJavaSwimTransition(final UserConnection user, final ClientPlayerEntity clientPlayer) {

@@ -37,11 +37,32 @@ public final class ItemUseSemantics {
             "minecraft:bow",
             "minecraft:crossbow",
             "minecraft:trident",
-            "minecraft:brush",
+            // MOT ItemBrush has no onClickAir/canRelease. Java brushing is
+            // USE_ITEM_ON against the suspicious block; treating brush as
+            // hold-to-use swallowed that CLICK_BLOCK.
             "minecraft:spyglass",
             "minecraft:shield"
     );
     private static final String SPEAR_ITEM_TAG = "minecraft:is_spear";
+    private static final String ARMOR_ITEM_TAG = "minecraft:is_armor";
+    /**
+     * MOT {@code onActivate} delegates to {@code onClickAir} for these items.
+     * Java often emits USE_ITEM_ON then USE_ITEM for one right-click; the extra
+     * CLICK_AIR would double-throw / double-cast / give two maps / equip twice.
+     * Ref: MOT ProjectileItem, ItemFishingRod, ItemEmptyMap, ItemArmor.
+     */
+    private static final Set<String> DUPLICATE_CLICK_AIR_AFTER_USE_ON = Set.of(
+            "minecraft:ender_pearl",
+            "minecraft:ender_eye",
+            "minecraft:snowball",
+            "minecraft:egg",
+            "minecraft:splash_potion",
+            "minecraft:lingering_potion",
+            "minecraft:experience_bottle",
+            "minecraft:wind_charge",
+            "minecraft:fishing_rod",
+            "minecraft:empty_map"
+    );
 
     static boolean isContinuousUseItem(final String identifier, final Set<String> itemTags, final ItemUseDefinition itemUse, final boolean chargedCrossbow) {
         if (identifier == null || ("minecraft:crossbow".equals(identifier) && chargedCrossbow)) {
@@ -71,7 +92,13 @@ public final class ItemUseSemantics {
     static boolean needsStandaloneUseTransaction(final boolean emulateNetEase, final boolean consumable,
                                                  final boolean bow, final boolean crossbow, final boolean trident,
                                                  final boolean spear) {
-        return bow || crossbow || (emulateNetEase && (trident || spear || consumable));
+        return needsStandaloneUseTransaction(emulateNetEase, consumable, bow, crossbow, trident, spear, false);
+    }
+
+    static boolean needsStandaloneUseTransaction(final boolean emulateNetEase, final boolean consumable,
+                                                 final boolean bow, final boolean crossbow, final boolean trident,
+                                                 final boolean spear, final boolean spyglass) {
+        return bow || crossbow || (emulateNetEase && (trident || spear || consumable || spyglass));
     }
 
     static boolean needsStandaloneUseTransaction(final boolean emulateNetEase, final boolean consumable,
@@ -188,6 +215,10 @@ public final class ItemUseSemantics {
         return "minecraft:shield".equals(identifier);
     }
 
+    static boolean isSpyglass(final String identifier) {
+        return "minecraft:spyglass".equals(identifier);
+    }
+
     /**
      * MOT {@code ItemSpear.onClickAir} starts using and {@code canRelease()} is true.
      * Java 1.21 spears are also hold-to-use; without this mapping a right-click
@@ -230,16 +261,32 @@ public final class ItemUseSemantics {
     }
 
     /**
-     * Java may emit USE_ITEM_ON then USE_ITEM for one click. Pearl {@code onActivate}
-     * and rod {@code onClickAir} would then double-throw / cast-then-reel.
+     * Java may emit USE_ITEM_ON then USE_ITEM for one click. MOT items whose
+     * {@code onActivate} calls {@code onClickAir} would then double-apply.
      */
     static boolean dropDuplicateAirClickAfterUseOn(final boolean emulateNetEase, final String identifier,
                                                    final boolean sameTickUseOn) {
+        return dropDuplicateAirClickAfterUseOn(emulateNetEase, identifier, null, sameTickUseOn);
+    }
+
+    static boolean dropDuplicateAirClickAfterUseOn(final boolean emulateNetEase, final String identifier,
+                                                   final Set<String> itemTags, final boolean sameTickUseOn) {
         if (!emulateNetEase || !sameTickUseOn || identifier == null) {
             return false;
         }
-        return "minecraft:ender_pearl".equals(identifier)
-                || "minecraft:fishing_rod".equals(identifier);
+        if (DUPLICATE_CLICK_AIR_AFTER_USE_ON.contains(identifier)) {
+            return true;
+        }
+        return itemTags != null && itemTags.contains(ARMOR_ITEM_TAG);
+    }
+
+    /**
+     * MOT {@code Player.onSpinAttack}: {@code riptideTicks = 50 + (level << 5)}.
+     * Unknown level uses 1 so the proxy never leaves spin latched forever.
+     */
+    public static int riptideDurationTicks(final int riptideLevel) {
+        final int level = riptideLevel > 0 ? riptideLevel : 1;
+        return 50 + (level << 5);
     }
 
     static boolean isFilledPlaceBucket(final String identifier) {
@@ -255,9 +302,12 @@ public final class ItemUseSemantics {
     }
 
     /**
-     * MOT CLICK_AIR {@code equipItem} rejects {@code hotbarSlot < 0}. Java offhand
-     * must not be sent as slot -1. A later SAI swap can promote the stack; until then
-     * reject the use so Java does not chew locally.
+     * MOT CLICK_AIR / CLICK_BLOCK always call {@code inventory.getItemInHand()}
+     * after {@code equipItem(hotbarSlot)}. {@code equipItem} rejects {@code < 0},
+     * and {@code equalsFast(itemInHand)} still compares against the main hand, so
+     * NetEase cannot consume an offhand stack from UseItemData. Keep the Java
+     * offhand (except shield sneak-emulation) until the player swaps with F.
+     * Ref: MOT Player.java case 1 CLICK_AIR; PlayerInventory.equipItem.
      */
     static boolean rejectNetEaseOffhandUse(final boolean emulateNetEase, final boolean offhand, final boolean shield) {
         return emulateNetEase && offhand && !shield;

@@ -196,6 +196,35 @@ class ItemStackRequestEncoderTest {
     }
 
     @Test
+    void hotbarPartialDropWritesDropCountOne() {
+        final BedrockItem stack = item(9, 8, 4);
+        final BedrockItem remaining = item(9, 7, 4);
+        final BedrockItem dropped = item(9, 1, 4);
+        final ItemStackRequestEncoder.EncodedRequest encoded = encode(List.of(
+                worldDrop(dropped),
+                slotAction(ContainerID.CONTAINER_ID_INVENTORY.getValue(), 3, stack, remaining)
+        ), true, 860);
+
+        assertFalse(encoded.unsupported());
+        final ByteBuf buffer = Unpooled.wrappedBuffer(encoded.payload());
+        try {
+            BedrockTypes.UNSIGNED_VAR_INT.read(buffer);
+            BedrockTypes.VAR_INT.read(buffer);
+            assertEquals(1, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+            assertEquals(ItemStackRequestActionType.Drop.getValue(), buffer.readUnsignedByte());
+            assertEquals(1, buffer.readUnsignedByte());
+            final ItemStackRequestLayout.DecodedSlotInfo source = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+            assertEquals(ContainerEnumName.HotbarContainer, source.container());
+            assertEquals(3, source.slot());
+            assertFalse(buffer.readBoolean());
+            ItemStackRequestLayout.readRequestTrailer(buffer, true, 860);
+            assertFalse(buffer.isReadable());
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
     void creativeCloneStaysUnsupportedWithoutCache() {
         final BedrockItem cloned = item(1, 64, 0);
         final ItemStackRequestEncoder.EncodedRequest encoded = encode(List.of(

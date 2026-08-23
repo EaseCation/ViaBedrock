@@ -31,6 +31,11 @@ public record ItemUseHandContext(
         BedrockItem item
 ) {
 
+    /**
+     * MOT {@code PlayerInventory.equipItem} rejects {@code slot < 0}. Keep this
+     * marker for local offhand identification only; entity TX must write the
+     * selected hotbar index via {@link #entityTransactionHotbarSlot(int)}.
+     */
     public static final int JAVA_OFFHAND_HOTBAR_SLOT = -1;
 
     public static ItemUseHandContext resolve(final InventoryTracker inventoryTracker, final InteractionHand hand) {
@@ -51,6 +56,14 @@ public record ItemUseHandContext(
             case MAIN_HAND -> new ItemUseHandContext(hand, mainContainerId, mainSlot, mainSlot, mainItem);
             case OFF_HAND -> new ItemUseHandContext(hand, offhandContainerId, 0, JAVA_OFFHAND_HOTBAR_SLOT, offhandItem);
         };
+    }
+
+    /**
+     * MOT / GanAC {@code handleUseOnActor} require {@code hotbarSlot == heldItemSlot}.
+     * Offhand interact still puts the offhand stack in {@code itemInHand}.
+     */
+    public int entityTransactionHotbarSlot(final int selectedHotbarSlot) {
+        return this.transactionHotbarSlot < 0 ? Math.max(0, selectedHotbarSlot) : this.transactionHotbarSlot;
     }
 
     public boolean isMainHand() {
