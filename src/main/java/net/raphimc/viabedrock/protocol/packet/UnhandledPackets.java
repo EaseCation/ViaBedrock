@@ -23,6 +23,7 @@ import com.viaversion.viaversion.api.protocol.packet.State;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ServerboundPackets26_1;
 import com.viaversion.viaversion.protocols.v1_21_7to1_21_9.packet.ServerboundConfigurationPackets1_21_9;
+import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
 import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
@@ -37,7 +38,32 @@ import java.util.Map;
 public class UnhandledPackets {
 
     public static void register(final BedrockProtocol protocol) {
-        protocol.cancelClientbound(ClientboundBedrockPackets.SET_HEALTH); // Seems to do nothing meaningful
+        // MOT Player.kill() + doImmediateRespawn writes SetHealthPacket(maxHealth)
+        // while the player is still dead. Vanilla Bedrock ignores this packet.
+        // Java 1.21.11 with showDeathScreen=false still needs PLAYER_COMBAT_KILL /
+        // SET_HEALTH(0) before it emits PERFORM_RESPAWN; the Java client itself
+        // sends ClientReadyToSpawn. Do not auto-reply here or MOT sees two
+        // ClientReadyToSpawn packets.
+        protocol.registerClientbound(ClientboundBedrockPackets.SET_HEALTH, null, wrapper -> {
+            wrapper.cancel();
+            final int health = DeathSyncLayout.readSetHealth(wrapper);
+            PacketLeftoverLayout.discardUnreadInput(wrapper);
+            if (!DeathSyncLayout.isImmediateRespawnHealth(health)) {
+                return;
+            }
+            final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
+            if (entityTracker == null || entityTracker.getClientPlayer() == null) {
+                return;
+            }
+            final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
+            if (!clientPlayer.isInitiallySpawned()) {
+                return;
+            }
+            if (!clientPlayer.isDead()) {
+                clientPlayer.setHealth(0F);
+                clientPlayer.sendAttribute("minecraft:health");
+            }
+        });
         protocol.cancelClientbound(ClientboundBedrockPackets.CAMERA); // Not relevant (Education Edition)
         protocol.cancelClientbound(ClientboundBedrockPackets.PHOTO_TRANSFER); // Not relevant (Education Edition)
         protocol.cancelClientbound(ClientboundBedrockPackets.SHOW_PROFILE);

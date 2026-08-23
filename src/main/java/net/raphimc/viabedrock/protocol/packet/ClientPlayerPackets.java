@@ -38,6 +38,7 @@ import net.raphimc.viabedrock.api.util.EnumUtil;
 import net.raphimc.viabedrock.api.util.InstantBreakBlocks;
 import net.raphimc.viabedrock.api.util.MathUtil;
 import net.raphimc.viabedrock.api.util.PacketFactory;
+import net.raphimc.viabedrock.api.util.TextUtil;
 import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.experimental.ItemUseSemantics;
 import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
@@ -230,7 +231,28 @@ public class ClientPlayerPackets {
 
                     clientPlayer.sendPlayerPositionPacketToClient(Relative.NONE);
                 }
-                case SearchingForSpawn, ClientReadyToSpawn -> wrapper.cancel();
+                case SearchingForSpawn -> {
+                    wrapper.cancel();
+                    PacketLeftoverLayout.discardUnreadInput(wrapper);
+                    // MOT Player.kill() always sends SEARCHING. Combined with
+                    // DeathInfo it is the death signal; SHOW_DEATH_MESSAGES off
+                    // skips DeathInfo, so we still have to mark the Java player
+                    // dead here. Immediate-respawn then overlays SET_HEALTH.
+                    final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
+                    if (clientPlayer == null || !clientPlayer.isInitiallySpawned() || clientPlayer.isDead()) {
+                        return;
+                    }
+                    clientPlayer.setHealth(0F);
+                    clientPlayer.sendAttribute("minecraft:health");
+                    final GameSessionStorage gameSession = wrapper.user().get(GameSessionStorage.class);
+                    if (gameSession.getDeathMessage() != null) {
+                        final PacketWrapper playerCombatKill = PacketWrapper.create(ClientboundPackets26_1.PLAYER_COMBAT_KILL, wrapper.user());
+                        playerCombatKill.write(Types.VAR_INT, clientPlayer.javaId());
+                        playerCombatKill.write(Types.TAG, TextUtil.textComponentToNbt(gameSession.getDeathMessage()));
+                        playerCombatKill.send(BedrockProtocol.class);
+                    }
+                }
+                case ClientReadyToSpawn -> wrapper.cancel();
                 default -> throw new IllegalStateException("Unhandled PlayerRespawnState: " + state);
             }
         });

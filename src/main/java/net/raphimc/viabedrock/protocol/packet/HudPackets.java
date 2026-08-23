@@ -32,6 +32,7 @@ import net.lenni0451.mcstructs_bedrock.text.components.TranslationBedrockCompone
 import net.lenni0451.mcstructs_bedrock.text.serializer.BedrockComponentSerializer;
 import net.lenni0451.mcstructs_bedrock.text.utils.BedrockTranslator;
 import net.raphimc.viabedrock.ViaBedrock;
+import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
 import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.api.model.scoreboard.ScoreboardEntry;
 import net.raphimc.viabedrock.api.model.scoreboard.ScoreboardObjective;
@@ -514,18 +515,30 @@ public class HudPackets {
                 default -> throw new IllegalStateException("Unhandled BossEventUpdateType: " + updateType);
             }
         });
+        // MOT Player.kill() (protocol 860): DeathInfoPacket is the only death
+        // signal besides RESPAWN SEARCHING. It does not emit ActorEvent.DEATH or
+        // UPDATE_ATTRIBUTES(health=0) for the local player, so Java never sees
+        // PLAYER_COMBAT_KILL unless we mark the client player dead here.
         protocol.registerClientbound(ClientboundBedrockPackets.DEATH_INFO, null, wrapper -> {
             wrapper.cancel();
             final GameSessionStorage gameSession = wrapper.user().get(GameSessionStorage.class);
             final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
-            final String message = wrapper.read(BedrockTypes.STRING); // death cause message
-            final String[] parameters = wrapper.read(BedrockTypes.STRING_ARRAY); // parameters
+            final DeathSyncLayout.DeathInfo deathInfo = DeathSyncLayout.readDeathInfo(wrapper);
+            PacketLeftoverLayout.discardUnreadInput(wrapper);
 
             final Function<String, String> translator = wrapper.user().get(ResourcePackStorage.class).getTexts().lookup();
-            gameSession.setDeathMessage(TextUtil.stringToTextComponent(TextUtil.toSingleLine(BedrockTranslator.translate(message, translator, parameters))));
-            if (entityTracker.getClientPlayer().isDead()) {
+            gameSession.setDeathMessage(TextUtil.stringToTextComponent(TextUtil.toSingleLine(BedrockTranslator.translate(deathInfo.messageTranslationKey(), translator, deathInfo.messageParameters()))));
+            final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
+            if (clientPlayer == null) {
+                return;
+            }
+            if (!clientPlayer.isDead()) {
+                clientPlayer.setHealth(0F);
+                clientPlayer.sendAttribute("minecraft:health");
+            }
+            if (clientPlayer.isDead() && gameSession.getDeathMessage() != null) {
                 final PacketWrapper playerCombatKill = PacketWrapper.create(ClientboundPackets26_1.PLAYER_COMBAT_KILL, wrapper.user());
-                playerCombatKill.write(Types.VAR_INT, entityTracker.getClientPlayer().javaId()); // entity id
+                playerCombatKill.write(Types.VAR_INT, clientPlayer.javaId()); // entity id
                 playerCombatKill.write(Types.TAG, TextUtil.textComponentToNbt(gameSession.getDeathMessage())); // message
                 playerCombatKill.send(BedrockProtocol.class);
             }
