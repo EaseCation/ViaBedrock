@@ -47,9 +47,16 @@ import java.util.logging.Level;
 public class PlayStateTransitionQueue extends StoredObject {
 
     /**
-     * Packets relevant to the early join stream. Everything else keeps the old drop behaviour;
-     * in particular creative-content and HUD packets already have their own parsers that may
-     * depend on registries built during START_GAME processing.
+     * Packets relevant to the early join stream. MOT 860 {@code Player.processLogin()}
+     * sends abilities, creative contents, held-item equipment and trim data immediately
+     * after START_GAME, while the Java client is still in CONFIGURATION. Those packets
+     * have PLAY handlers that need START_GAME storages, so they are copied here and
+     * replayed after {@code finishCustomMappingStartGame}. HUD / education leftovers
+     * stay cancelled.
+     *
+     * <p>Ref: MOT {@code Player.processLogin()} after {@code forceDataPacket(startGamePacket)}
+     * ({@code adventureSettings.update()}, {@code inventory.sendCreativeContents()},
+     * {@code inventory.sendHeldItemIfNotAir()}, {@code TrimDataPacket.getCachedPacket()}).</p>
      */
     private static final EnumSet<ClientboundBedrockPackets> DEFERRED_PACKETS = EnumSet.of(
             ClientboundBedrockPackets.PLAY_STATUS,
@@ -84,7 +91,19 @@ public class PlayStateTransitionQueue extends StoredObject {
             ClientboundBedrockPackets.SET_COMMANDS_ENABLED,
             ClientboundBedrockPackets.CONFIRM_SKIN,
             ClientboundBedrockPackets.SYNC_SKIN,
-            ClientboundBedrockPackets.NETEASE_JSON
+            ClientboundBedrockPackets.NETEASE_JSON,
+            // MOT 860 processLogin() after START_GAME. Dropping these left Java
+            // without fly/creative flags, empty CreativeContentCache, and no
+            // held-item MOB_EQUIPMENT. Replay after PLAY so the existing
+            // handlers can use START_GAME storages.
+            ClientboundBedrockPackets.UPDATE_ABILITIES,
+            ClientboundBedrockPackets.UPDATE_ADVENTURE_SETTINGS,
+            ClientboundBedrockPackets.CREATIVE_CONTENT,
+            ClientboundBedrockPackets.MOB_EQUIPMENT,
+            ClientboundBedrockPackets.MOB_ARMOR_EQUIPMENT,
+            ClientboundBedrockPackets.TRIM_DATA,
+            ClientboundBedrockPackets.CAMERA_PRESETS,
+            ClientboundBedrockPackets.SYNC_ENTITY_PROPERTY
     );
 
     private static final int MAX_QUEUED_PACKETS = 4096;

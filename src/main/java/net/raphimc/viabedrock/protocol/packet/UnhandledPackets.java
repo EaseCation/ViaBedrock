@@ -107,6 +107,16 @@ public class UnhandledPackets {
         protocol.cancelClientbound(ClientboundBedrockPackets.UPDATE_SOUND_DATA);
         protocol.cancelClientbound(ClientboundBedrockPackets.SEND_PARTY_DESTINATION_COOKIE);
         protocol.cancelClientbound(ClientboundBedrockPackets.PARTY_DESTINATION_COOKIE_RESPONSE);
+        // MOT 860 processLogin() always sends TrimData + SyncEntityProperty.
+        // Java has no trim palette / actor-property packets; cancel so leftover
+        // bytes cannot abort the replayed join batch.
+        protocol.cancelClientbound(ClientboundBedrockPackets.TRIM_DATA);
+        protocol.cancelClientbound(ClientboundBedrockPackets.SYNC_ENTITY_PROPERTY);
+        // CameraInterface overwrites this when experimental features are on.
+        protocol.cancelClientbound(ClientboundBedrockPackets.CAMERA_PRESETS);
+        // MOT 860 has SetPlayerInventoryOptions (307) but Java has no inventory-layout
+        // packet. Cancel so leftover bytes cannot abort a join/inventory batch.
+        protocol.cancelClientbound(ClientboundBedrockPackets.SET_PLAYER_INVENTORY_OPTIONS);
 
         protocol.registerServerboundTransition(ServerboundConfigurationPackets1_21_9.KEEP_ALIVE, null, UnhandledPackets::handleJavaKeepAlive);
         protocol.cancelServerbound(ServerboundPackets26_1.CHAT_ACK);
