@@ -42,6 +42,11 @@ class PlayStateTransitionQueueTest {
         assertTrue(PlayStateTransitionQueue.shouldDefer(ClientboundBedrockPackets.TRIM_DATA));
         assertTrue(PlayStateTransitionQueue.shouldDefer(ClientboundBedrockPackets.CAMERA_PRESETS));
         assertTrue(PlayStateTransitionQueue.shouldDefer(ClientboundBedrockPackets.SYNC_ENTITY_PROPERTY));
+        assertTrue(PlayStateTransitionQueue.shouldDefer(ClientboundBedrockPackets.PY_RPC));
+        assertTrue(PlayStateTransitionQueue.shouldDefer(ClientboundBedrockPackets.TEXT));
+        assertTrue(PlayStateTransitionQueue.shouldDefer(ClientboundBedrockPackets.SET_TITLE));
+        assertTrue(PlayStateTransitionQueue.shouldDefer(ClientboundBedrockPackets.TOAST_REQUEST));
+        assertTrue(PlayStateTransitionQueue.shouldDefer(ClientboundBedrockPackets.BOSS_EVENT));
         assertFalse(PlayStateTransitionQueue.shouldDefer(ClientboundBedrockPackets.ITEM_REGISTRY));
         assertFalse(PlayStateTransitionQueue.shouldDefer(ClientboundBedrockPackets.INVENTORY_CONTENT));
     }

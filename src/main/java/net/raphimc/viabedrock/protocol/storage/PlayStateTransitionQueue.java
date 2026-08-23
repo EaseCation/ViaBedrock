@@ -103,7 +103,17 @@ public class PlayStateTransitionQueue extends StoredObject {
             ClientboundBedrockPackets.MOB_ARMOR_EQUIPMENT,
             ClientboundBedrockPackets.TRIM_DATA,
             ClientboundBedrockPackets.CAMERA_PRESETS,
-            ClientboundBedrockPackets.SYNC_ENTITY_PROPERTY
+            ClientboundBedrockPackets.SYNC_ENTITY_PROPERTY,
+            // MOT processLogin() ends with addOnlinePlayer(); plugins can emit
+            // PY_RPC / TEXT / title / toast / boss from that callback while Java
+            // is still in CONFIGURATION. Replay after PLAY so PyRpcDispatcher
+            // and HudPackets can still synthesize the C2S handshake.
+            // Ref: MOT Player.processLogin() this.server.addOnlinePlayer(this);
+            ClientboundBedrockPackets.PY_RPC,
+            ClientboundBedrockPackets.TEXT,
+            ClientboundBedrockPackets.SET_TITLE,
+            ClientboundBedrockPackets.TOAST_REQUEST,
+            ClientboundBedrockPackets.BOSS_EVENT
     );
 
     private static final int MAX_QUEUED_PACKETS = 4096;
