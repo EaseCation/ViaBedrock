@@ -28,6 +28,7 @@ import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPack
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ServerboundPackets26_1;
 import com.viaversion.viaversion.util.Limit;
 import net.raphimc.viabedrock.ViaBedrock;
+import net.raphimc.viabedrock.api.model.container.AnvilContainer;
 import net.raphimc.viabedrock.api.model.container.Container;
 import net.raphimc.viabedrock.api.model.container.CraftingTableContainer;
 import net.raphimc.viabedrock.api.util.PacketFactory;
@@ -55,6 +56,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventorySou
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.ContainerInput;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
 import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
+import net.raphimc.viabedrock.protocol.storage.AnvilSessionStorage;
 import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
 import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 
@@ -110,6 +112,12 @@ public class ClientAuthInventoryModule implements FeatureModule {
                     hud.setItemSilent(slot, BedrockItem.empty());
                 }
                 hud.setItemSilent(50, BedrockItem.empty());
+            }
+            if (pending instanceof AnvilContainer) {
+                final AnvilSessionStorage session = wrapper.user().get(AnvilSessionStorage.class);
+                if (session != null) {
+                    session.clear();
+                }
             }
         });
     }
@@ -197,6 +205,13 @@ public class ClientAuthInventoryModule implements FeatureModule {
             if (!sendPredictedActions(wrapper.user(), actions)) {
                 dragState.reset();
                 resyncAfterRejectedClick(wrapper.user(), inventoryTracker, containerId, container);
+                return;
+            }
+
+            // MOT computes the anvil result server-side. Leave the Java anvil/cursor
+            // prediction in place and wait for INVENTORY_SLOT/CONTENT instead of
+            // stuffing the input item onto the HUD cursor.
+            if (AnvilSimulator.isTakeResult(actions)) {
                 return;
             }
 
@@ -396,7 +411,12 @@ public class ClientAuthInventoryModule implements FeatureModule {
     }
 
     private static boolean sendPredictedActions(final UserConnection user, final List<InventoryActionData> actions) {
-        if (user.get(GameSessionStorage.class).isInventoryServerAuthoritative()) {
+        final GameSessionStorage session = user.get(GameSessionStorage.class);
+        if (AnvilSimulator.isTakeResult(actions)) {
+            return session != null && session.isInventoryServerAuthoritative()
+                    && AnvilSimulator.sendTakeResult(user, user.get(InventoryTracker.class));
+        }
+        if (session != null && session.isInventoryServerAuthoritative()) {
             final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encode(actions, user.get(InventoryTracker.class));
             if (encoded.unsupported()) {
                 return false;

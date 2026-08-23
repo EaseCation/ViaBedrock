@@ -23,6 +23,7 @@ import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
 import com.viaversion.viaversion.api.minecraft.item.HashedItem;
 import com.viaversion.viaversion.api.minecraft.item.Item;
 import com.viaversion.viaversion.api.minecraft.item.data.Equippable;
+import net.raphimc.viabedrock.api.model.container.AnvilContainer;
 import net.raphimc.viabedrock.api.model.container.Container;
 import net.raphimc.viabedrock.api.model.container.CraftingTableContainer;
 import net.raphimc.viabedrock.experimental.inventory.SlotMapper.BedrockSlotRef;
@@ -85,6 +86,12 @@ public class ClickSimulator {
                     default -> null;
                 };
             }
+        }
+        if (javaSlot == 2 && javaContainerId != 0 && tracker.getCurrentContainer() instanceof AnvilContainer) {
+            // MOT applies the anvil result via CraftRecipeOptional + created-output Take.
+            // Java PICKUP puts the result on the cursor; QUICK_MOVE would need inventory
+            // placement and is left unsupported so the screen resyncs instead of desyncing.
+            return action == ContainerInput.PICKUP ? AnvilSimulator.simulateTakeResult(tracker) : null;
         }
 
         return switch (action) {

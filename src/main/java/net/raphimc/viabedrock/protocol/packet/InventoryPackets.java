@@ -48,6 +48,7 @@ import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.api.util.RegistryUtil;
 import net.raphimc.viabedrock.api.util.TextUtil;
 import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
+import net.raphimc.viabedrock.experimental.inventory.AnvilSimulator;
 import net.raphimc.viabedrock.experimental.inventory.ClientAuthInventoryModule;
 import net.raphimc.viabedrock.experimental.inventory.ItemStackRequestEncoder;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
@@ -249,7 +250,16 @@ public class InventoryPackets {
 
                     clearClosedCraftingTable(inventoryTracker, container);
                     if (container.type() == ContainerType.ENCHANTMENT) {
-                        wrapper.user().get(EnchantingSessionStorage.class).clear();
+                        final EnchantingSessionStorage enchantingSession = wrapper.user().get(EnchantingSessionStorage.class);
+                        if (enchantingSession != null) {
+                            enchantingSession.clear();
+                        }
+                    }
+                    if (container instanceof AnvilContainer) {
+                        final AnvilSessionStorage session = wrapper.user().get(AnvilSessionStorage.class);
+                        if (session != null) {
+                            session.clear();
+                        }
                     }
                 });
             }
@@ -472,6 +482,26 @@ public class InventoryPackets {
             final int containerId = wrapper.read(Types.VAR_INT); // container id
             final int buttonId = wrapper.read(Types.VAR_INT); // button id
             handleEnchantButtonClick(wrapper.user(), containerId, buttonId);
+        });
+        protocol.registerServerbound(ServerboundPackets26_1.RENAME_ITEM, ServerboundBedrockPackets.FILTER_TEXT, wrapper -> {
+            final String name = wrapper.read(Types.STRING);
+            wrapper.clearInputBuffer();
+            if (!(wrapper.user().get(InventoryTracker.class).getCurrentContainer() instanceof AnvilContainer)) {
+                wrapper.cancel();
+                return;
+            }
+            final String sanitized = FilterTextLayout.sanitize(name);
+            final AnvilSessionStorage session = wrapper.user().get(AnvilSessionStorage.class);
+            if (session != null) {
+                session.setRenameText(sanitized);
+            }
+            FilterTextLayout.write(wrapper, sanitized, false);
+        });
+        protocol.registerClientbound(ClientboundBedrockPackets.FILTER_TEXT, null, wrapper -> {
+            wrapper.cancel();
+            final FilterTextLayout.Packet packet = FilterTextLayout.read(wrapper);
+            PacketLeftoverLayout.discardUnreadInput(wrapper);
+            AnvilSimulator.handleFilterEcho(wrapper.user(), packet);
         });
         protocol.registerServerbound(ServerboundPackets26_1.CONTAINER_CLICK, null, wrapper -> {
             wrapper.cancel();

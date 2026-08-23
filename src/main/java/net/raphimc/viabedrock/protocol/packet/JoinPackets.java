@@ -90,13 +90,6 @@ public class JoinPackets {
         wrapper.user().get(GameSessionStorage.class).setBedrockBiomeDefinitions((CompoundTag) wrapper.read(BedrockTypes.NETWORK_TAG)); // biome definitions
     };
 
-    private static final PacketHandler COMPRESSED_BIOME_DEFINITION_LIST_HANDLER = wrapper -> {
-        if (wrapper.isCancelled()) return;
-
-        // Compressed biome definitions are used for the clientside generation of the world. Should not be sent as we tell the server that the client doesn't support it.
-        BedrockProtocol.kickForIllegalState(wrapper.user(), "Compressed biome definitions are not supported.");
-    };
-
     private static final PacketHandler REQUIRE_UNINITIALIZED_WORLD_HANDLER = wrapper -> {
         if (!wrapper.user().get(ChunkTracker.class).isEmpty()) {
             wrapper.cancel();

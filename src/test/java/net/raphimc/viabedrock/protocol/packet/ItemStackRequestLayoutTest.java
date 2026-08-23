@@ -114,6 +114,35 @@ class ItemStackRequestLayoutTest {
     }
 
     @Test
+    void netease860TrailerWritesFilterStringsAndAnvilOrigin() {
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            ItemStackRequestLayout.writeRequestTrailer(buffer, true, 860, new String[]{"Renamed"}, TextProcessingEventOrigin.AnvilText);
+            final ItemStackRequestLayout.DecodedRequestTrailer trailer = ItemStackRequestLayout.readRequestTrailer(buffer, true, 860);
+            assertEquals(1, trailer.filterStringCount());
+            assertEquals("Renamed", trailer.filterStrings()[0]);
+            assertEquals(TextProcessingEventOrigin.AnvilText.getValue(), trailer.textOrigin());
+            assertFalse(buffer.isReadable());
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
+    void netease860CraftRecipeOptionalWritesByteTypeUnsignedNetIdAndFilterIndex() {
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            ItemStackRequestLayout.writeCraftRecipeOptional(buffer, 0, 0, true, 860);
+            assertEquals(ItemStackRequestActionType.CraftRecipeOptional.getValue(), buffer.readUnsignedByte());
+            assertEquals(0, (int) net.raphimc.viabedrock.protocol.types.BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+            assertEquals(0, buffer.readIntLE());
+            assertFalse(buffer.isReadable());
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
     void netease860CraftRecipeWritesByteTypeUnsignedNetIdAndTimesCrafted() {
         final ByteBuf buffer = Unpooled.buffer();
         try {

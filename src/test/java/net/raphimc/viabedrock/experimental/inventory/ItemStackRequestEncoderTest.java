@@ -17,8 +17,11 @@
  */
 package net.raphimc.viabedrock.experimental.inventory;
 
+import com.viaversion.viaversion.api.minecraft.BlockPosition;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
+import io.netty.channel.embedded.EmbeddedChannel;
+import net.raphimc.viabedrock.api.model.container.AnvilContainer;
 import net.raphimc.viabedrock.experimental.model.inventory.InventoryActionData;
 import net.raphimc.viabedrock.experimental.model.inventory.InventorySource;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
@@ -26,8 +29,8 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventorySourceType;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventorySource_InventorySourceFlags;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemStackRequestActionType;
+import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.TextProcessingEventOrigin;
 import net.raphimc.viabedrock.test.StubUserConnection;
-import io.netty.channel.embedded.EmbeddedChannel;
 import net.raphimc.viabedrock.experimental.storage.CreativeContentCache;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
 import net.raphimc.viabedrock.protocol.packet.ItemStackRequestLayout;
@@ -237,6 +240,103 @@ class ItemStackRequestEncoderTest {
                 final ItemStackRequestLayout.DecodedSlotInfo destination = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
                 assertEquals(ContainerEnumName.CursorContainer, destination.container());
                 ItemStackRequestLayout.readRequestTrailer(buffer, true, 860);
+                assertFalse(buffer.isReadable());
+            } finally {
+                buffer.release();
+            }
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void netease860AnvilApplyWritesCraftRecipeOptionalConsumeAndCreatedOutputTake() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final StubUserConnection user = new StubUserConnection(channel);
+            final InventoryTracker tracker = new InventoryTracker(user);
+            user.put(tracker);
+            final AnvilContainer anvil = new AnvilContainer(user, (byte) 1, null, new BlockPosition(0, 64, 0));
+            anvil.setItemSilent(0, item(12, 1, 7));
+            anvil.setItemSilent(1, item(13, 4, 8));
+            tracker.setCurrentContainer(anvil);
+
+            final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encodeAnvilApply(
+                    tracker, "Renamed", 1, 1, 1, true, 860);
+            assertFalse(encoded.unsupported());
+            final ByteBuf buffer = Unpooled.wrappedBuffer(encoded.payload());
+            try {
+                assertEquals(1, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                BedrockTypes.VAR_INT.read(buffer);
+                assertEquals(4, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                assertEquals(ItemStackRequestActionType.CraftRecipeOptional.getValue(), buffer.readUnsignedByte());
+                assertEquals(0, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                assertEquals(0, buffer.readIntLE());
+                assertEquals(ItemStackRequestActionType.Consume.getValue(), buffer.readUnsignedByte());
+                assertEquals(1, buffer.readUnsignedByte());
+                final ItemStackRequestLayout.DecodedSlotInfo input = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ContainerEnumName.AnvilInputContainer, input.container());
+                assertEquals(1, input.slot());
+                assertEquals(7, input.stackNetworkId());
+                assertEquals(ItemStackRequestActionType.Consume.getValue(), buffer.readUnsignedByte());
+                assertEquals(1, buffer.readUnsignedByte());
+                final ItemStackRequestLayout.DecodedSlotInfo material = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ContainerEnumName.AnvilMaterialContainer, material.container());
+                assertEquals(2, material.slot());
+                assertEquals(8, material.stackNetworkId());
+                assertEquals(ItemStackRequestActionType.Take.getValue(), buffer.readUnsignedByte());
+                assertEquals(1, buffer.readUnsignedByte());
+                final ItemStackRequestLayout.DecodedSlotInfo source = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ContainerEnumName.CreatedOutputContainer, source.container());
+                assertEquals(50, source.slot());
+                final ItemStackRequestLayout.DecodedSlotInfo destination = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ContainerEnumName.CursorContainer, destination.container());
+                assertEquals(0, destination.slot());
+                final ItemStackRequestLayout.DecodedRequestTrailer trailer = ItemStackRequestLayout.readRequestTrailer(buffer, true, 860);
+                assertEquals(1, trailer.filterStringCount());
+                assertEquals("Renamed", trailer.filterStrings()[0]);
+                assertEquals(TextProcessingEventOrigin.AnvilText.getValue(), trailer.textOrigin());
+                assertFalse(buffer.isReadable());
+            } finally {
+                buffer.release();
+            }
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void netease860AnvilApplyBlankNameUsesNegativeFilterIndexAndEmptyTrailer() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final StubUserConnection user = new StubUserConnection(channel);
+            final InventoryTracker tracker = new InventoryTracker(user);
+            user.put(tracker);
+            final AnvilContainer anvil = new AnvilContainer(user, (byte) 1, null, new BlockPosition(0, 64, 0));
+            anvil.setItemSilent(0, item(12, 1, 3));
+            tracker.setCurrentContainer(anvil);
+
+            final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encodeAnvilApply(
+                    tracker, "", 1, 0, 1, true, 860);
+            assertFalse(encoded.unsupported());
+            final ByteBuf buffer = Unpooled.wrappedBuffer(encoded.payload());
+            try {
+                BedrockTypes.UNSIGNED_VAR_INT.read(buffer);
+                BedrockTypes.VAR_INT.read(buffer);
+                assertEquals(3, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                assertEquals(ItemStackRequestActionType.CraftRecipeOptional.getValue(), buffer.readUnsignedByte());
+                assertEquals(0, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                assertEquals(-1, buffer.readIntLE());
+                assertEquals(ItemStackRequestActionType.Consume.getValue(), buffer.readUnsignedByte());
+                buffer.readUnsignedByte();
+                ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ItemStackRequestActionType.Take.getValue(), buffer.readUnsignedByte());
+                buffer.readUnsignedByte();
+                ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                final ItemStackRequestLayout.DecodedRequestTrailer trailer = ItemStackRequestLayout.readRequestTrailer(buffer, true, 860);
+                assertEquals(0, trailer.filterStringCount());
+                assertEquals(TextProcessingEventOrigin.AnvilText.getValue(), trailer.textOrigin());
                 assertFalse(buffer.isReadable());
             } finally {
                 buffer.release();

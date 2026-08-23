@@ -58,6 +58,14 @@ public class UnhandledPackets {
         protocol.cancelClientbound(ClientboundBedrockPackets.TEXTURE_SHIFT); // Not possible in Java Edition
         protocol.cancelClientbound(ClientboundBedrockPackets.CAMERA_SPLINE); // Not possible in Java Edition
         protocol.cancelClientbound(ClientboundBedrockPackets.CAMERA_AIM_ASSIST_ACTOR_PRIORITY); // Not possible in Java Edition
+        // MOT packet-pool IDs that ViaBedrock's generated MinecraftPacketIds omit.
+        // Without a registered type they surface as "Received unknown packet" and
+        // abort the current batch. MOT 860 never constructs 301/319, but 173/197
+        // exist in the pool; cancel them so leftover bytes cannot kick Java.
+        protocol.cancelClientbound(ClientboundBedrockPackets.PHOTO_INFO_REQUEST);
+        protocol.cancelClientbound(ClientboundBedrockPackets.CLIENT_CHEAT_ABILITY);
+        protocol.cancelClientbound(ClientboundBedrockPackets.COMPRESSED_BIOME_DEFINITION_LIST);
+        protocol.cancelClientbound(ClientboundBedrockPackets.SET_MOVEMENT_AUTHORITY);
 
         protocol.registerServerboundTransition(ServerboundConfigurationPackets1_21_9.KEEP_ALIVE, null, UnhandledPackets::handleJavaKeepAlive);
         protocol.cancelServerbound(ServerboundPackets26_1.CHAT_ACK);

@@ -80,6 +80,7 @@ public enum ServerboundBedrockPackets implements ServerboundPacketType {
     ANVIL_DAMAGE(MinecraftPacketIds.AnvilDamage.getValue()),
     PLAYER_AUTH_INPUT(MinecraftPacketIds.PlayerAuthInputPacket.getValue()),
     ITEM_STACK_REQUEST(MinecraftPacketIds.ItemStackRequest.getValue()),
+    FILTER_TEXT(163),
     EMOTE_LIST(MinecraftPacketIds.EmoteList.getValue()),
     POSITION_TRACKING_DB_CLIENT_REQUEST(MinecraftPacketIds.PositionTrackingDBClientRequest.getValue()),
     DEBUG_INFO(MinecraftPacketIds.DebugInfoPacket.getValue()),

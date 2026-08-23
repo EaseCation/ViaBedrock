@@ -20,6 +20,7 @@ package net.raphimc.viabedrock.protocol.packet;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
+import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.model.SkinData;
 import org.junit.jupiter.api.Test;
 
@@ -45,6 +46,18 @@ class NeteasePacketLayoutTest {
         assertEquals(ClientboundBedrockPackets.NETEASE_JSON, ClientboundBedrockPackets.getPacket(0xCB));
         assertEquals(ClientboundBedrockPackets.CONFIRM_SKIN, ClientboundBedrockPackets.getPacket(0xE4));
         assertEquals(ClientboundBedrockPackets.SYNC_SKIN, ClientboundBedrockPackets.getPacket(0xEC));
+        assertEquals(163, ClientboundBedrockPackets.FILTER_TEXT.getId());
+        assertEquals(163, ServerboundBedrockPackets.FILTER_TEXT.getId());
+        assertEquals(173, ClientboundBedrockPackets.PHOTO_INFO_REQUEST.getId());
+        assertEquals(197, ClientboundBedrockPackets.CLIENT_CHEAT_ABILITY.getId());
+        assertEquals(301, ClientboundBedrockPackets.COMPRESSED_BIOME_DEFINITION_LIST.getId());
+        assertEquals(319, ClientboundBedrockPackets.SET_MOVEMENT_AUTHORITY.getId());
+        assertEquals(ClientboundBedrockPackets.FILTER_TEXT, ClientboundBedrockPackets.getPacket(163));
+        assertEquals(ClientboundBedrockPackets.PHOTO_INFO_REQUEST, ClientboundBedrockPackets.getPacket(173));
+        assertEquals(ClientboundBedrockPackets.CLIENT_CHEAT_ABILITY, ClientboundBedrockPackets.getPacket(197));
+        assertEquals(ClientboundBedrockPackets.COMPRESSED_BIOME_DEFINITION_LIST, ClientboundBedrockPackets.getPacket(301));
+        assertEquals(ClientboundBedrockPackets.SET_MOVEMENT_AUTHORITY, ClientboundBedrockPackets.getPacket(319));
+        assertEquals(ServerboundBedrockPackets.FILTER_TEXT, ServerboundBedrockPackets.getPacket(163));
     }
 
     @Test

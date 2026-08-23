@@ -123,12 +123,29 @@ public final class ItemStackRequestLayout {
     }
 
     public static void writeRequestTrailer(final ByteBuf buffer, final boolean emulateNetEase, final int protocol) {
+        writeRequestTrailer(buffer, emulateNetEase, protocol, new String[0], TextProcessingEventOrigin.BlockActorDataText);
+    }
+
+    public static void writeRequestTrailer(final ByteBuf buffer, final boolean emulateNetEase, final int protocol,
+                                           final String[] filterStrings, final TextProcessingEventOrigin origin) {
         if (!emulateNetEase || protocol >= FILTER_STRINGS_PROTOCOL) {
-            BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 0);
+            final String[] strings = filterStrings != null ? filterStrings : new String[0];
+            BedrockTypes.UNSIGNED_VAR_INT.write(buffer, strings.length);
+            for (final String filterString : strings) {
+                BedrockTypes.STRING.write(buffer, filterString != null ? filterString : "");
+            }
         }
         if (!emulateNetEase || protocol >= TEXT_ORIGIN_PROTOCOL) {
-            buffer.writeIntLE(TextProcessingEventOrigin.BlockActorDataText.getValue());
+            final TextProcessingEventOrigin resolved = origin != null ? origin : TextProcessingEventOrigin.BlockActorDataText;
+            buffer.writeIntLE(resolved.getValue());
         }
+    }
+
+    public static void writeCraftRecipeOptional(final ByteBuf buffer, final int recipeNetworkId, final int filteredStringIndex,
+                                                final boolean emulateNetEase, final int protocol) {
+        writeActionType(buffer, ItemStackRequestActionType.CraftRecipeOptional, emulateNetEase, protocol);
+        BedrockTypes.UNSIGNED_VAR_INT.write(buffer, recipeNetworkId);
+        buffer.writeIntLE(filteredStringIndex);
     }
 
     public static void writeTransfer(final ByteBuf buffer, final ItemStackRequestActionType type, final int count,
@@ -188,14 +205,17 @@ public final class ItemStackRequestLayout {
     }
 
     public static DecodedRequestTrailer readRequestTrailer(final ByteBuf buffer, final boolean emulateNetEase, final int protocol) {
-        final int filterCount = (!emulateNetEase || protocol >= FILTER_STRINGS_PROTOCOL)
-                ? BedrockTypes.UNSIGNED_VAR_INT.read(buffer)
-                : 0;
+        final String[] filterStrings;
+        if (!emulateNetEase || protocol >= FILTER_STRINGS_PROTOCOL) {
+            filterStrings = BedrockTypes.STRING_ARRAY.read(buffer);
+        } else {
+            filterStrings = new String[0];
+        }
         Integer origin = null;
         if (!emulateNetEase || protocol >= TEXT_ORIGIN_PROTOCOL) {
             origin = buffer.readIntLE();
         }
-        return new DecodedRequestTrailer(filterCount, origin);
+        return new DecodedRequestTrailer(filterStrings, origin);
     }
 
     public static DecodedSlotInfo readSlotInfo(final ByteBuf buffer, final boolean emulateNetEase, final int protocol) {
@@ -233,6 +253,9 @@ public final class ItemStackRequestLayout {
     public record DecodedSlotInfo(ContainerEnumName container, int slot, int stackNetworkId, Integer dynamicId) {
     }
 
-    public record DecodedRequestTrailer(int filterStringCount, Integer textOrigin) {
+    public record DecodedRequestTrailer(String[] filterStrings, Integer textOrigin) {
+        public int filterStringCount() {
+            return this.filterStrings != null ? this.filterStrings.length : 0;
+        }
     }
 }
