@@ -39,4 +39,19 @@ class BlockItemMappingLayoutTest {
         valid.add(7);
         assertEquals(42, BlockItemMappingLayout.fallbackBlockRuntimeId(valid));
     }
+
+    @Test
+    void emptyPaletteKeepsTheWireRuntimeInsteadOfCallingFirstInt() {
+        assertEquals(12345, BlockItemMappingLayout.sanitizeBlockRuntimeId(null, 12345));
+        assertEquals(12345, BlockItemMappingLayout.sanitizeBlockRuntimeId(new IntLinkedOpenHashSet(), 12345));
+    }
+
+    @Test
+    void populatedPaletteRemapsUnknownRuntimeToTheFirstKnownId() {
+        final IntSortedSet valid = new IntLinkedOpenHashSet();
+        valid.add(42);
+        valid.add(7);
+        assertEquals(42, BlockItemMappingLayout.sanitizeBlockRuntimeId(valid, 99));
+        assertEquals(7, BlockItemMappingLayout.sanitizeBlockRuntimeId(valid, 7));
+    }
 }

@@ -45,4 +45,17 @@ public final class BlockItemMappingLayout {
         }
         return validBlockStates.firstInt();
     }
+
+    /**
+     * Keep the MOT 860 wire runtime when the session palette is missing or empty.
+     * Official ViaBedrock called {@code firstInt()} on that empty set during item
+     * decode and kicked Java 1.21.11. A populated palette still remaps unknown
+     * states to the first known runtime id.
+     */
+    public static int sanitizeBlockRuntimeId(final IntSortedSet validBlockStates, final int blockRuntimeId) {
+        if (validBlockStates == null || validBlockStates.isEmpty() || validBlockStates.contains(blockRuntimeId)) {
+            return blockRuntimeId;
+        }
+        return validBlockStates.firstInt();
+    }
 }

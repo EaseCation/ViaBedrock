@@ -23,6 +23,7 @@ import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectMap;
 import com.viaversion.viaversion.libs.fastutil.ints.IntSortedSet;
 import io.netty.buffer.ByteBuf;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
+import net.raphimc.viabedrock.protocol.rewriter.BlockItemMappingLayout;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 public class NetworkItemStackDescriptorType extends Type<BedrockItem> {
@@ -54,9 +55,7 @@ public class NetworkItemStackDescriptorType extends Type<BedrockItem> {
         final IntSortedSet validBlockStates = this.blockItemValidBlockStates.get(item.identifier());
         if (validBlockStates != null) { // Block item
             item.setData(0);
-            if (!validBlockStates.contains(item.blockRuntimeId())) {
-                item.setBlockRuntimeId(validBlockStates.firstInt());
-            }
+            item.setBlockRuntimeId(BlockItemMappingLayout.sanitizeBlockRuntimeId(validBlockStates, item.blockRuntimeId()));
         } else { // Meta item
             item.setBlockRuntimeId(0);
         }
