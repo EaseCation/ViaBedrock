@@ -40,6 +40,10 @@ public record PlayerIdentity(boolean javaEdition, String version) {
         return new PlayerIdentity(false, version);
     }
 
+    public String prefix() {
+        return this.javaEdition ? "[JE]" : "[BE]";
+    }
+
     public String label() {
         final String edition = this.javaEdition ? "JE" : "BE";
         return this.version.isEmpty() ? edition : edition + " " + this.version;

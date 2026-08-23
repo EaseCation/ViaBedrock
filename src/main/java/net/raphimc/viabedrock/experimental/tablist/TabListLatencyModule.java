@@ -119,11 +119,12 @@ public final class TabListLatencyModule implements FeatureModule {
     }
 
     static String formatDisplayName(final String name, final int latency, final PlayerIdentity identity) {
-        final StringBuilder builder = new StringBuilder(name);
+        final StringBuilder builder = new StringBuilder();
         if (identity != null) {
-            builder.append(" \u00A78[").append(identity.javaEdition() ? "\u00A7b" : "\u00A7a")
-                    .append(identity.label()).append("\u00A78]");
+            builder.append(identity.javaEdition() ? "\u00A7b" : "\u00A7a")
+                    .append(identity.prefix()).append("\u00A7r ");
         }
+        builder.append(name);
         if (latency < 0) {
             return builder.toString();
         }

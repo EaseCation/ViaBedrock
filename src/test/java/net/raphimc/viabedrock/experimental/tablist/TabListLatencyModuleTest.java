@@ -47,9 +47,9 @@ class TabListLatencyModuleTest {
         assertEquals("Player \u00A77[\u00A76300ms\u00A77]", TabListLatencyModule.formatDisplayName("Player", 300));
         assertEquals("Player \u00A77[\u00A76599ms\u00A77]", TabListLatencyModule.formatDisplayName("Player", 599));
         assertEquals("Player \u00A77[\u00A7c600ms\u00A77]", TabListLatencyModule.formatDisplayName("Player", 600));
-        assertEquals("Player \u00A78[\u00A7bJE 1.21.11\u00A78] \u00A77[\u00A7a12ms\u00A77]",
+        assertEquals("\u00A7b[JE]\u00A7r Player \u00A77[\u00A7a12ms\u00A77]",
                 TabListLatencyModule.formatDisplayName("Player", 12, PlayerIdentity.javaEdition("1.21.11")));
-        assertEquals("Player \u00A78[\u00A7aBE 1.21.124\u00A78] \u00A77[\u00A7a12ms\u00A77]",
+        assertEquals("\u00A7a[BE]\u00A7r Player \u00A77[\u00A7a12ms\u00A77]",
                 TabListLatencyModule.formatDisplayName("Player", 12, PlayerIdentity.bedrock("1.21.124")));
     }
 
@@ -76,6 +76,26 @@ class TabListLatencyModuleTest {
                 knownUuid, "Known \u00A77[\u00A7a87ms\u00A77]",
                 unknownLatencyUuid, "Unknown"
         ), displayNames);
+    }
+
+    @Test
+    void prefixesStoredIdentitiesOnDisplayNames() {
+        final UUID javaUuid = UUID.fromString("12345678-1234-5678-9abc-def012345678");
+        final UUID bedrockUuid = UUID.fromString("87654321-4321-8765-cba9-876543210fed");
+        final PlayerListStorage playerList = new PlayerListStorage();
+        playerList.addPlayer(javaUuid, 1L, "Java");
+        playerList.addPlayer(bedrockUuid, 2L, "Bedrock");
+        playerList.putIdentity(javaUuid, PlayerIdentity.javaEdition("1.21.11"));
+        playerList.putIdentity(bedrockUuid, PlayerIdentity.bedrock("1.21.124"));
+
+        final Map<UUID, Integer> latencies = new LinkedHashMap<>();
+        latencies.put(javaUuid, 12);
+        latencies.put(bedrockUuid, 40);
+
+        assertEquals(Map.of(
+                javaUuid, "\u00A7b[JE]\u00A7r Java \u00A77[\u00A7a12ms\u00A77]",
+                bedrockUuid, "\u00A7a[BE]\u00A7r Bedrock \u00A77[\u00A7a40ms\u00A77]"
+        ), TabListLatencyModule.displayNamesFor(playerList, latencies));
     }
 
 }
