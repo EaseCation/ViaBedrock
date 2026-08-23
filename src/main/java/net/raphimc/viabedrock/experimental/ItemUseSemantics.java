@@ -41,12 +41,14 @@ public final class ItemUseSemantics {
             "minecraft:spyglass",
             "minecraft:shield"
     );
+    private static final String SPEAR_ITEM_TAG = "minecraft:is_spear";
 
     static boolean isContinuousUseItem(final String identifier, final Set<String> itemTags, final ItemUseDefinition itemUse, final boolean chargedCrossbow) {
         if (identifier == null || ("minecraft:crossbow".equals(identifier) && chargedCrossbow)) {
             return false;
         }
         return RELEASE_ON_RELEASE_ITEMS.contains(identifier)
+                || isSpear(identifier, itemTags)
                 || CONSUME_ON_RELEASE_ITEMS.contains(identifier)
                 || isFood(itemTags)
                 || itemUse != null;
@@ -61,18 +63,25 @@ public final class ItemUseSemantics {
      * PERFORM_ITEM_INTERACTION. NetEase 860 Nukkit-MOT parses that payload but never
      * handles it, so consumables need a standalone USE_ITEM transaction there.
      * Bows/crossbows already send that standalone packet on both paths.
-     * MOT 860 also starts tridents from CLICK_AIR ({@code ItemTrident.onClickAir});
-     * AuthInput START_USING_ITEM is parsed and ignored, so NetEase must send the
-     * same standalone packet. Shields must not: MOT blocking is sneak, not use.
+     * MOT 860 also starts tridents and spears from CLICK_AIR
+     * ({@code ItemTrident.onClickAir}, {@code ItemSpear.onClickAir}); AuthInput
+     * START_USING_ITEM is parsed and ignored, so NetEase must send the same
+     * standalone packet. Shields must not: MOT blocking is sneak, not use.
      */
     static boolean needsStandaloneUseTransaction(final boolean emulateNetEase, final boolean consumable,
+                                                 final boolean bow, final boolean crossbow, final boolean trident,
+                                                 final boolean spear) {
+        return bow || crossbow || (emulateNetEase && (trident || spear || consumable));
+    }
+
+    static boolean needsStandaloneUseTransaction(final boolean emulateNetEase, final boolean consumable,
                                                  final boolean bow, final boolean crossbow, final boolean trident) {
-        return bow || crossbow || (emulateNetEase && (trident || consumable));
+        return needsStandaloneUseTransaction(emulateNetEase, consumable, bow, crossbow, trident, false);
     }
 
     static boolean needsStandaloneUseTransaction(final boolean emulateNetEase, final boolean consumable,
                                                  final boolean bow, final boolean crossbow) {
-        return needsStandaloneUseTransaction(emulateNetEase, consumable, bow, crossbow, false);
+        return needsStandaloneUseTransaction(emulateNetEase, consumable, bow, crossbow, false, false);
     }
 
     /**
@@ -98,7 +107,7 @@ public final class ItemUseSemantics {
      * NetEase 860 Nukkit parses that payload but never handles it. A second CLICK_AIR
      * while already using is treated as a finish attempt, so NetEase must not attach
      * the same ItemUseTransaction to AuthInput for any hold-to-use item
-     * (food, bow, crossbow, trident, shield, spyglass, brush).
+     * (food, bow, crossbow, trident, spear, shield, spyglass, brush).
      */
     static boolean attachAuthInputItemInteraction(final boolean emulateNetEase, final boolean consumable,
                                                   final boolean bow, final boolean holdToUseWeapon) {
@@ -177,6 +186,23 @@ public final class ItemUseSemantics {
 
     static boolean isShield(final String identifier) {
         return "minecraft:shield".equals(identifier);
+    }
+
+    /**
+     * MOT {@code ItemSpear.onClickAir} starts using and {@code canRelease()} is true.
+     * Java 1.21 spears are also hold-to-use; without this mapping a right-click
+     * becomes an instant CLICK_AIR and never reaches {@code onRelease}/stab.
+     * Prefer the Bedrock {@code minecraft:is_spear} tag, then identifier suffix.
+     */
+    static boolean isSpear(final String identifier, final Set<String> itemTags) {
+        if (itemTags != null && itemTags.contains(SPEAR_ITEM_TAG)) {
+            return true;
+        }
+        return identifier != null && identifier.endsWith("_spear");
+    }
+
+    static boolean isSpear(final String identifier) {
+        return isSpear(identifier, null);
     }
 
     /**
@@ -326,7 +352,7 @@ public final class ItemUseSemantics {
     }
 
     static ItemReleaseInventoryTransaction_ActionType releaseAction(final String identifier, final Set<String> itemTags, final ItemUseDefinition itemUse, final int usingTicks, final boolean emulateNetEase) {
-        if (identifier == null || RELEASE_ON_RELEASE_ITEMS.contains(identifier)) {
+        if (identifier == null || RELEASE_ON_RELEASE_ITEMS.contains(identifier) || isSpear(identifier, itemTags)) {
             return ItemReleaseInventoryTransaction_ActionType.Release;
         }
 

@@ -378,6 +378,12 @@ public class ExperimentalFeatures {
         return "minecraft:trident".equals(itemRewriter.bedrockIdentifier(item));
     }
 
+    private static boolean isSpear(final ItemRewriter itemRewriter, final BedrockItem item) {
+        final String identifier = itemRewriter.bedrockIdentifier(item);
+        final Set<String> itemTags = identifier != null ? BedrockProtocol.MAPPINGS.getBedrockItemTags().get(identifier) : null;
+        return ItemUseSemantics.isSpear(identifier, itemTags);
+    }
+
     private static boolean isShield(final ItemRewriter itemRewriter, final BedrockItem item) {
         return ItemUseSemantics.isShield(itemRewriter.bedrockIdentifier(item));
     }
@@ -386,6 +392,7 @@ public class ExperimentalFeatures {
         final String identifier = itemRewriter.bedrockIdentifier(item);
         return "minecraft:crossbow".equals(identifier)
                 || "minecraft:trident".equals(identifier)
+                || isSpear(itemRewriter, item)
                 || "minecraft:shield".equals(identifier)
                 || "minecraft:spyglass".equals(identifier)
                 || "minecraft:brush".equals(identifier);
@@ -417,7 +424,8 @@ public class ExperimentalFeatures {
                 isConsumableUseItem(itemRewriter, item),
                 isBow(itemRewriter, item),
                 isCrossbow(itemRewriter, item),
-                isTrident(itemRewriter, item)
+                isTrident(itemRewriter, item),
+                isSpear(itemRewriter, item)
         );
     }
 

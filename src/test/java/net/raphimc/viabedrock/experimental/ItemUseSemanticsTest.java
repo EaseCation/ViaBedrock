@@ -61,6 +61,8 @@ class ItemUseSemanticsTest {
         assertTrue(ItemUseSemantics.isContinuousUseItem("minecraft:apple", Set.of("minecraft:is_food"), null, false));
         assertTrue(ItemUseSemantics.isContinuousUseItem("minecraft:bow", null, null, false));
         assertTrue(ItemUseSemantics.isContinuousUseItem("minecraft:shield", null, null, false));
+        assertTrue(ItemUseSemantics.isContinuousUseItem("minecraft:wooden_spear", Set.of("minecraft:is_spear"), null, false));
+        assertTrue(ItemUseSemantics.isContinuousUseItem("minecraft:netherite_spear", null, null, false));
         assertFalse(ItemUseSemantics.isContinuousUseItem("minecraft:crossbow", null, null, true));
         assertFalse(ItemUseSemantics.isContinuousUseItem("minecraft:paper", null, null, false));
     }
@@ -152,6 +154,13 @@ class ItemUseSemanticsTest {
         assertTrue(ItemUseSemantics.needsStandaloneUseTransaction(true, false, false, false, true));
         assertFalse(ItemUseSemantics.needsStandaloneUseTransaction(false, false, false, false, true));
         assertFalse(ItemUseSemantics.needsStandaloneUseTransaction(true, false, false, false, false));
+        assertTrue(ItemUseSemantics.needsStandaloneUseTransaction(true, false, false, false, false, true));
+        assertFalse(ItemUseSemantics.needsStandaloneUseTransaction(false, false, false, false, false, true));
+        assertTrue(ItemUseSemantics.isSpear("minecraft:iron_spear", Set.of("minecraft:is_spear")));
+        assertTrue(ItemUseSemantics.isSpear("minecraft:copper_spear"));
+        assertFalse(ItemUseSemantics.isSpear("minecraft:trident"));
+        assertEquals(ItemReleaseInventoryTransaction_ActionType.Release,
+                ItemUseSemantics.releaseAction("minecraft:wooden_spear", Set.of("minecraft:is_spear"), null, 40, true));
         assertTrue(ItemUseSemantics.emulateShieldAsSneak(true, true));
         assertFalse(ItemUseSemantics.emulateShieldAsSneak(false, true));
         assertTrue(ItemUseSemantics.rejectNetEaseOffhandUse(true, true, false));
