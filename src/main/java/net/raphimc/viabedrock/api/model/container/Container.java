@@ -169,6 +169,14 @@ public abstract class Container {
         return this.validBlockTags.contains(tag);
     }
 
+    /**
+     * True when this menu is bound to a world block that {@link #isValidBlockTag(String)} can check.
+     * Empty tag sets are vehicle / plugin inventories and must not be closed by world-origin air.
+     */
+    public boolean isWorldBacked() {
+        return !this.validBlockTags.isEmpty();
+    }
+
     protected void onSlotChanged(final int slot, final BedrockItem oldItem, final BedrockItem newItem) {
     }
 

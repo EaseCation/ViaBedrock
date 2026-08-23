@@ -58,8 +58,11 @@ class ItemStackResponseLayoutTest {
         try {
             BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 1);
             ItemStackResponseLayout.writeRejectedEntry(buffer, false, 975, -3);
-            ItemStackResponseLayout.skip(buffer, false, 975);
+            final ItemStackResponseLayout.DecodedResponse decoded = ItemStackResponseLayout.skip(buffer, false, 975);
             assertFalse(buffer.isReadable());
+            assertTrue(decoded.anyRejected());
+            assertEquals(1, decoded.requestIds().length);
+            assertEquals(-3, decoded.requestIds()[0]);
         } finally {
             buffer.release();
         }

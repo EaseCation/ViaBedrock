@@ -63,53 +63,67 @@ public final class ItemStackResponseLayout {
     public static DecodedResponse skip(final PacketWrapper wrapper, final boolean emulateNetEase, final int protocol) {
         final int count = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
         boolean anyRejected = false;
+        final int[] requestIds = new int[Math.max(0, count)];
         for (int i = 0; i < count; i++) {
-            if (!skipEntry(wrapper, emulateNetEase, protocol)) {
+            final DecodedEntry entry = skipEntryDetailed(wrapper, emulateNetEase, protocol);
+            requestIds[i] = entry.requestId();
+            if (!entry.ok()) {
                 anyRejected = true;
             }
         }
-        return new DecodedResponse(count, anyRejected);
+        return new DecodedResponse(count, anyRejected, requestIds);
     }
 
     public static DecodedResponse skip(final ByteBuf buffer, final boolean emulateNetEase, final int protocol) {
         final int count = BedrockTypes.UNSIGNED_VAR_INT.read(buffer);
         boolean anyRejected = false;
+        final int[] requestIds = new int[Math.max(0, count)];
         for (int i = 0; i < count; i++) {
-            if (!skipEntry(buffer, emulateNetEase, protocol)) {
+            final DecodedEntry entry = skipEntryDetailed(buffer, emulateNetEase, protocol);
+            requestIds[i] = entry.requestId();
+            if (!entry.ok()) {
                 anyRejected = true;
             }
         }
-        return new DecodedResponse(count, anyRejected);
+        return new DecodedResponse(count, anyRejected, requestIds);
     }
 
     public static boolean skipEntry(final PacketWrapper wrapper, final boolean emulateNetEase, final int protocol) {
-        final byte result = wrapper.read(Types.BYTE);
-        wrapper.read(BedrockTypes.VAR_INT); // request id
-        if (usesOptionalContainerEntries(emulateNetEase, protocol)) {
-            wrapper.read(Types.BOOLEAN); // always true on current Nukkit
-            if (!wrapper.read(Types.BOOLEAN)) {
-                return result == RESULT_OK;
-            }
-        } else if (result != RESULT_OK) {
-            return false;
-        }
-        skipContainers(wrapper, emulateNetEase, protocol);
-        return result == RESULT_OK;
+        return skipEntryDetailed(wrapper, emulateNetEase, protocol).ok();
     }
 
     public static boolean skipEntry(final ByteBuf buffer, final boolean emulateNetEase, final int protocol) {
+        return skipEntryDetailed(buffer, emulateNetEase, protocol).ok();
+    }
+
+    public static DecodedEntry skipEntryDetailed(final PacketWrapper wrapper, final boolean emulateNetEase, final int protocol) {
+        final byte result = wrapper.read(Types.BYTE);
+        final int requestId = wrapper.read(BedrockTypes.VAR_INT);
+        if (usesOptionalContainerEntries(emulateNetEase, protocol)) {
+            wrapper.read(Types.BOOLEAN); // always true on current Nukkit
+            if (!wrapper.read(Types.BOOLEAN)) {
+                return new DecodedEntry(requestId, result == RESULT_OK);
+            }
+        } else if (result != RESULT_OK) {
+            return new DecodedEntry(requestId, false);
+        }
+        skipContainers(wrapper, emulateNetEase, protocol);
+        return new DecodedEntry(requestId, result == RESULT_OK);
+    }
+
+    public static DecodedEntry skipEntryDetailed(final ByteBuf buffer, final boolean emulateNetEase, final int protocol) {
         final byte result = buffer.readByte();
-        BedrockTypes.VAR_INT.read(buffer); // request id
+        final int requestId = BedrockTypes.VAR_INT.read(buffer);
         if (usesOptionalContainerEntries(emulateNetEase, protocol)) {
             buffer.readBoolean(); // always true on current Nukkit
             if (!buffer.readBoolean()) {
-                return result == RESULT_OK;
+                return new DecodedEntry(requestId, result == RESULT_OK);
             }
         } else if (result != RESULT_OK) {
-            return false;
+            return new DecodedEntry(requestId, false);
         }
         skipContainers(buffer, emulateNetEase, protocol);
-        return result == RESULT_OK;
+        return new DecodedEntry(requestId, result == RESULT_OK);
     }
 
     public static void skipContainers(final PacketWrapper wrapper, final boolean emulateNetEase, final int protocol) {
@@ -250,7 +264,13 @@ public final class ItemStackResponseLayout {
         return 975;
     }
 
-    public record DecodedResponse(int entryCount, boolean anyRejected) {
+    public record DecodedEntry(int requestId, boolean ok) {
+    }
+
+    public record DecodedResponse(int entryCount, boolean anyRejected, int[] requestIds) {
+        public DecodedResponse(final int entryCount, final boolean anyRejected) {
+            this(entryCount, anyRejected, new int[0]);
+        }
     }
 
 }

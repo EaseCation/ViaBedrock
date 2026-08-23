@@ -46,6 +46,7 @@ import net.raphimc.viabedrock.experimental.storage.RecipeRegistry;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
 import net.raphimc.viabedrock.protocol.packet.CreativeContentLayout;
 import net.raphimc.viabedrock.protocol.packet.ItemStackRequestLayout;
+import net.raphimc.viabedrock.protocol.packet.ItemStackResponseLayout;
 import net.raphimc.viabedrock.experimental.util.ProtocolUtil;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
@@ -214,7 +215,8 @@ public class ClientAuthInventoryModule implements FeatureModule {
                 return;
             }
 
-            if (!sendPredictedActions(wrapper.user(), actions)) {
+            final InventorySnapshot snapshot = InventorySnapshot.capture(inventoryTracker);
+            if (!sendPredictedActions(wrapper.user(), actions, snapshot)) {
                 dragState.reset();
                 resyncAfterRejectedClick(wrapper.user(), inventoryTracker, containerId, container);
                 return;
@@ -314,6 +316,40 @@ public class ClientAuthInventoryModule implements FeatureModule {
             PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
         }
         PacketFactory.sendJavaContainerSetContent(user, container);
+        sendJavaCursor(user, tracker);
+    }
+
+    public static void handleItemStackResponse(final UserConnection user, final ItemStackResponseLayout.DecodedResponse decoded) {
+        if (user == null || decoded == null) {
+            return;
+        }
+        final InventoryTracker tracker = user.get(InventoryTracker.class);
+        if (tracker == null || !decoded.anyRejected()) {
+            if (tracker != null && !decoded.anyRejected()) {
+                tracker.takeLatestPendingItemStackRequest();
+            }
+            return;
+        }
+        InventorySnapshot snapshot = null;
+        if (decoded.requestIds() != null) {
+            for (final int requestId : decoded.requestIds()) {
+                snapshot = tracker.takePendingItemStackRequest(requestId);
+                if (snapshot != null) {
+                    break;
+                }
+            }
+        }
+        if (snapshot == null) {
+            snapshot = tracker.takeLatestPendingItemStackRequest();
+        }
+        if (snapshot == null) {
+            return;
+        }
+        snapshot.restore(tracker);
+        PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
+        if (tracker.getCurrentContainer() != null && tracker.getCurrentContainer() != tracker.getInventoryContainer()) {
+            PacketFactory.sendJavaContainerSetContent(user, tracker.getCurrentContainer());
+        }
         sendJavaCursor(user, tracker);
     }
 
@@ -433,7 +469,8 @@ public class ClientAuthInventoryModule implements FeatureModule {
                 sendJavaCursor(wrapper.user(), tracker);
                 return;
             }
-            sendItemStackRequest(wrapper.user(), encoded.payload());
+            final InventorySnapshot snapshot = InventorySnapshot.capture(tracker);
+            sendItemStackRequest(wrapper.user(), encoded, snapshot);
             CreativeSlotSemantics.applyPredictedItem(slot, plan.predicted(), tracker);
             PacketFactory.sendJavaContainerSetContent(wrapper.user(), tracker.getInventoryContainer());
             sendJavaCursor(wrapper.user(), tracker);
@@ -485,13 +522,14 @@ public class ClientAuthInventoryModule implements FeatureModule {
         final io.netty.buffer.ByteBuf buffer = io.netty.buffer.Unpooled.buffer();
         try {
             net.raphimc.viabedrock.protocol.types.BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 1);
-            net.raphimc.viabedrock.protocol.types.BedrockTypes.VAR_INT.write(buffer, tracker.nextItemStackRequestId());
+            final int requestId = tracker.nextItemStackRequestId();
+            net.raphimc.viabedrock.protocol.types.BedrockTypes.VAR_INT.write(buffer, requestId);
             net.raphimc.viabedrock.protocol.types.BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 1);
             ItemStackRequestLayout.writeDestroy(buffer, plan.count(), plan.destination(), true, ViaBedrock.getConfig().getNetEaseProtocolVersion());
             ItemStackRequestLayout.writeRequestTrailer(buffer, true, ViaBedrock.getConfig().getNetEaseProtocolVersion());
             final byte[] payload = new byte[buffer.readableBytes()];
             buffer.readBytes(payload);
-            return ItemStackRequestEncoder.EncodedRequest.of(payload);
+            return ItemStackRequestEncoder.EncodedRequest.of(payload, requestId);
         } finally {
             buffer.release();
         }
@@ -535,16 +573,54 @@ public class ClientAuthInventoryModule implements FeatureModule {
             if (encoded.isEmpty()) {
                 return true;
             }
-            sendItemStackRequest(user, encoded.payload());
+            sendItemStackRequest(user, encoded, InventorySnapshot.capture(user.get(InventoryTracker.class)));
             return true;
         }
         sendNormalTransaction(user, actions);
         return true;
     }
 
-    private static void sendItemStackRequest(final UserConnection user, final byte[] payload) {
+    private static boolean sendPredictedActions(final UserConnection user, final List<InventoryActionData> actions,
+                                                final InventorySnapshot snapshot) {
+        if (actions == null || actions.isEmpty()) {
+            return true;
+        }
+        if (AnvilSimulator.isTakeResult(actions)
+                || CartographySimulator.isTakeResult(actions)
+                || GrindstoneSimulator.isTakeResult(actions)
+                || LoomSimulator.isTakeResult(actions)
+                || StonecutterSimulator.isTakeResult(actions)
+                || SmithingSimulator.isTakeResult(actions)
+                || TradeSimulator.isTakeResult(actions)) {
+            return sendPredictedActions(user, actions);
+        }
+        final GameSessionStorage session = user.get(GameSessionStorage.class);
+        if (session != null && session.isInventoryServerAuthoritative()) {
+            final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encode(actions, user.get(InventoryTracker.class));
+            if (encoded.unsupported()) {
+                return false;
+            }
+            if (encoded.isEmpty()) {
+                return true;
+            }
+            sendItemStackRequest(user, encoded, snapshot);
+            return true;
+        }
+        sendNormalTransaction(user, actions);
+        return true;
+    }
+
+    private static void sendItemStackRequest(final UserConnection user, final ItemStackRequestEncoder.EncodedRequest encoded,
+                                             final InventorySnapshot snapshot) {
+        if (encoded == null || encoded.payload() == null) {
+            return;
+        }
+        final InventoryTracker tracker = user.get(InventoryTracker.class);
+        if (tracker != null && encoded.requestId() != 0 && snapshot != null) {
+            tracker.rememberPendingItemStackRequest(encoded.requestId(), snapshot);
+        }
         final PacketWrapper request = PacketWrapper.create(ServerboundBedrockPackets.ITEM_STACK_REQUEST, user);
-        request.write(Types.REMAINING_BYTES, payload);
+        request.write(Types.REMAINING_BYTES, encoded.payload());
         request.sendToServer(BedrockProtocol.class);
     }
 

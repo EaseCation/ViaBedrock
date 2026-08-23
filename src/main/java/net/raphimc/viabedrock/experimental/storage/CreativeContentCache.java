@@ -59,12 +59,23 @@ public class CreativeContentCache extends StoredObject {
         if (item == null || item.isEmpty()) {
             return null;
         }
+        Integer fallback = null;
         for (final Entry entry : this.entries) {
             if (!entry.item().isDifferent(item)) {
                 return entry.netId();
             }
+            // MOT CraftCreative looks up by creative netId, not NBT. Java creative
+            // clicks often reverse-map without matching blockRuntimeId/tag, so id+data
+            // is enough to spawn the same creative entry.
+            if (fallback == null && sameCreativeIdentity(entry.item(), item)) {
+                fallback = entry.netId();
+            }
         }
-        return null;
+        return fallback;
+    }
+
+    private static boolean sameCreativeIdentity(final BedrockItem cached, final BedrockItem requested) {
+        return cached.identifier() == requested.identifier() && cached.data() == requested.data();
     }
 
     public BedrockItem itemByNetId(final int netId) {

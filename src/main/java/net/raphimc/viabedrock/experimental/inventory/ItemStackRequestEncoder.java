@@ -112,21 +112,7 @@ public final class ItemStackRequestEncoder {
         if (stackActions.isEmpty()) {
             return EncodedRequest.empty();
         }
-        final ByteBuf buffer = Unpooled.buffer();
-        try {
-            BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 1);
-            BedrockTypes.VAR_INT.write(buffer, nextRequestId(tracker));
-            BedrockTypes.UNSIGNED_VAR_INT.write(buffer, stackActions.size());
-            for (final Action action : stackActions) {
-                writeAction(buffer, action, emulateNetEase, protocol);
-            }
-            ItemStackRequestLayout.writeRequestTrailer(buffer, emulateNetEase, protocol);
-            final byte[] payload = new byte[buffer.readableBytes()];
-            buffer.readBytes(payload);
-            return EncodedRequest.of(payload);
-        } finally {
-            buffer.release();
-        }
+        return encodeActions(stackActions, tracker, emulateNetEase, protocol);
     }
 
     public static EncodedRequest encodeAnvilApply(final InventoryTracker tracker, final String renameText,
@@ -538,9 +524,10 @@ public final class ItemStackRequestEncoder {
             return EncodedRequest.notSupported();
         }
         final ByteBuf buffer = Unpooled.buffer();
+        final int requestId = nextRequestId(tracker);
         try {
             BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 1);
-            BedrockTypes.VAR_INT.write(buffer, nextRequestId(tracker));
+            BedrockTypes.VAR_INT.write(buffer, requestId);
             BedrockTypes.UNSIGNED_VAR_INT.write(buffer, stackActions.size());
             for (final Action action : stackActions) {
                 writeAction(buffer, action, emulateNetEase, protocol);
@@ -548,7 +535,7 @@ public final class ItemStackRequestEncoder {
             ItemStackRequestLayout.writeRequestTrailer(buffer, emulateNetEase, protocol, filterStrings, origin);
             final byte[] payload = new byte[buffer.readableBytes()];
             buffer.readBytes(payload);
-            return EncodedRequest.of(payload);
+            return EncodedRequest.of(payload, requestId);
         } finally {
             buffer.release();
         }
@@ -945,17 +932,25 @@ public final class ItemStackRequestEncoder {
         }
     }
 
-    public record EncodedRequest(byte[] payload, boolean unsupported) {
+    public record EncodedRequest(byte[] payload, boolean unsupported, int requestId) {
+        public EncodedRequest(final byte[] payload, final boolean unsupported) {
+            this(payload, unsupported, 0);
+        }
+
         public static EncodedRequest empty() {
-            return new EncodedRequest(new byte[0], false);
+            return new EncodedRequest(new byte[0], false, 0);
         }
 
         public static EncodedRequest notSupported() {
-            return new EncodedRequest(new byte[0], true);
+            return new EncodedRequest(new byte[0], true, 0);
         }
 
         public static EncodedRequest of(final byte[] payload) {
-            return new EncodedRequest(payload, false);
+            return of(payload, 0);
+        }
+
+        public static EncodedRequest of(final byte[] payload, final int requestId) {
+            return new EncodedRequest(payload, false, requestId);
         }
 
         public boolean isEmpty() {

@@ -143,6 +143,10 @@ class ItemUseSemanticsTest {
         assertFalse(ItemUseSemantics.attachAuthInputItemInteraction(true, true));
         assertTrue(ItemUseSemantics.attachAuthInputItemInteraction(false, true));
         assertTrue(ItemUseSemantics.attachAuthInputItemInteraction(true, false));
+        assertFalse(ItemUseSemantics.attachAuthInputItemInteraction(true, false, true));
+        assertTrue(ItemUseSemantics.attachAuthInputItemInteraction(false, false, true));
+        assertFalse(ItemUseSemantics.sendStartItemUseOnForBow(true));
+        assertTrue(ItemUseSemantics.sendStartItemUseOnForBow(false));
     }
 
 }

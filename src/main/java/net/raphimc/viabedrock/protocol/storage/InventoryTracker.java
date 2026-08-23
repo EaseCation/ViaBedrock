@@ -102,6 +102,7 @@ public class InventoryTracker extends StoredObject {
     private IntObjectPair<Form> currentForm = null;
     private byte bedrockInventoryContainerId = (byte) ContainerID.CONTAINER_ID_NONE.getValue();
     private boolean bedrockPlayerInventoryOpen;
+    private PendingItemStackRequest pendingItemStackRequest;
     private NpcDialogueState currentNpcDialogue = null;
     private int nextItemStackRequestId = -1;
 
@@ -267,6 +268,14 @@ public class InventoryTracker extends StoredObject {
             final BlockStateRewriter blockStateRewriter = this.user().get(BlockStateRewriter.class);
             final int blockState = chunkTracker.getBlockState(this.currentContainer.position());
             final String tag = blockStateRewriter.tag(blockState);
+            // MOT plugin / fake inventories send CONTAINER_OPEN at (0,0,0). Air at world
+            // origin is not a real chest; keep the GUI. A real tagged block at spawn still
+            // closes if the player walks away. Untagged GenericContainers treat air as valid,
+            // so they must skip the distance check as well.
+            if (isDummyWorldPosition(this.currentContainer.position())
+                    && (!this.currentContainer.isWorldBacked() || !this.currentContainer.isValidBlockTag(tag))) {
+                return;
+            }
             if (!this.currentContainer.isValidBlockTag(tag)) {
                 ViaBedrock.getPlatform().getLogger().log(Level.INFO, "Closing " + this.currentContainer.type() + " because block state is not valid for container type: " + blockState);
                 this.forceCloseCurrentContainer();
@@ -283,6 +292,14 @@ public class InventoryTracker extends StoredObject {
         }
     }
 
+    /**
+     * Nukkit-MOT writes {@code x=y=z=0} when the inventory holder is not a world block
+     * ({@code ContainerInventory}, plugin fake chests, ender chest with no viewing block).
+     */
+    public static boolean isDummyWorldPosition(final BlockPosition position) {
+        return position != null && position.x() == 0 && position.y() == 0 && position.z() == 0;
+    }
+
     public boolean isContainerOpen() {
         return this.getContainerState() != ContainerState.CLOSED;
     }
@@ -293,6 +310,31 @@ public class InventoryTracker extends StoredObject {
 
     private static boolean matchesCloseContainerId(final Container container, final byte containerId) {
         return container.containerId() == containerId || container.bedrockCloseContainerId() == containerId;
+    }
+
+    public void rememberPendingItemStackRequest(final int requestId, final net.raphimc.viabedrock.experimental.inventory.InventorySnapshot snapshot) {
+        if (requestId == 0 || snapshot == null) {
+            return;
+        }
+        this.pendingItemStackRequest = new PendingItemStackRequest(requestId, snapshot);
+    }
+
+    public net.raphimc.viabedrock.experimental.inventory.InventorySnapshot takePendingItemStackRequest(final int requestId) {
+        final PendingItemStackRequest pending = this.pendingItemStackRequest;
+        if (pending == null) {
+            return null;
+        }
+        if (requestId != 0 && pending.requestId() != requestId) {
+            return null;
+        }
+        this.pendingItemStackRequest = null;
+        return pending.snapshot();
+    }
+
+    public net.raphimc.viabedrock.experimental.inventory.InventorySnapshot takeLatestPendingItemStackRequest() {
+        final PendingItemStackRequest pending = this.pendingItemStackRequest;
+        this.pendingItemStackRequest = null;
+        return pending != null ? pending.snapshot() : null;
     }
 
     public int nextItemStackRequestId() {
@@ -396,6 +438,9 @@ public class InventoryTracker extends StoredObject {
         npcRequest.write(BedrockTypes.STRING, this.currentNpcDialogue.sceneName()); // scene name
         npcRequest.sendToServer(BedrockProtocol.class);
         this.currentNpcDialogue = null;
+    }
+
+    private record PendingItemStackRequest(int requestId, net.raphimc.viabedrock.experimental.inventory.InventorySnapshot snapshot) {
     }
 
     boolean forceCloseCurrentContainer() {

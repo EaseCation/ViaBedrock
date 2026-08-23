@@ -87,11 +87,28 @@ public final class ItemUseSemantics {
 
     /**
      * Official 975 starts food from AuthInput START_USING_ITEM + PERFORM_ITEM_INTERACTION.
-     * NetEase 860 Nukkit parses that payload but never handles it, so the same interaction
-     * must travel as a standalone USE_ITEM instead of being duplicated into AuthInput.
+     * NetEase 860 Nukkit parses that payload but never handles it. A second CLICK_AIR
+     * while already using is treated as a finish attempt, so NetEase must not attach
+     * the same ItemUseTransaction to AuthInput for food or bows.
      */
+    static boolean attachAuthInputItemInteraction(final boolean emulateNetEase, final boolean consumable,
+                                                  final boolean bow) {
+        if (!emulateNetEase) {
+            return true;
+        }
+        return !consumable && !bow;
+    }
+
     static boolean attachAuthInputItemInteraction(final boolean emulateNetEase, final boolean consumable) {
-        return !emulateNetEase || !consumable;
+        return attachAuthInputItemInteraction(emulateNetEase, consumable, false);
+    }
+
+    /**
+     * MOT Player.java never handles {@code StartItemUseOn}. Sending it on NetEase bow
+     * start is unused noise; keep it on official 975 only.
+     */
+    static boolean sendStartItemUseOnForBow(final boolean emulateNetEase) {
+        return !emulateNetEase;
     }
 
     /**

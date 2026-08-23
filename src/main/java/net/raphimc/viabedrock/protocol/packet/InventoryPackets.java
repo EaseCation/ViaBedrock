@@ -102,17 +102,9 @@ public class InventoryPackets {
             }
             final BedrockBlockEntity blockEntity = chunkTracker.getBlockEntity(position);
             final String bedrockBlockTag = blockStateRewriter.tag(chunkTracker.getBlockState(position));
-            // Map the Bedrock block tag to the Java container title translation key. Most align with
-            // "container.<tag>", but several differ; an unmatched key shows as raw "container.crafting_table"
-            // text on the Java client instead of a localized title.
-            final String javaTitleKey = switch (bedrockBlockTag) {
-                case null -> "container." + type.name().toLowerCase(java.util.Locale.ROOT);
-                case "crafting_table" -> "container.crafting";
-                case "anvil" -> "container.repair";
-                case "brewing_stand" -> "container.brewing";
-                case "enchanting_table" -> "container.enchant";
-                default -> "container." + bedrockBlockTag;
-            };
+            // MOT CONTAINER_OPEN has no title string. Java 1.21 keys are not "container.<bedrock_tag>"
+            // (ender_chest -> container.enderchest, shulker_box -> container.shulkerBox).
+            final String javaTitleKey = JavaContainerTitles.key(bedrockBlockTag, type);
             TextComponent title = new TranslationComponent(javaTitleKey);
             if (blockEntity != null && blockEntity.tag().get("CustomName") instanceof StringTag customNameTag) {
                 title = TextUtil.stringToTextComponent(TextUtil.toSingleLine(wrapper.user().get(ResourcePackStorage.class).getTexts().translate(customNameTag.getValue())));
@@ -139,6 +131,11 @@ public class InventoryPackets {
                         javaMenuId = BedrockProtocol.MAPPINGS.getJavaShulkerBoxMenuId();
                     } else if (entityUniqueId != -1L) {
                         // Nukkit sends chest boats / minecart chests as type 0 with an entity unique id.
+                        container = new GenericContainer(wrapper.user(), containerId, type, title, position, 27);
+                    } else if (InventoryTracker.isDummyWorldPosition(position)) {
+                        // MOT fake / plugin inventories send CONTAINER_OPEN at (0,0,0). There is no
+                        // world block to validate, so keep an untagged generic chest instead of a
+                        // ChestContainer that InventoryTracker.tick() would immediately close.
                         container = new GenericContainer(wrapper.user(), containerId, type, title, position, 27);
                     } else {
                         final boolean isDoubleChest = blockEntity != null && blockEntity.tag().get("pairx") instanceof IntTag && blockEntity.tag().get("pairz") instanceof IntTag;
@@ -326,8 +323,11 @@ public class InventoryPackets {
             wrapper.cancel();
             // SAI servers echo every click. Consume the 860/975 container array so the
             // next mapped packet is not parsed as leftover ITEM_STACK_RESPONSE bytes.
-            ItemStackResponseLayout.skip(wrapper);
+            // NetEase 860 error entries have no containers, so a rejected click must
+            // roll the optimistic Java prediction back from the pre-click snapshot.
+            final ItemStackResponseLayout.DecodedResponse decoded = ItemStackResponseLayout.skip(wrapper);
             PacketLeftoverLayout.discardUnreadInput(wrapper);
+            ClientAuthInventoryModule.handleItemStackResponse(wrapper.user(), decoded);
         });
         protocol.registerClientbound(ClientboundBedrockPackets.CONTAINER_SET_DATA, ClientboundPackets26_1.CONTAINER_SET_DATA, wrapper -> {
             final int containerId = wrapper.read(Types.BYTE); // container id

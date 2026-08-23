@@ -401,7 +401,8 @@ public class ExperimentalFeatures {
     private static boolean shouldAttachAuthInputItemInteraction(final ItemRewriter itemRewriter, final BedrockItem item) {
         return ItemUseSemantics.attachAuthInputItemInteraction(
                 ViaBedrock.getConfig().shouldEmulateNetEaseClient(),
-                isConsumableUseItem(itemRewriter, item)
+                isConsumableUseItem(itemRewriter, item),
+                isBow(itemRewriter, item)
         );
     }
 
@@ -921,7 +922,8 @@ public class ExperimentalFeatures {
         if (sendEquipment && handContext.isMainHand() && !shouldSkipMobEquipmentBeforeUse(user.get(ItemRewriter.class), handContext.item())) {
             sendSelectedHotbarSlot(user, handContext, clientPlayer);
         }
-        if (isBow(user.get(ItemRewriter.class), handContext.item())) {
+        if (isBow(user.get(ItemRewriter.class), handContext.item())
+                && ItemUseSemantics.sendStartItemUseOnForBow(ViaBedrock.getConfig().shouldEmulateNetEaseClient())) {
             ExperimentalPacketFactory.sendBedrockPlayerAction(
                     user,
                     clientPlayer.runtimeId(),
