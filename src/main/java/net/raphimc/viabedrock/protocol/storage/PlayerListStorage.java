@@ -23,6 +23,8 @@ import com.viaversion.viaversion.api.connection.StorableObject;
 import com.viaversion.viaversion.util.Pair;
 import net.raphimc.viabedrock.experimental.tablist.PlayerIdentity;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode;
+import net.raphimc.viabedrock.protocol.model.SkinData;
+import net.raphimc.viabedrock.protocol.packet.SkinArmClassifier;
 
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -38,6 +40,7 @@ public class PlayerListStorage implements StorableObject {
     private final Map<UUID, Integer> serverLatencies = new HashMap<>();
     private final Map<UUID, Integer> publishedLatencies = new HashMap<>();
     private final Map<UUID, PlayerIdentity> identities = new HashMap<>();
+    private final Map<UUID, SkinArmClassifier.Hint> armHints = new HashMap<>();
     private boolean invalidLatencyPayloadLogged;
 
     public Pair<Long, String> addPlayer(final UUID uuid, final long entityUniqueId, final String name) {
@@ -48,6 +51,7 @@ public class PlayerListStorage implements StorableObject {
         this.publishedLatencies.remove(uuid);
         this.javaProfiles.remove(uuid);
         this.identities.remove(uuid);
+        this.armHints.remove(uuid);
         return this.playerList.remove(uuid);
     }
 
@@ -135,6 +139,43 @@ public class PlayerListStorage implements StorableObject {
 
     public PlayerIdentity identity(final UUID uuid) {
         return this.identities.get(uuid);
+    }
+
+    public SkinArmClassifier.Hint armHint(final UUID uuid) {
+        return this.armHints.get(uuid);
+    }
+
+    /**
+     * PLAYER_LIST / PLAYER_SKIN carry {@code skinResourcePatch} and {@code ArmSize}.
+     * MOT ConfirmSkin does not. Keep the last explicit arm hint so a later dual-template
+     * ConfirmSkin cannot flatten every player to Steve.
+     */
+    public SkinData rememberAndApplyArmHint(final UUID uuid, final SkinData skin) {
+        if (uuid == null || skin == null) {
+            return skin;
+        }
+        final SkinArmClassifier.Hint packet = SkinArmClassifier.Hint.fromSkin(skin);
+        final Boolean fromGeometry = SkinArmClassifier.slimFromGeometry(skin.geometryData());
+        final Boolean fromTexture = SkinArmClassifier.slimFromTexture(skin.skinData());
+        final SkinArmClassifier.Hint cached = this.armHints.get(uuid);
+
+        final SkinArmClassifier.Hint chosen;
+        if (packet != null) {
+            chosen = packet;
+        } else if (fromGeometry != null) {
+            chosen = SkinArmClassifier.Hint.of(fromGeometry);
+        } else if (cached != null) {
+            chosen = cached;
+        } else if (fromTexture != null) {
+            chosen = SkinArmClassifier.Hint.of(fromTexture);
+        } else {
+            chosen = SkinArmClassifier.Hint.wide();
+        }
+
+        if (packet != null || fromGeometry != null || cached == null) {
+            this.armHints.put(uuid, chosen);
+        }
+        return SkinArmClassifier.apply(skin, chosen);
     }
 
     public Map<UUID, PlayerIdentity> replaceIdentities(final Map<UUID, PlayerIdentity> snapshot) {

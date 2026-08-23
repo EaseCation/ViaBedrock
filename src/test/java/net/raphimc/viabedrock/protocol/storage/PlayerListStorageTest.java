@@ -17,8 +17,12 @@
  */
 package net.raphimc.viabedrock.protocol.storage;
 
+import net.raphimc.viabedrock.protocol.model.SkinData;
+import net.raphimc.viabedrock.protocol.packet.ConfirmSkinLayout;
 import org.junit.jupiter.api.Test;
 
+import java.awt.image.BufferedImage;
+import java.util.Collections;
 import java.util.Map;
 import java.util.UUID;
 
@@ -68,5 +72,47 @@ class PlayerListStorageTest {
 
         storage.addPlayer(REMOTE_UUID, 2L, "remote");
         assertEquals(Map.of(REMOTE_UUID, 87), storage.replaceServerLatencies(Map.of(REMOTE_UUID, 87), LOCAL_UUID));
+    }
+
+    @Test
+    void confirmSkinKeepsPlayerListSlimHintWhenGeometryHasBothTemplates() {
+        final PlayerListStorage storage = new PlayerListStorage();
+        final SkinData playerList = dummySkin(ConfirmSkinLayout.SLIM_RESOURCE_PATCH, "slim",
+                "{\"minecraft:geometry\":[{\"description\":{\"identifier\":\"geometry.humanoid.custom\"}},{\"description\":{\"identifier\":\"geometry.humanoid.customSlim\"}}]}");
+        final SkinData afterList = storage.rememberAndApplyArmHint(REMOTE_UUID, playerList);
+        assertEquals("slim", afterList.armSize());
+        assertTrue(afterList.skinResourcePatch().contains("customSlim"));
+
+        final SkinData confirm = dummySkin("", "", playerList.geometryData());
+        final SkinData afterConfirm = storage.rememberAndApplyArmHint(REMOTE_UUID, confirm);
+        assertEquals("slim", afterConfirm.armSize());
+        assertTrue(afterConfirm.skinResourcePatch().contains("customSlim"));
+    }
+
+    private static SkinData dummySkin(final String patch, final String armSize, final String geometry) {
+        final BufferedImage image = new BufferedImage(2, 2, BufferedImage.TYPE_INT_ARGB);
+        image.setRGB(0, 0, 0xFF112233);
+        return new SkinData(
+                "skin-id",
+                "playfab",
+                patch,
+                image,
+                Collections.emptyList(),
+                null,
+                geometry,
+                "1.21.124",
+                "",
+                false,
+                false,
+                false,
+                true,
+                "",
+                "full-skin-id",
+                armSize,
+                "#0",
+                Collections.emptyList(),
+                Collections.emptyList(),
+                true
+        );
     }
 }

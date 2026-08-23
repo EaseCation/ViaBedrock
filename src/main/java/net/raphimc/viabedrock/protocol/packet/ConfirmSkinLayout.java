@@ -19,10 +19,6 @@ package net.raphimc.viabedrock.protocol.packet;
 
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Types;
-import com.viaversion.viaversion.libs.gson.JsonArray;
-import com.viaversion.viaversion.libs.gson.JsonElement;
-import com.viaversion.viaversion.libs.gson.JsonObject;
-import com.viaversion.viaversion.libs.gson.JsonParser;
 import io.netty.buffer.ByteBuf;
 import net.raphimc.viabedrock.protocol.model.SkinData;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
@@ -31,7 +27,6 @@ import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Locale;
 import java.util.UUID;
 
 /**
@@ -46,8 +41,8 @@ import java.util.UUID;
  */
 public final class ConfirmSkinLayout {
 
-    public static final String DEFAULT_RESOURCE_PATCH = "{\"geometry\":{\"default\":\"geometry.humanoid.custom\"}}";
-    public static final String SLIM_RESOURCE_PATCH = "{\"geometry\":{\"default\":\"geometry.humanoid.customSlim\"}}";
+    public static final String DEFAULT_RESOURCE_PATCH = SkinArmClassifier.DEFAULT_RESOURCE_PATCH;
+    public static final String SLIM_RESOURCE_PATCH = SkinArmClassifier.SLIM_RESOURCE_PATCH;
 
     private static final int[][] KNOWN_SKIN_SIZES = {
             {64, 32},
@@ -176,8 +171,11 @@ public final class ConfirmSkinLayout {
                 ? entry.uidStr()
                 : (entry.uuid() != null ? entry.uuid().toString() : "netease-unknown");
         final String geo = entry.geoStr() != null ? entry.geoStr() : "";
-        final boolean slim = isSlimGeometry(geo);
-        final String resourcePatch = slim ? SLIM_RESOURCE_PATCH : DEFAULT_RESOURCE_PATCH;
+        // ConfirmSkin has no resourcePatch/armSize. Dual-template MOT geo is not a
+        // player choice — leave patch empty unless the document names exactly one model.
+        final Boolean slim = SkinArmClassifier.slimFromGeometry(geo);
+        final String resourcePatch = slim == null ? "" : (slim ? SLIM_RESOURCE_PATCH : DEFAULT_RESOURCE_PATCH);
+        final String armSize = slim == null ? "" : (slim ? "slim" : "wide");
         return new SkinData(
                 uid,
                 "",
@@ -194,7 +192,7 @@ public final class ConfirmSkinLayout {
                 true,
                 "",
                 uid,
-                slim ? "slim" : "wide",
+                armSize,
                 "#0",
                 Collections.emptyList(),
                 Collections.emptyList(),
@@ -203,158 +201,18 @@ public final class ConfirmSkinLayout {
     }
 
     /**
-     * MOT ConfirmSkin {@code geoStr} is often a full {@code minecraft:geometry} document
-     * that mentions both {@code custom} and {@code customSlim}. Substring checks therefore
-     * mis-label Steve skins as Alex.
+     * True only when {@code geo} unambiguously names a slim humanoid. Dual-template
+     * MOT documents return false so callers do not invent an Alex model.
      */
     public static boolean isSlimGeometry(final String geo) {
-        if (geo == null || geo.isBlank()) {
-            return false;
-        }
-        final String trimmed = geo.trim();
-        if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
-            return isSlimGeometryName(trimmed);
-        }
-        try {
-            final JsonElement root = JsonParser.parseString(trimmed);
-            final JsonObject selected = selectHumanoidGeometry(root);
-            if (selected != null) {
-                final String identifier = geometryIdentifier(selected);
-                if (isSlimGeometryName(identifier)) {
-                    return true;
-                }
-                if (isWideGeometryName(identifier)) {
-                    return false;
-                }
-                final Float armWidth = minArmWidth(selected);
-                if (armWidth != null) {
-                    return armWidth < 3.5f;
-                }
-            }
-        } catch (final Exception ignored) {
-        }
-        return containsQuotedSlimIdentifier(trimmed) && !containsQuotedWideIdentifier(trimmed);
+        return Boolean.TRUE.equals(SkinArmClassifier.slimFromGeometry(geo));
     }
 
     static boolean isSlimGeometryName(final String name) {
-        return name != null && (name.equals("geometry.humanoid.customSlim") || name.startsWith("geometry.humanoid.customSlim."));
+        return SkinArmClassifier.isSlimGeometryName(name);
     }
 
     static boolean isWideGeometryName(final String name) {
-        return name != null
-                && (name.equals("geometry.humanoid.custom") || name.startsWith("geometry.humanoid.custom."))
-                && !isSlimGeometryName(name);
-    }
-
-    private static boolean containsQuotedSlimIdentifier(final String geo) {
-        return geo.contains("\"geometry.humanoid.customSlim\"") || geo.contains("'geometry.humanoid.customSlim'");
-    }
-
-    private static boolean containsQuotedWideIdentifier(final String geo) {
-        return geo.contains("\"geometry.humanoid.custom\"") || geo.contains("'geometry.humanoid.custom'");
-    }
-
-    private static JsonObject selectHumanoidGeometry(final JsonElement element) {
-        if (element == null || element.isJsonNull()) {
-            return null;
-        }
-        if (element.isJsonArray()) {
-            JsonObject firstHumanoid = null;
-            for (final JsonElement child : element.getAsJsonArray()) {
-                final JsonObject match = selectHumanoidGeometry(child);
-                if (match == null) {
-                    continue;
-                }
-                final String identifier = geometryIdentifier(match);
-                if (isWideGeometryName(identifier)) {
-                    return match;
-                }
-                if (firstHumanoid == null) {
-                    firstHumanoid = match;
-                }
-            }
-            return firstHumanoid;
-        }
-        if (!element.isJsonObject()) {
-            return null;
-        }
-        final JsonObject object = element.getAsJsonObject();
-        if (object.has("minecraft:geometry")) {
-            return selectHumanoidGeometry(object.get("minecraft:geometry"));
-        }
-        final String identifier = geometryIdentifier(object);
-        if (isSlimGeometryName(identifier) || isWideGeometryName(identifier)) {
-            return object;
-        }
-        return null;
-    }
-
-    private static String geometryIdentifier(final JsonObject object) {
-        if (object.has("description") && object.get("description").isJsonObject()) {
-            final JsonObject description = object.getAsJsonObject("description");
-            if (description.has("identifier") && description.get("identifier").isJsonPrimitive()) {
-                return description.get("identifier").getAsString();
-            }
-        }
-        if (object.has("identifier") && object.get("identifier").isJsonPrimitive()) {
-            return object.get("identifier").getAsString();
-        }
-        return null;
-    }
-
-    private static Float minArmWidth(final JsonElement element) {
-        final float width = scanArmWidth(element);
-        return width == Float.MAX_VALUE ? null : width;
-    }
-
-    private static float scanArmWidth(final JsonElement element) {
-        float minWidth = Float.MAX_VALUE;
-        if (element == null || element.isJsonNull()) {
-            return minWidth;
-        }
-        if (element.isJsonArray()) {
-            for (final JsonElement child : element.getAsJsonArray()) {
-                minWidth = Math.min(minWidth, scanArmWidth(child));
-            }
-            return minWidth;
-        }
-        if (!element.isJsonObject()) {
-            return minWidth;
-        }
-        final JsonObject object = element.getAsJsonObject();
-        if (object.has("minecraft:geometry")) {
-            minWidth = Math.min(minWidth, scanArmWidth(object.get("minecraft:geometry")));
-        }
-        if (object.has("bones")) {
-            minWidth = Math.min(minWidth, scanArmWidth(object.get("bones")));
-        }
-        final String name = object.has("name") && object.get("name").isJsonPrimitive()
-                ? object.get("name").getAsString()
-                : "";
-        if (isArmBone(name) && object.has("cubes") && object.get("cubes").isJsonArray()) {
-            final JsonArray cubes = object.getAsJsonArray("cubes");
-            for (final JsonElement cubeElement : cubes) {
-                if (!cubeElement.isJsonObject()) {
-                    continue;
-                }
-                final JsonObject cube = cubeElement.getAsJsonObject();
-                if (!cube.has("size") || !cube.get("size").isJsonArray() || cube.getAsJsonArray("size").isEmpty()) {
-                    continue;
-                }
-                final float width = Math.abs(cube.getAsJsonArray("size").get(0).getAsFloat());
-                if (width > 0.1f && width < minWidth) {
-                    minWidth = width;
-                }
-            }
-        }
-        return minWidth;
-    }
-
-    private static boolean isArmBone(final String name) {
-        if (name == null) {
-            return false;
-        }
-        final String lower = name.toLowerCase(Locale.ROOT).replace("_", "");
-        return lower.equals("leftarm") || lower.equals("rightarm");
+        return SkinArmClassifier.isWideGeometryName(name);
     }
 }

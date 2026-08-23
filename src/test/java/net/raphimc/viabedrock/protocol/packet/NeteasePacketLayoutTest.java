@@ -133,12 +133,13 @@ class NeteasePacketLayoutTest {
                 """;
         assertTrue(steveGeo.contains("customSlim"));
         assertFalse(ConfirmSkinLayout.isSlimGeometry(steveGeo));
+        assertNull(SkinArmClassifier.slimFromGeometry(steveGeo));
 
         final ConfirmSkinLayout.Entry entry = new ConfirmSkinLayout.Entry(
                 true, UUID.fromString("00112233-4455-6677-8899-aabbccddeeff"), new byte[0], "uid", steveGeo);
         final SkinData skin = ConfirmSkinLayout.toSkinData(entry);
-        assertEquals("wide", skin.armSize());
-        assertEquals(ConfirmSkinLayout.DEFAULT_RESOURCE_PATCH, skin.skinResourcePatch());
+        assertEquals("", skin.armSize());
+        assertEquals("", skin.skinResourcePatch());
     }
 
     @Test
@@ -160,6 +161,25 @@ class NeteasePacketLayoutTest {
         assertTrue(ConfirmSkinLayout.isSlimGeometry("geometry.humanoid.customSlim"));
         assertFalse(ConfirmSkinLayout.isSlimGeometry("geometry.humanoid.custom"));
         assertFalse(ConfirmSkinLayout.isSlimGeometry("geometry.humanoid.custom.1742391406.1704"));
+        assertEquals(Boolean.FALSE, SkinArmClassifier.slimFromGeometry("geometry.humanoid.custom"));
+        assertEquals(Boolean.TRUE, SkinArmClassifier.slimFromGeometry("geometry.humanoid.customSlim"));
+    }
+
+    @Test
+    void unusedSteveArmColumnMarksAlexTextureSlim() {
+        final BufferedImage steve = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
+        fillArmColumn(steve, 0xFF3366AA);
+        assertEquals(Boolean.FALSE, SkinArmClassifier.slimFromTexture(steve));
+
+        final BufferedImage alex = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
+        fillArmColumn(alex, 0x00000000);
+        assertEquals(Boolean.TRUE, SkinArmClassifier.slimFromTexture(alex));
+    }
+
+    private static void fillArmColumn(final BufferedImage image, final int argb) {
+        for (int y = 20; y < 32; y++) {
+            image.setRGB(43, y, argb);
+        }
     }
 
     @Test

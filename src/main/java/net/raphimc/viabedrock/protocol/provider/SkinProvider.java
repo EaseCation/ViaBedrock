@@ -42,6 +42,7 @@ import net.raphimc.viabedrock.protocol.storage.AuthData;
 import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
 import net.raphimc.viabedrock.protocol.storage.ClientSettingsStorage;
 import net.raphimc.viabedrock.protocol.storage.HandshakeStorage;
+import net.raphimc.viabedrock.protocol.storage.PlayerListStorage;
 import net.raphimc.viabedrock.protocol.types.primitive.ImageType;
 
 import javax.crypto.SecretKey;
@@ -365,17 +366,23 @@ public class SkinProvider implements Provider {
     }
 
     public void setSkin(final UserConnection user, final UUID playerUuid, final SkinData skin) {
+        SkinData outgoing = skin;
+        final PlayerListStorage playerListStorage = user.get(PlayerListStorage.class);
+        if (playerListStorage != null) {
+            outgoing = playerListStorage.rememberAndApplyArmHint(playerUuid, skin);
+        }
         final ChannelStorage channelStorage = user.get(ChannelStorage.class);
         final boolean hasVBU = channelStorage.hasChannel(ViaBedrockUtilityInterface.CHANNEL);
         final boolean hasBSU = channelStorage.hasChannel(BedrockSkinUtilityInterface.CHANNEL);
         ViaBedrock.getPlatform().getLogger().fine("setSkin: uuid=" + playerUuid
-                + " persona=" + skin.persona()
-                + " skinData=" + (skin.skinData() != null ? skin.skinData().getWidth() + "x" + skin.skinData().getHeight() : "null")
+                + " persona=" + outgoing.persona()
+                + " armSize=" + outgoing.armSize()
+                + " skinData=" + (outgoing.skinData() != null ? outgoing.skinData().getWidth() + "x" + outgoing.skinData().getHeight() : "null")
                 + " hasVBU=" + hasVBU + " hasBSU=" + hasBSU);
         if (hasVBU) {
-            ViaBedrockUtilityInterface.sendSkin(user, playerUuid, skin);
+            ViaBedrockUtilityInterface.sendSkin(user, playerUuid, outgoing);
         } else if (hasBSU) {
-            BedrockSkinUtilityInterface.sendSkin(user, playerUuid, skin);
+            BedrockSkinUtilityInterface.sendSkin(user, playerUuid, outgoing);
         }
     }
 
