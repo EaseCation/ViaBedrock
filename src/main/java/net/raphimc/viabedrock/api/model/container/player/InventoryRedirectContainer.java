@@ -35,7 +35,7 @@ public abstract class InventoryRedirectContainer extends Container {
     }
 
     @Override
-    public byte javaContainerId() {
+    public int javaContainerId() {
         return this.user.get(InventoryTracker.class).getInventoryContainer().javaContainerId();
     }
 

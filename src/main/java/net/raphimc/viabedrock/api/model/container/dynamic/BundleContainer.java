@@ -86,7 +86,7 @@ public class BundleContainer extends Container {
     }
 
     @Override
-    public byte javaContainerId() {
+    public int javaContainerId() {
         final Pair<Container, Integer> holdingContainer = this.findHoldingContainer();
         if (holdingContainer == null) {
             throw new IllegalStateException("Failed to find bundle in any container");

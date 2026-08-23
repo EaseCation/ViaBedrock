@@ -130,7 +130,11 @@ public abstract class Container {
         return javaSlot;
     }
 
-    public byte javaContainerId() {
+    public int javaContainerId() {
+        return this.containerId() & 0xFF;
+    }
+
+    public byte bedrockCloseContainerId() {
         return this.containerId();
     }
 

@@ -311,6 +311,40 @@ public final class ItemStackRequestEncoder {
         return encodeActions(stackActions, tracker, emulateNetEase, protocol);
     }
 
+    public static EncodedRequest encodeTradeApply(final InventoryTracker tracker, final int recipeNetworkId,
+                                                  final int buyACount, final int buyBCount, final int takeCount) {
+        return encodeTradeApply(tracker, recipeNetworkId, buyACount, buyBCount, takeCount, emulateNetEase(), encodeProtocol());
+    }
+
+    public static EncodedRequest encodeTradeApply(final InventoryTracker tracker, final int recipeNetworkId,
+                                                  final int buyACount, final int buyBCount, final int takeCount,
+                                                  final boolean emulateNetEase, final int protocol) {
+        if (recipeNetworkId < 0x20000000 || takeCount <= 0) {
+            return EncodedRequest.notSupported();
+        }
+        final List<Action> stackActions = new ArrayList<>();
+        stackActions.add(Action.craft(recipeNetworkId));
+        if (buyACount > 0) {
+            final ItemStackRequestLayout.SlotInfo buyA = occupiedSlot(tracker, 0);
+            if (buyA == null) {
+                return EncodedRequest.notSupported();
+            }
+            stackActions.add(Action.consume(buyACount, buyA));
+        }
+        if (buyBCount > 0) {
+            final ItemStackRequestLayout.SlotInfo buyB = occupiedSlot(tracker, 1);
+            if (buyB == null) {
+                return EncodedRequest.notSupported();
+            }
+            stackActions.add(Action.consume(buyBCount, buyB));
+        }
+        stackActions.add(Action.transfer(
+                ItemStackRequestActionType.Take, takeCount,
+                new ItemStackRequestLayout.SlotInfo(ContainerEnumName.CreatedOutputContainer, 50, 0),
+                new ItemStackRequestLayout.SlotInfo(ContainerEnumName.CursorContainer, 0, 0)));
+        return encodeActions(stackActions, tracker, emulateNetEase, protocol);
+    }
+
     public static EncodedRequest encodeBeaconPayment(final InventoryTracker tracker, final int primaryEffect,
                                                      final int secondaryEffect) {
         return encodeBeaconPayment(tracker, primaryEffect, secondaryEffect, emulateNetEase(), encodeProtocol());
@@ -748,7 +782,11 @@ public final class ItemStackRequestEncoder {
         if (containerId == ContainerID.CONTAINER_ID_PLAYER_ONLY_UI.getValue()) return tracker.getHudContainer();
         if (containerId == ContainerID.CONTAINER_ID_ARMOR.getValue()) return tracker.getArmorContainer();
         if (containerId == ContainerID.CONTAINER_ID_OFFHAND.getValue()) return tracker.getOffhandContainer();
-        return tracker.getContainerServerbound((byte) containerId);
+        if (tracker.getCurrentContainer() != null
+                && InventoryTracker.matchesBedrockContainerId(tracker.getCurrentContainer(), containerId)) {
+            return tracker.getCurrentContainer();
+        }
+        return tracker.getContainerServerbound(containerId);
     }
 
     private static boolean isContainer(final InventoryActionData action) {

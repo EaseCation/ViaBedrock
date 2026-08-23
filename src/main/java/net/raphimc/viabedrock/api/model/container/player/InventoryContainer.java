@@ -103,8 +103,8 @@ public class InventoryContainer extends Container {
     }
 
     @Override
-    public byte javaContainerId() {
-        return (byte) ContainerID.CONTAINER_ID_INVENTORY.getValue();
+    public int javaContainerId() {
+        return ContainerID.CONTAINER_ID_INVENTORY.getValue();
     }
 
     public byte getSelectedHotbarSlot() {

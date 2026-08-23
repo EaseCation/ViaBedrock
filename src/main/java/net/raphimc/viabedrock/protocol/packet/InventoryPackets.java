@@ -20,6 +20,7 @@ package net.raphimc.viabedrock.protocol.packet;
 import com.viaversion.nbt.tag.CompoundTag;
 import com.viaversion.nbt.tag.IntTag;
 import com.viaversion.nbt.tag.StringTag;
+import com.viaversion.nbt.tag.Tag;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.minecraft.BlockPosition;
 import com.viaversion.viaversion.api.minecraft.item.Item;
@@ -202,6 +203,9 @@ public class InventoryPackets {
                 case SMITHING_TABLE -> {
                     container = new SmithingTableContainer(wrapper.user(), containerId, title, position);
                 }
+                case TRADE -> {
+                    container = new TradeContainer(wrapper.user(), containerId, title);
+                }
                 case NONE, CAULDRON, JUKEBOX, ARMOR, HAND, HUD, DECORATED_POT -> { // Bedrock client can't open these containers
                     wrapper.cancel();
                     return;
@@ -220,9 +224,13 @@ public class InventoryPackets {
             // table overrides javaContainerId() to a fixed value and all clientbound updates / serverbound
             // lookups key off javaContainerId. Sending the raw containerId here desynced the window id so
             // the table's CONTAINER_CLICK/CLOSE never matched (items not placed, container never closed).
-            wrapper.write(Types.VAR_INT, (int) container.javaContainerId()); // container id (Java window id)
+            wrapper.write(Types.VAR_INT, container.javaContainerId()); // container id (Java window id)
             wrapper.write(Types.VAR_INT, javaMenuId); // type
             wrapper.write(Types.TAG, TextUtil.textComponentToNbt(title)); // title
+        });
+        protocol.registerClientbound(ClientboundBedrockPackets.UPDATE_TRADE, null, wrapper -> {
+            wrapper.cancel();
+            handleUpdateTrade(wrapper);
         });
         protocol.registerClientbound(ClientboundBedrockPackets.CONTAINER_CLOSE, ClientboundPackets26_1.CONTAINER_CLOSE, new PacketHandlers() {
             @Override
@@ -246,7 +254,7 @@ public class InventoryPackets {
                         return;
                     }
                     // Java window id must match what CONTAINER_OPEN sent (javaContainerId), not the raw Bedrock containerId.
-                    wrapper.set(Types.VAR_INT, 0, (int) container.javaContainerId());
+                    wrapper.set(Types.VAR_INT, 0, container.javaContainerId());
 
                     clearClosedCraftingTable(inventoryTracker, container);
                     if (container.type() == ContainerType.ENCHANTMENT) {
@@ -257,6 +265,12 @@ public class InventoryPackets {
                     }
                     if (container instanceof AnvilContainer) {
                         final AnvilSessionStorage session = wrapper.user().get(AnvilSessionStorage.class);
+                        if (session != null) {
+                            session.clear();
+                        }
+                    }
+                    if (container instanceof TradeContainer) {
+                        final TradeSessionStorage session = wrapper.user().get(TradeSessionStorage.class);
                         if (session != null) {
                             session.clear();
                         }
@@ -274,7 +288,7 @@ public class InventoryPackets {
             PacketLeftoverLayout.discardUnreadInput(wrapper);
 
             final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
-            final Container container = inventoryTracker.getContainerClientbound((byte) containerId, containerName, storageItem);
+            final Container container = inventoryTracker.getContainerClientbound(containerId, containerName, storageItem);
             if (container != null && container.setItems(items)) {
                 PacketFactory.writeJavaContainerSetContent(wrapper, container);
             } else {
@@ -294,12 +308,12 @@ public class InventoryPackets {
             PacketLeftoverLayout.discardUnreadInput(wrapper);
 
             final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
-            final Container container = inventoryTracker.getContainerClientbound((byte) containerId, containerName, storageItem);
+            final Container container = inventoryTracker.getContainerClientbound(containerId, containerName, storageItem);
             if (container != null && container.setItem(slot, item)) {
                 if (container.type() == ContainerType.HUD && slot == 0) { // cursor item
                     wrapper.setPacketType(ClientboundPackets26_1.SET_CURSOR_ITEM);
                 } else {
-                    wrapper.write(Types.VAR_INT, (int) container.javaContainerId()); // container id
+                    wrapper.write(Types.VAR_INT, container.javaContainerId()); // container id
                     wrapper.write(Types.VAR_INT, 0); // revision
                     wrapper.write(Types.SHORT, (short) container.javaSlot(slot)); // slot
                 }
@@ -516,7 +530,7 @@ public class InventoryPackets {
                 wrapper.cancel();
                 return;
             }
-            final Container container = inventoryTracker.getContainerServerbound((byte) containerId);
+            final Container container = inventoryTracker.getContainerServerbound(containerId);
             if (container == null) {
                 if (containerId == ContainerID.CONTAINER_ID_INVENTORY.getValue()) {
                     if (ViaBedrock.getConfig().shouldEnableExperimentalFeatures()) {
@@ -618,42 +632,39 @@ public class InventoryPackets {
                 modalFormResponse.sendToServer(BedrockProtocol.class);
             }
         });
-        protocol.registerServerbound(ServerboundPackets26_1.CONTAINER_CLOSE, ServerboundBedrockPackets.CONTAINER_CLOSE, new PacketHandlers() {
-            @Override
-            protected void register() {
-                map(Types.VAR_INT, Types.BYTE); // container id
-                create(Types.BYTE, (byte) ContainerType.NONE.getValue()); // type
-                create(Types.BOOLEAN, false); // server initiated
-                handler(wrapper -> {
-                    final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
-                    final byte containerId = wrapper.get(Types.BYTE, 0);
-                    final Container container = inventoryTracker.getContainerServerbound(containerId);
-                    if (container == null) {
-                        // Java's player inventory is not opened by a server container packet. Bedrock uses
-                        // container -1 to close that UI after its cursor transaction has completed.
-                        if (containerId == 0 && !inventoryTracker.isContainerOpen()) {
-                            if (!ClientAuthInventoryModule.returnCursorBeforeClose(wrapper.user())) {
-                                wrapper.cancel();
-                                return;
-                            }
-                            wrapper.set(Types.BYTE, 0, (byte) -1);
-                            inventoryTracker.clearBedrockPlayerInventoryOpen();
-                            return;
-                        }
-                        wrapper.cancel();
-                        return;
-                    }
+        protocol.registerServerbound(ServerboundPackets26_1.CONTAINER_CLOSE, ServerboundBedrockPackets.CONTAINER_CLOSE, wrapper -> {
+            final int javaWindowId = wrapper.read(Types.VAR_INT);
+            wrapper.clearInputBuffer();
+            wrapper.write(Types.BYTE, (byte) javaWindowId); // overwritten below
+            wrapper.write(Types.BYTE, (byte) ContainerType.NONE.getValue());
+            wrapper.write(Types.BOOLEAN, false);
 
-                    // A Bedrock client resolves its cursor with an inventory transaction before it
-                    // closes the screen. Java only sends CONTAINER_CLOSE, so provide that missing step.
-                    if (!ClientAuthInventoryModule.returnCursorBeforeClose(wrapper.user())
-                            || !inventoryTracker.beginClientClose(container)) {
+            final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
+            final Container container = inventoryTracker.getContainerServerbound(javaWindowId);
+            if (container == null) {
+                // Java's player inventory is not opened by a server container packet. Bedrock uses
+                // container -1 to close that UI after its cursor transaction has completed.
+                if (javaWindowId == 0 && !inventoryTracker.isContainerOpen()) {
+                    if (!ClientAuthInventoryModule.returnCursorBeforeClose(wrapper.user())) {
                         wrapper.cancel();
                         return;
                     }
-                    wrapper.set(Types.BYTE, 0, container.containerId());
-                });
+                    wrapper.set(Types.BYTE, 0, (byte) -1);
+                    inventoryTracker.clearBedrockPlayerInventoryOpen();
+                    return;
+                }
+                wrapper.cancel();
+                return;
             }
+
+            // A Bedrock client resolves its cursor with an inventory transaction before it
+            // closes the screen. Java only sends CONTAINER_CLOSE, so provide that missing step.
+            if (!ClientAuthInventoryModule.returnCursorBeforeClose(wrapper.user())
+                    || !inventoryTracker.beginClientClose(container)) {
+                wrapper.cancel();
+                return;
+            }
+            wrapper.set(Types.BYTE, 0, container.bedrockCloseContainerId());
         });
         protocol.registerServerbound(ServerboundPackets26_1.SET_CARRIED_ITEM, ServerboundBedrockPackets.MOB_EQUIPMENT, wrapper -> {
             final short slot = wrapper.read(Types.SHORT); // slot
@@ -819,7 +830,7 @@ public class InventoryPackets {
         if (inventoryTracker.getPendingCloseContainer() != null) {
             return;
         }
-        final Container container = inventoryTracker.getContainerServerbound((byte) containerId);
+        final Container container = inventoryTracker.getContainerServerbound(containerId);
         if (container == null || container.type() != ContainerType.ENCHANTMENT) {
             return;
         }
@@ -877,6 +888,74 @@ public class InventoryPackets {
         final PacketWrapper request = PacketWrapper.create(ServerboundBedrockPackets.ITEM_STACK_REQUEST, user);
         request.write(Types.REMAINING_BYTES, payload);
         request.sendToServer(BedrockProtocol.class);
+    }
+
+    private static void handleUpdateTrade(final PacketWrapper wrapper) {
+        final byte windowId = wrapper.read(Types.BYTE);
+        wrapper.read(Types.BYTE); // window type (MOT always 15 / TRADE)
+        wrapper.read(BedrockTypes.VAR_INT); // size
+        final int tradeTier = wrapper.read(BedrockTypes.VAR_INT);
+        final long traderUniqueId = wrapper.read(BedrockTypes.VAR_LONG);
+        wrapper.read(BedrockTypes.VAR_LONG); // player unique id
+        final String displayName = wrapper.read(BedrockTypes.STRING);
+        wrapper.read(Types.BOOLEAN); // new trading ui
+        final boolean usingEconomyTrade = wrapper.read(Types.BOOLEAN);
+        final Tag offersTag = wrapper.read(BedrockTypes.NETWORK_TAG);
+        PacketLeftoverLayout.discardUnreadInput(wrapper);
+
+        final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
+        final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
+        final TradeSessionStorage session = wrapper.user().get(TradeSessionStorage.class);
+        final java.util.List<TradeOfferLayout.Offer> offers = TradeOfferLayout.parseOffers(offersTag);
+        final int villagerExperience = villagerTradeExperience(wrapper.user(), traderUniqueId);
+        if (session != null) {
+            session.setOffers(offers, tradeTier, villagerExperience, usingEconomyTrade);
+        }
+
+        Container container = inventoryTracker.getCurrentContainer();
+        if (!(container instanceof TradeContainer)) {
+            if (inventoryTracker.isAnyScreenOpen()) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Server tried to open trade while another container is open");
+                PacketFactory.sendBedrockContainerClose(wrapper.user(), TradeContainer.MOT_CLOSE_CONTAINER_ID, ContainerType.NONE);
+                return;
+            }
+            final TextComponent title = displayName != null && !displayName.isEmpty()
+                    ? TextUtil.stringToTextComponent(displayName)
+                    : new TranslationComponent("entity.minecraft.villager");
+            container = new TradeContainer(wrapper.user(), windowId, title);
+            inventoryTracker.setCurrentContainer(container);
+            final PacketWrapper openScreen = PacketWrapper.create(ClientboundPackets26_1.OPEN_SCREEN, wrapper.user());
+            openScreen.write(Types.VAR_INT, container.javaContainerId());
+            openScreen.write(Types.VAR_INT, BedrockProtocol.MAPPINGS.getBedrockToJavaContainers().getOrDefault(ContainerType.TRADE, -1));
+            openScreen.write(Types.TAG, TextUtil.textComponentToNbt(title));
+            openScreen.send(BedrockProtocol.class);
+        }
+
+        final PacketWrapper merchantOffers = PacketWrapper.create(ClientboundPackets26_1.MERCHANT_OFFERS, wrapper.user());
+        TradeOfferLayout.writeJavaMerchantOffers(
+                merchantOffers, container.javaContainerId(), offers, itemRewriter,
+                tradeTier, session != null ? session.villagerExperience() : villagerExperience, true, usingEconomyTrade);
+        merchantOffers.send(BedrockProtocol.class);
+    }
+
+    private static int villagerTradeExperience(final UserConnection user, final long traderUniqueId) {
+        final EntityTracker entityTracker = user.get(EntityTracker.class);
+        if (entityTracker == null) {
+            return 0;
+        }
+        final Entity trader = entityTracker.getEntityByUid(traderUniqueId);
+        if (trader == null) {
+            return 0;
+        }
+        final com.viaversion.viaversion.api.minecraft.entitydata.EntityData data = trader.entityData().get(ActorDataIDs.TRADE_EXPERIENCE);
+        if (data == null || data.value() == null) {
+            return 0;
+        }
+        final Object value = data.value();
+        if (value instanceof Number number) {
+            return Math.max(0, number.intValue());
+        }
+        return 0;
     }
 
     private static void sendModalFormCancel(final UserConnection user, final int formId, final ModalFormCancelReason reason) {

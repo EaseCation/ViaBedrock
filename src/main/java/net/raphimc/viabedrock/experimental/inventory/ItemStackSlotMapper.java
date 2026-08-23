@@ -27,6 +27,7 @@ import net.raphimc.viabedrock.api.model.container.FurnaceContainer;
 import net.raphimc.viabedrock.api.model.container.GenericContainer;
 import net.raphimc.viabedrock.api.model.container.ShulkerBoxContainer;
 import net.raphimc.viabedrock.api.model.container.SmithingTableContainer;
+import net.raphimc.viabedrock.api.model.container.TradeContainer;
 import net.raphimc.viabedrock.experimental.inventory.SlotMapper.BedrockSlotRef;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
@@ -119,6 +120,14 @@ public final class ItemStackSlotMapper {
                 case 0 -> new ItemStackRequestLayout.SlotInfo(ContainerEnumName.AnvilInputContainer, 1, 0);
                 case 1 -> new ItemStackRequestLayout.SlotInfo(ContainerEnumName.AnvilMaterialContainer, 2, 0);
                 case 2 -> new ItemStackRequestLayout.SlotInfo(ContainerEnumName.AnvilResultPreviewContainer, 3, 0);
+                default -> null;
+            };
+        }
+        if (container instanceof TradeContainer) {
+            return switch (slot) {
+                case 0 -> new ItemStackRequestLayout.SlotInfo(ContainerEnumName.Trade2Ingredient1Container, 0, 0);
+                case 1 -> new ItemStackRequestLayout.SlotInfo(ContainerEnumName.Trade2Ingredient2Container, 1, 0);
+                case 2 -> new ItemStackRequestLayout.SlotInfo(ContainerEnumName.Trade2ResultPreviewContainer, 49, 0);
                 default -> null;
             };
         }

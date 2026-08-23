@@ -120,12 +120,13 @@ public class InventoryTracker extends StoredObject {
         this.closePreparation = closePreparation;
     }
 
-    public Container getContainerClientbound(final byte containerId, final FullContainerName containerName, final BedrockItem storageItem) {
-        if (containerId == this.inventoryContainer.containerId()) return this.inventoryContainer;
-        if (containerId == this.offhandContainer.containerId()) return this.offhandContainer;
-        if (containerId == this.armorContainer.containerId()) return this.armorContainer;
-        if (containerId == this.hudContainer.containerId()) return this.hudContainer;
-        if (containerId == ContainerID.CONTAINER_ID_REGISTRY.getValue() && containerName.name() == ContainerEnumName.DynamicContainer) {
+    public Container getContainerClientbound(final int containerId, final FullContainerName containerName, final BedrockItem storageItem) {
+        if ((byte) containerId == this.inventoryContainer.containerId()) return this.inventoryContainer;
+        if ((byte) containerId == this.offhandContainer.containerId()) return this.offhandContainer;
+        if ((byte) containerId == this.armorContainer.containerId()) return this.armorContainer;
+        if ((byte) containerId == this.hudContainer.containerId()) return this.hudContainer;
+        if ((byte) containerId == ContainerID.CONTAINER_ID_REGISTRY.getValue() && containerName != null
+                && containerName.name() == ContainerEnumName.DynamicContainer) {
             final String itemTag = BedrockProtocol.MAPPINGS.getBedrockCustomItemTags().get(this.user().get(ItemRewriter.class).getItems().inverse().get(storageItem.identifier()));
             if (!storageItem.isEmpty() && CustomItemTags.BUNDLE.equals(itemTag)) {
                 return this.dynamicContainerRegistry.computeIfAbsent(containerName, cn -> new BundleContainer(this.user(), cn));
@@ -133,13 +134,21 @@ public class InventoryTracker extends StoredObject {
                 return null;
             }
         }
-        if (this.currentContainer != null && containerId == this.currentContainer.containerId()) {
+        if (this.currentContainer != null && matchesBedrockContainerId(this.currentContainer, containerId)) {
             return this.currentContainer;
         }
         return null;
     }
 
-    public Container getContainerServerbound(final byte containerId) {
+    public static boolean matchesBedrockContainerId(final Container container, final int containerId) {
+        if (container == null) {
+            return false;
+        }
+        final int stored = container.containerId() & 0xFF;
+        return stored == containerId || container.containerId() == (byte) containerId;
+    }
+
+    public Container getContainerServerbound(final int containerId) {
         if (this.currentContainer != null && containerId == this.currentContainer.javaContainerId()) {
             return this.currentContainer;
         }
@@ -165,7 +174,8 @@ public class InventoryTracker extends StoredObject {
 
     public Container acceptServerClose(final byte containerId, final ContainerType containerType) {
         final Container container = this.currentContainer;
-        if (container == null || container.containerId() != containerId || container.type() != containerType) {
+        if (container == null || !matchesCloseContainerId(container, containerId)
+                || (containerType != null && container.type() != containerType && containerType != ContainerType.NONE)) {
             if (container == null && this.bedrockPlayerInventoryOpen && containerType == ContainerType.INVENTORY
                     && containerId == this.bedrockInventoryContainerId) {
                 this.clearBedrockPlayerInventoryOpen();
@@ -175,7 +185,7 @@ public class InventoryTracker extends StoredObject {
         if (!this.returnCursorBeforeClose()) {
             ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to return cursor before server-initiated container close");
         }
-        this.closePacketSink.sendBedrockClose(this.user(), container.containerId(), ContainerType.NONE);
+        this.closePacketSink.sendBedrockClose(this.user(), container.bedrockCloseContainerId(), ContainerType.NONE);
         this.currentContainer = null;
         this.pendingCloseContainer = null;
         this.clearCursorAfterContainerClose();
@@ -184,7 +194,7 @@ public class InventoryTracker extends StoredObject {
 
     public Container acceptClientCloseConfirmation(final byte containerId) {
         final Container container = this.pendingCloseContainer;
-        if (container == null || container.containerId() != containerId) {
+        if (container == null || !matchesCloseContainerId(container, containerId)) {
             if (container == null && this.bedrockPlayerInventoryOpen && containerId == this.bedrockInventoryContainerId) {
                 this.clearBedrockPlayerInventoryOpen();
             }
@@ -212,7 +222,7 @@ public class InventoryTracker extends StoredObject {
             ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to return cursor before dimension change");
         }
         if (this.currentContainer != null) {
-            this.closePacketSink.sendBedrockClose(this.user(), this.currentContainer.containerId(), ContainerType.NONE);
+            this.closePacketSink.sendBedrockClose(this.user(), this.currentContainer.bedrockCloseContainerId(), ContainerType.NONE);
         }
         this.currentContainer = null;
         this.pendingCloseContainer = null;
@@ -279,6 +289,10 @@ public class InventoryTracker extends StoredObject {
 
     public boolean isAnyScreenOpen() {
         return this.isContainerOpen() || this.currentForm != null || this.currentNpcDialogue != null;
+    }
+
+    private static boolean matchesCloseContainerId(final Container container, final byte containerId) {
+        return container.containerId() == containerId || container.bedrockCloseContainerId() == containerId;
     }
 
     public int nextItemStackRequestId() {
@@ -393,7 +407,7 @@ public class InventoryTracker extends StoredObject {
             return false;
         }
         this.closePacketSink.sendJavaClose(this.user(), container.javaContainerId());
-        this.closePacketSink.sendBedrockClose(this.user(), container.containerId(), ContainerType.NONE);
+        this.closePacketSink.sendBedrockClose(this.user(), container.bedrockCloseContainerId(), ContainerType.NONE);
         return true;
     }
 

@@ -1302,7 +1302,7 @@ public class ExperimentalFeatures {
             if (inventoryTransaction.actions() != null && !inventoryTransaction.actions().isEmpty()) {
                 for (InventoryActionData action : inventoryTransaction.actions()) {
                     if (action.source().type() == InventorySourceType.ContainerInventory) {
-                        Container container = inventoryTracker.getContainerClientbound((byte) action.source().containerId(), null, null);
+                        Container container = inventoryTracker.getContainerClientbound(action.source().containerId(), null, null);
 
                         if (container != null) {
                             container.setItem(action.slot(), action.toItem());

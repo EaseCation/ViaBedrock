@@ -40,7 +40,7 @@ public class CraftingTableContainer extends Container {
     }
 
     @Override
-    public byte javaContainerId() {
+    public int javaContainerId() {
         return 1;
     }
 

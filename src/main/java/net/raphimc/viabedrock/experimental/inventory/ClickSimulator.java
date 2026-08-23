@@ -108,6 +108,9 @@ public class ClickSimulator {
         if (javaSlot == SmithingSimulator.JAVA_RESULT_SLOT && javaContainerId != 0 && SmithingSimulator.isSmithing(tracker.getCurrentContainer())) {
             return action == ContainerInput.PICKUP ? SmithingSimulator.simulateTakeResult(tracker) : null;
         }
+        if (javaSlot == TradeSimulator.JAVA_RESULT_SLOT && javaContainerId != 0 && TradeSimulator.isTrade(tracker.getCurrentContainer())) {
+            return action == ContainerInput.PICKUP ? TradeSimulator.simulateTakeResult(tracker) : null;
+        }
 
         return switch (action) {
             case PICKUP -> simulatePickup(javaContainerId, javaSlot, button, tracker, stackLimits);

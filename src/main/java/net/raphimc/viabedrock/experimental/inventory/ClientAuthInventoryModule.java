@@ -31,6 +31,7 @@ import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.model.container.AnvilContainer;
 import net.raphimc.viabedrock.api.model.container.Container;
 import net.raphimc.viabedrock.api.model.container.CraftingTableContainer;
+import net.raphimc.viabedrock.api.model.container.TradeContainer;
 import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.experimental.FeatureModule;
 import net.raphimc.viabedrock.experimental.model.inventory.BedrockInventoryTransaction;
@@ -59,6 +60,7 @@ import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 import net.raphimc.viabedrock.protocol.storage.AnvilSessionStorage;
 import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
 import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
+import net.raphimc.viabedrock.protocol.storage.TradeSessionStorage;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -82,6 +84,7 @@ public class ClientAuthInventoryModule implements FeatureModule {
         registerContainerClickHandler(protocol);
         registerCreativeContentHandler(protocol);
         registerCreativeModeSlotHandler(protocol);
+        registerSelectTradeHandler(protocol);
         registerSetBeaconHandler(protocol);
         // Java expects the crafting output preview to be pushed by the server, but Bedrock computes it
         // client-side and never sends it. Recompute it locally whenever the (server-authoritative) grid
@@ -116,6 +119,12 @@ public class ClientAuthInventoryModule implements FeatureModule {
             }
             if (pending instanceof AnvilContainer) {
                 final AnvilSessionStorage session = wrapper.user().get(AnvilSessionStorage.class);
+                if (session != null) {
+                    session.clear();
+                }
+            }
+            if (pending instanceof TradeContainer) {
+                final TradeSessionStorage session = wrapper.user().get(TradeSessionStorage.class);
                 if (session != null) {
                     session.clear();
                 }
@@ -164,7 +173,7 @@ public class ClientAuthInventoryModule implements FeatureModule {
             if (containerId == ContainerID.CONTAINER_ID_INVENTORY.getValue()) {
                 container = inventoryTracker.getInventoryContainer();
             } else {
-                container = inventoryTracker.getContainerServerbound((byte) containerId);
+                container = inventoryTracker.getContainerServerbound(containerId);
                 if (container == null) {
                     return;
                 }
@@ -217,7 +226,8 @@ public class ClientAuthInventoryModule implements FeatureModule {
                     || GrindstoneSimulator.isTakeResult(actions)
                     || LoomSimulator.isTakeResult(actions)
                     || StonecutterSimulator.isTakeResult(actions)
-                    || SmithingSimulator.isTakeResult(actions)) {
+                    || SmithingSimulator.isTakeResult(actions)
+                    || TradeSimulator.isTakeResult(actions)) {
                 return;
             }
 
@@ -303,6 +313,22 @@ public class ClientAuthInventoryModule implements FeatureModule {
         }
         PacketFactory.sendJavaContainerSetContent(user, container);
         sendJavaCursor(user, tracker);
+    }
+
+    private void registerSelectTradeHandler(final BedrockProtocol protocol) {
+        ProtocolUtil.prependServerbound(protocol, ServerboundPackets26_1.SELECT_TRADE, wrapper -> {
+            wrapper.cancel();
+            final int selectedSlot = wrapper.read(Types.VAR_INT);
+            final TradeSessionStorage session = wrapper.user().get(TradeSessionStorage.class);
+            if (session == null) {
+                return;
+            }
+            if (selectedSlot < 0 || selectedSlot >= session.offers().size()) {
+                session.setSelectedSlot(-1);
+                return;
+            }
+            session.setSelectedSlot(selectedSlot);
+        });
     }
 
     private void registerSetBeaconHandler(final BedrockProtocol protocol) {
@@ -462,6 +488,10 @@ public class ClientAuthInventoryModule implements FeatureModule {
         if (SmithingSimulator.isTakeResult(actions)) {
             return session != null && session.isInventoryServerAuthoritative()
                     && SmithingSimulator.sendTakeResult(user, user.get(InventoryTracker.class));
+        }
+        if (TradeSimulator.isTakeResult(actions)) {
+            return session != null && session.isInventoryServerAuthoritative()
+                    && TradeSimulator.sendTakeResult(user, user.get(InventoryTracker.class));
         }
         if (session != null && session.isInventoryServerAuthoritative()) {
             final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encode(actions, user.get(InventoryTracker.class));
@@ -640,7 +670,11 @@ public class ClientAuthInventoryModule implements FeatureModule {
         if (containerId == ContainerID.CONTAINER_ID_PLAYER_ONLY_UI.getValue()) return tracker.getHudContainer();
         if (containerId == ContainerID.CONTAINER_ID_ARMOR.getValue()) return tracker.getArmorContainer();
         if (containerId == ContainerID.CONTAINER_ID_OFFHAND.getValue()) return tracker.getOffhandContainer();
-        return tracker.getContainerServerbound((byte) containerId);
+        if (tracker.getCurrentContainer() != null
+                && InventoryTracker.matchesBedrockContainerId(tracker.getCurrentContainer(), containerId)) {
+            return tracker.getCurrentContainer();
+        }
+        return tracker.getContainerServerbound(containerId);
     }
 
     // --- DragState (per-connection storage for QUICK_CRAFT) ---

@@ -23,6 +23,7 @@ import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
 import net.raphimc.viabedrock.api.model.container.AnvilContainer;
 import net.raphimc.viabedrock.api.model.container.GenericContainer;
+import net.raphimc.viabedrock.api.model.container.TradeContainer;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
 import net.raphimc.viabedrock.experimental.model.inventory.InventoryActionData;
 import net.raphimc.viabedrock.experimental.model.inventory.InventorySource;
@@ -618,6 +619,54 @@ class ItemStackRequestEncoderTest {
                 final ItemStackRequestLayout.DecodedSlotInfo template = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
                 assertEquals(ContainerEnumName.SmithingTableTemplateContainer, template.container());
                 assertEquals(53, template.slot());
+            } finally {
+                buffer.release();
+            }
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void netease860TradeApplyWritesCraftRecipeTrade2ConsumeAndCreatedOutputTake() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final StubUserConnection user = new StubUserConnection(channel);
+            final InventoryTracker tracker = new InventoryTracker(user);
+            user.put(tracker);
+            final TradeContainer trade = new TradeContainer(user, (byte) -12, null);
+            trade.setItemSilent(0, item(388, 3, 7));
+            trade.setItemSilent(1, item(340, 1, 8));
+            tracker.setCurrentContainer(trade);
+
+            final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encodeTradeApply(
+                    tracker, 0x20000001, 3, 1, 1, true, 860);
+            assertFalse(encoded.unsupported());
+            final ByteBuf buffer = Unpooled.wrappedBuffer(encoded.payload());
+            try {
+                BedrockTypes.UNSIGNED_VAR_INT.read(buffer);
+                BedrockTypes.VAR_INT.read(buffer);
+                assertEquals(4, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                assertEquals(ItemStackRequestActionType.CraftRecipe.getValue(), buffer.readUnsignedByte());
+                assertEquals(0x20000001, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                assertEquals(1, buffer.readUnsignedByte());
+                assertEquals(ItemStackRequestActionType.Consume.getValue(), buffer.readUnsignedByte());
+                assertEquals(3, buffer.readUnsignedByte());
+                final ItemStackRequestLayout.DecodedSlotInfo buyA = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ContainerEnumName.Trade2Ingredient1Container, buyA.container());
+                assertEquals(0, buyA.slot());
+                assertEquals(7, buyA.stackNetworkId());
+                assertEquals(ItemStackRequestActionType.Consume.getValue(), buffer.readUnsignedByte());
+                assertEquals(1, buffer.readUnsignedByte());
+                final ItemStackRequestLayout.DecodedSlotInfo buyB = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ContainerEnumName.Trade2Ingredient2Container, buyB.container());
+                assertEquals(1, buyB.slot());
+                assertEquals(8, buyB.stackNetworkId());
+                assertEquals(ItemStackRequestActionType.Take.getValue(), buffer.readUnsignedByte());
+                assertEquals(1, buffer.readUnsignedByte());
+                final ItemStackRequestLayout.DecodedSlotInfo source = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ContainerEnumName.CreatedOutputContainer, source.container());
+                assertEquals(50, source.slot());
             } finally {
                 buffer.release();
             }
