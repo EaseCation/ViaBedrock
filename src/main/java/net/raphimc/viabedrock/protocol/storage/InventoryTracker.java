@@ -405,6 +405,20 @@ public class InventoryTracker extends StoredObject {
         }
     }
 
+    /**
+     * MOT HorseInventory size is {@code 2 + chestSize} and can grow after CONTAINER_OPEN
+     * (donkey chest / llama strength). Resize the mirror without closing the JE window.
+     */
+    public void replaceCurrentContainer(final Container container) {
+        if (this.currentContainer == null || container == null) {
+            throw new IllegalStateException("Cannot replace a closed container");
+        }
+        if (this.pendingCloseContainer != null) {
+            throw new IllegalStateException("Container cannot be open and pending close at the same time");
+        }
+        this.currentContainer = container;
+    }
+
     public void acknowledgeBedrockInventoryOpen(final byte containerId, final BlockPosition position) {
         if (this.suppressNextBedrockPlayerInventoryOpen) {
             this.suppressNextBedrockPlayerInventoryOpen = false;

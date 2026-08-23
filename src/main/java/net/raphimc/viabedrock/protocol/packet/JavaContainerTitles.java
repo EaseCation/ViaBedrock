@@ -87,6 +87,7 @@ public final class JavaContainerTitles {
             case SMITHING_TABLE -> "container.upgrade";
             case CRAFTER -> "container.crafter";
             case INVENTORY -> "container.inventory";
+            case HORSE -> "entity.minecraft.horse";
             default -> "container.chest";
         };
     }

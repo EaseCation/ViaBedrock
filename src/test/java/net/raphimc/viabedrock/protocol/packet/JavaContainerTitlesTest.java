@@ -40,5 +40,7 @@ class JavaContainerTitlesTest {
         assertEquals("container.chest", JavaContainerTitles.key("netease_custom_chest", ContainerType.CONTAINER));
         assertEquals("container.hopper", JavaContainerTitles.key("unknown_hopper", ContainerType.HOPPER));
         assertEquals("container.chest", JavaContainerTitles.keyForType(ContainerType.NONE));
+        assertEquals("entity.minecraft.horse", JavaContainerTitles.keyForType(ContainerType.HORSE));
+        assertEquals("entity.minecraft.horse", JavaContainerTitles.key("air", ContainerType.HORSE));
     }
 }

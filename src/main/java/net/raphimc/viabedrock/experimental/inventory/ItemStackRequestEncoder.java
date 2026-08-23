@@ -473,7 +473,7 @@ public final class ItemStackRequestEncoder {
         InventoryActionData destination = null;
         InventoryActionData drop = null;
         for (final InventoryActionData action : remaining) {
-            if (isContainer(action) && isDestinationIncrease(action)) {
+            if (isContainer(action) && isCreativeDestination(action)) {
                 destination = action;
             } else if (isWorldDrop(action)) {
                 drop = action;
@@ -499,7 +499,15 @@ public final class ItemStackRequestEncoder {
             remaining.clear();
             return true;
         }
-        stackActions.add(Action.transfer(ItemStackRequestActionType.Take, movedCount(destination), source, destSlot));
+        // MOT TransferItemActionProcessor.transferCreativeCreatedOutput overwrites
+        // dest, but dest netId is still validated. Occupied Java SET_CREATIVE /
+        // middle-click clone is from!=empty, to=new stack, so isDestinationIncrease
+        // misses it and CraftCreative never Takes. Destroy the old dest first.
+        // Ref: MOT CraftCreativeActionProcessor + TransferItemActionProcessor.
+        if (needsCreativeReplaceDestroy(destination)) {
+            stackActions.add(Action.destroy(destination.fromItem().amount(), destSlot));
+        }
+        stackActions.add(Action.transfer(ItemStackRequestActionType.Take, destination.toItem().amount(), source, destSlot));
         return true;
     }
 
@@ -828,6 +836,18 @@ public final class ItemStackRequestEncoder {
             return true;
         }
         return sameItemFamily(action.fromItem(), action.toItem()) && action.toItem().amount() > action.fromItem().amount();
+    }
+
+    private static boolean isCreativeDestination(final InventoryActionData action) {
+        return isDestinationIncrease(action) || needsCreativeReplaceDestroy(action);
+    }
+
+    private static boolean needsCreativeReplaceDestroy(final InventoryActionData action) {
+        return action != null
+                && isContainer(action)
+                && !action.fromItem().isEmpty()
+                && !action.toItem().isEmpty()
+                && !sameStack(action.fromItem(), action.toItem());
     }
 
     private static int movedCount(final InventoryActionData action) {

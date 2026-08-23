@@ -25,6 +25,7 @@ import net.raphimc.viabedrock.api.model.container.CraftingTableContainer;
 import net.raphimc.viabedrock.api.model.container.EnderChestContainer;
 import net.raphimc.viabedrock.api.model.container.FurnaceContainer;
 import net.raphimc.viabedrock.api.model.container.GenericContainer;
+import net.raphimc.viabedrock.api.model.container.HorseContainer;
 import net.raphimc.viabedrock.api.model.container.ShulkerBoxContainer;
 import net.raphimc.viabedrock.api.model.container.SmithingTableContainer;
 import net.raphimc.viabedrock.api.model.container.TradeContainer;
@@ -183,6 +184,18 @@ public final class ItemStackSlotMapper {
         if (container instanceof EnderChestContainer) {
             return new ItemStackRequestLayout.SlotInfo(ContainerEnumName.LevelEntityContainer, slot, 0);
         }
+        if (container instanceof HorseContainer) {
+            // MOT NetworkMapping.getInventory: HORSE_EQUIP -> HorseInventory,
+            // LEVEL_ENTITY -> topWindow (HorseInventory while this menu is open).
+            // Cargo is NOT HOTBAR_AND_INVENTORY on the request path: that type
+            // resolves to player.getInventory() and would steal horse cargo.
+            // MOT responses still tag cargo as HOTBAR_AND_INVENTORY; see
+            // resolveResponseSlot. Ref: NetworkMapping.getSlotType / getInventory.
+            if (slot <= HorseContainer.SLOT_ARMOR) {
+                return new ItemStackRequestLayout.SlotInfo(ContainerEnumName.HorseEquipContainer, slot, 0);
+            }
+            return new ItemStackRequestLayout.SlotInfo(ContainerEnumName.LevelEntityContainer, slot, 0);
+        }
         if (container instanceof GenericContainer) {
             return switch (container.type()) {
                 case HOPPER, MINECART_HOPPER, DISPENSER, DROPPER, MINECART_CHEST, CHEST_BOAT, CONTAINER ->
@@ -248,11 +261,30 @@ public final class ItemStackSlotMapper {
             return null;
         }
         return switch (name) {
-            case HotbarContainer, InventoryContainer, CombinedHotbarAndInventoryContainer -> {
+            case HotbarContainer, InventoryContainer -> {
                 if (networkSlot < 0 || networkSlot > 35) {
                     yield null;
                 }
                 yield new BedrockSlotRef(ContainerID.CONTAINER_ID_INVENTORY.getValue(), networkSlot, tracker.getInventoryContainer());
+            }
+            case CombinedHotbarAndInventoryContainer -> {
+                // MOT getSlotType(HorseInventory) tags cargo (slot >= 2) as
+                // HOTBAR_AND_INVENTORY. Player inv responses use HOTBAR / INVENTORY.
+                if (tracker.getCurrentContainer() instanceof HorseContainer horse
+                        && networkSlot >= HorseContainer.SLOT_CHEST_BASE && networkSlot < horse.size()) {
+                    yield new BedrockSlotRef(horse.containerId(), networkSlot, horse);
+                }
+                if (networkSlot < 0 || networkSlot > 35) {
+                    yield null;
+                }
+                yield new BedrockSlotRef(ContainerID.CONTAINER_ID_INVENTORY.getValue(), networkSlot, tracker.getInventoryContainer());
+            }
+            case HorseEquipContainer -> {
+                if (!(tracker.getCurrentContainer() instanceof HorseContainer horse)
+                        || networkSlot < 0 || networkSlot > HorseContainer.SLOT_ARMOR) {
+                    yield null;
+                }
+                yield new BedrockSlotRef(horse.containerId(), networkSlot, horse);
             }
             case ArmorContainer -> {
                 if (networkSlot < 0 || networkSlot > 3) {

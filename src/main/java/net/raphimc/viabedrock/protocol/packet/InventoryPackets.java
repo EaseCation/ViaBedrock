@@ -211,6 +211,26 @@ public class InventoryPackets {
                 case TRADE -> {
                     container = new TradeContainer(wrapper.user(), containerId, title);
                 }
+                case HORSE -> {
+                    // MOT InventoryType.HORSE (network 12) is HorseInventory. Java 1.21.11
+                    // needs MOUNT_SCREEN_OPEN (containerId, columns, entityId), not OPEN_SCREEN.
+                    // Ref: MOT ContainerInventory.onOpen entityId + HorseInventory size 2+chest.
+                    if (entityUniqueId == -1L) {
+                        wrapper.cancel();
+                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Tried to open HORSE container without entity unique id");
+                        PacketFactory.sendBedrockContainerClose(wrapper.user(), containerId, ContainerType.NONE);
+                        return;
+                    }
+                    final Entity horse = wrapper.user().get(EntityTracker.class).getEntityByUid(entityUniqueId);
+                    if (horse == null) {
+                        wrapper.cancel();
+                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Tried to open HORSE container for unknown entity " + entityUniqueId);
+                        PacketFactory.sendBedrockContainerClose(wrapper.user(), containerId, ContainerType.NONE);
+                        return;
+                    }
+                    container = new HorseContainer(wrapper.user(), containerId, title, position,
+                            HorseContainer.sizeFor(horse), entityUniqueId, horse.javaId());
+                }
                 case NONE, CAULDRON, JUKEBOX, ARMOR, HAND, HUD, DECORATED_POT -> { // Bedrock client can't open these containers
                     wrapper.cancel();
                     return;
@@ -229,6 +249,13 @@ public class InventoryPackets {
             // table overrides javaContainerId() to a fixed value and all clientbound updates / serverbound
             // lookups key off javaContainerId. Sending the raw containerId here desynced the window id so
             // the table's CONTAINER_CLICK/CLOSE never matched (items not placed, container never closed).
+            if (container instanceof HorseContainer horseContainer) {
+                wrapper.setPacketType(ClientboundPackets26_1.MOUNT_SCREEN_OPEN);
+                wrapper.write(Types.VAR_INT, horseContainer.javaContainerId()); // container id
+                wrapper.write(Types.VAR_INT, horseContainer.javaColumns()); // inventory columns
+                wrapper.write(Types.INT, horseContainer.javaEntityId()); // mount entity id
+                return;
+            }
             wrapper.write(Types.VAR_INT, container.javaContainerId()); // container id (Java window id)
             wrapper.write(Types.VAR_INT, javaMenuId); // type
             wrapper.write(Types.TAG, TextUtil.textComponentToNbt(title)); // title
@@ -293,7 +320,15 @@ public class InventoryPackets {
             PacketLeftoverLayout.discardUnreadInput(wrapper);
 
             final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
-            final Container container = inventoryTracker.getContainerClientbound(containerId, containerName, storageItem);
+            Container container = inventoryTracker.getContainerClientbound(containerId, containerName, storageItem);
+            if (container instanceof HorseContainer horse && items != null && items.length != horse.size()) {
+                // MOT sendContents after CONTAINER_OPEN carries the real 2+chestSize array.
+                // Resize the mirror and re-open so Java columns match CONTAINER_SET_CONTENT.
+                final HorseContainer resized = horse.withSize(items.length);
+                inventoryTracker.replaceCurrentContainer(resized);
+                PacketFactory.sendJavaMountScreenOpen(wrapper.user(), resized);
+                container = resized;
+            }
             if (container != null && container.setItems(items)) {
                 PacketFactory.writeJavaContainerSetContent(wrapper, container);
             } else {

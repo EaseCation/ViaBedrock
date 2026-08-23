@@ -27,6 +27,7 @@ import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
 import com.viaversion.viaversion.libs.mcstructs.text.TextComponent;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import net.raphimc.viabedrock.api.model.container.Container;
+import net.raphimc.viabedrock.api.model.container.HorseContainer;
 import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
@@ -193,6 +194,18 @@ public class PacketFactory {
         wrapper.write(Types.VAR_INT, 0); // revision
         wrapper.write(VersionedTypes.V26_1.itemArray, container.getJavaItems()); // items
         wrapper.write(VersionedTypes.V26_1.item, wrapper.user().get(InventoryTracker.class).getHudContainer().getJavaItem(0)); // cursor item
+    }
+
+    /**
+     * Java 1.21.11 mount inventory size is frozen at MOUNT_SCREEN_OPEN columns.
+     * Re-open when MOT HorseInventory grows after CONTAINER_OPEN.
+     */
+    public static void sendJavaMountScreenOpen(final UserConnection user, final HorseContainer horse) {
+        final PacketWrapper open = PacketWrapper.create(ClientboundPackets26_1.MOUNT_SCREEN_OPEN, user);
+        open.write(Types.VAR_INT, horse.javaContainerId());
+        open.write(Types.VAR_INT, horse.javaColumns());
+        open.write(Types.INT, horse.javaEntityId());
+        open.send(BedrockProtocol.class);
     }
 
     public static void writeJavaLevelParticles(final PacketWrapper wrapper, final Position3f position, final BedrockMappingData.JavaParticle particle) {

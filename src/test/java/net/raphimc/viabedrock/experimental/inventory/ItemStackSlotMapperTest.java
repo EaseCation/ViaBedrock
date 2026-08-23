@@ -22,6 +22,7 @@ import net.raphimc.viabedrock.api.model.container.AnvilContainer;
 import net.raphimc.viabedrock.api.model.container.ChestContainer;
 import net.raphimc.viabedrock.api.model.container.FurnaceContainer;
 import net.raphimc.viabedrock.api.model.container.GenericContainer;
+import net.raphimc.viabedrock.api.model.container.HorseContainer;
 import io.netty.channel.embedded.EmbeddedChannel;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
@@ -140,6 +141,47 @@ class ItemStackSlotMapperTest {
             assertEquals(chest, chestSlot.container());
         } finally {
             chestChannel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void horseSaddleArmorUseHorseEquipAndCargoUsesLevelEntity() {
+        final HorseContainer horse = new HorseContainer(null, (byte) 12, null, new BlockPosition(0, 0, 0), 17, 99L, 7);
+        assertEquals(ContainerEnumName.HorseEquipContainer, ItemStackSlotMapper.fromOpenContainer(horse, 0).container());
+        assertEquals(0, ItemStackSlotMapper.fromOpenContainer(horse, 0).slot());
+        assertEquals(ContainerEnumName.HorseEquipContainer, ItemStackSlotMapper.fromOpenContainer(horse, 1).container());
+        assertEquals(ContainerEnumName.LevelEntityContainer, ItemStackSlotMapper.fromOpenContainer(horse, 2).container());
+        assertEquals(2, ItemStackSlotMapper.fromOpenContainer(horse, 2).slot());
+        assertEquals(ContainerEnumName.LevelEntityContainer, ItemStackSlotMapper.fromOpenContainer(horse, 16).container());
+        assertEquals(5, horse.javaColumns());
+    }
+
+    @Test
+    void horseResponseSlotsStayOnHorseInventory() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final StubUserConnection user = new StubUserConnection(channel);
+            final InventoryTracker tracker = new InventoryTracker(user);
+            user.put(tracker);
+            final HorseContainer horse = new HorseContainer(user, (byte) 12, null, new BlockPosition(0, 0, 0), 17, 99L, 7);
+            tracker.setCurrentContainer(horse);
+
+            final SlotMapper.BedrockSlotRef saddle = ItemStackSlotMapper.resolveResponseSlot(
+                    tracker, new FullContainerName(ContainerEnumName.HorseEquipContainer, null), 0);
+            assertEquals(0, saddle.slot());
+            assertEquals(horse, saddle.container());
+
+            final SlotMapper.BedrockSlotRef cargo = ItemStackSlotMapper.resolveResponseSlot(
+                    tracker, new FullContainerName(ContainerEnumName.CombinedHotbarAndInventoryContainer, null), 5);
+            assertEquals(5, cargo.slot());
+            assertEquals(horse, cargo.container());
+
+            final SlotMapper.BedrockSlotRef playerHotbar = ItemStackSlotMapper.resolveResponseSlot(
+                    tracker, new FullContainerName(ContainerEnumName.HotbarContainer, null), 3);
+            assertEquals(3, playerHotbar.slot());
+            assertEquals(tracker.getInventoryContainer(), playerHotbar.container());
+        } finally {
+            channel.finishAndReleaseAll();
         }
     }
 }
