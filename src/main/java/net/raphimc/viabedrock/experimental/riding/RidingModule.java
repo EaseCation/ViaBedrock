@@ -25,6 +25,7 @@ import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ServerboundPack
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
 import net.raphimc.viabedrock.api.model.entity.Entity;
+import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.experimental.FeatureModule;
 import net.raphimc.viabedrock.experimental.model.PlayerAuthInputContext;
 import net.raphimc.viabedrock.experimental.storage.JavaPassengerTracker;
@@ -114,6 +115,10 @@ public class RidingModule implements FeatureModule {
                     final Entity vehicle = tracker != null ? tracker.localVehicle() : null;
                     if (vehicle != null) {
                         sendInteract(wrapper.user(), vehicle.runtimeId(), InteractPacket_Action.OpenInventory);
+                    } else {
+                        // Java PLAYER_COMMAND.OPEN_INVENTORY has no Bedrock equivalent besides Interact.6.
+                        // GanAC PacketFlow requires that precursor before TYPE_NORMAL inventory clicks.
+                        PacketFactory.sendBedrockOpenInventory(wrapper.user());
                     }
                     wrapper.cancel();
                 }

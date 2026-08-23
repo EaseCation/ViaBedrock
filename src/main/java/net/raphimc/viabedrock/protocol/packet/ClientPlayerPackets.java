@@ -512,7 +512,9 @@ public class ClientPlayerPackets {
             wrapper.write(BedrockTypes.VAR_INT, (int) inventoryContainer.getSelectedHotbarSlot()); // hotbar slot
             wrapper.write(wrapper.user().get(ItemRewriter.class).itemType(), inventoryContainer.getSelectedHotbarItem()); // held item
             wrapper.write(BedrockTypes.POSITION_3F, entityTracker.getClientPlayer().position()); // player position
-            wrapper.write(BedrockTypes.POSITION_3F, Position3f.ZERO); // click position
+            // Java ATTACK has no click vector. MOT attack ignores clickPos; write the look-dir unit
+            // vector so the field is not a literal ZERO (vanilla-like telemetry / future AC).
+            wrapper.write(BedrockTypes.POSITION_3F, attackClickPosition(entityTracker.getClientPlayer())); // click position
 
             entityTracker.getClientPlayer().sendSwingPacketToServer();
             entityTracker.getClientPlayer().cancelNextSwingPacket();
@@ -824,5 +826,16 @@ public class ClientPlayerPackets {
             case START_FALL_FLYING -> PlayerAuthInputPacket_InputData.StartGliding;
             default -> throw new IllegalStateException("Unhandled PlayerCommandAction: " + action);
         };
+    }
+
+    /**
+     * Java ATTACK is entity-id only. MOT combat does not consume clickPos; emit the current look
+     * direction so the field is a unit vector instead of ZERO.
+     */
+    static Position3f attackClickPosition(final ClientPlayerEntity clientPlayer) {
+        if (clientPlayer == null || clientPlayer.rotation() == null) {
+            return Position3f.ZERO;
+        }
+        return MathUtil.calculateCameraOrientation(clientPlayer.rotation().y(), clientPlayer.rotation().x());
     }
 }
