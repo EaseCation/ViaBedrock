@@ -28,6 +28,7 @@ import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPack
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ServerboundPackets26_1;
 import com.viaversion.viaversion.util.Pair;
 import net.raphimc.viabedrock.ViaBedrock;
+import net.raphimc.viabedrock.api.chunk.BedrockChunk;
 import net.raphimc.viabedrock.api.model.BlockState;
 import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
 import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
@@ -908,24 +909,76 @@ public class ClientPlayerPackets {
     /**
      * MOT {@code Entity#isInsideOfWater()} checks the feet block on layer 0, then layer 1
      * waterlogging. ClientPlayerEntity.position() is the eye, so subtract {@code eyeOffset()}.
+     * {@link ChunkTracker#getBlockState(int, BlockPosition)} returns air when the column is
+     * missing, which would invert a swim edge; keep the last in-water sample until the feet
+     * chunk is loaded.
      */
     static boolean isInsideOfWater(final UserConnection user, final ClientPlayerEntity clientPlayer) {
-        if (user == null || clientPlayer == null || clientPlayer.position() == null) {
-            return false;
-        }
-        final ChunkTracker chunkTracker = user.get(ChunkTracker.class);
-        final BlockStateRewriter blockStateRewriter = user.get(BlockStateRewriter.class);
-        if (chunkTracker == null || blockStateRewriter == null) {
-            return false;
-        }
+        return keepLastInsideOfWater(
+                knownInsideOfWater(user, clientPlayer),
+                clientPlayer != null && clientPlayer.isSwimming()
+        );
+    }
+
+    static BlockPosition feetBlockPosition(final ClientPlayerEntity clientPlayer) {
         final Position3f position = clientPlayer.position();
-        final BlockPosition feet = new BlockPosition(
+        return new BlockPosition(
                 (int) Math.floor(position.x()),
                 (int) Math.floor(position.y() - clientPlayer.eyeOffset()),
                 (int) Math.floor(position.z())
         );
+    }
+
+    /**
+     * {@code null} means the feet column is not loaded yet. A loaded column with no section
+     * (Y out of world) is dry air, matching {@link ChunkTracker#getBlockState(int, BlockPosition)}.
+     */
+    static Boolean knownInsideOfWater(final UserConnection user, final ClientPlayerEntity clientPlayer) {
+        if (user == null || clientPlayer == null || clientPlayer.position() == null) {
+            return Boolean.FALSE;
+        }
+        final ChunkTracker chunkTracker = user.get(ChunkTracker.class);
+        final BlockStateRewriter blockStateRewriter = user.get(BlockStateRewriter.class);
+        if (chunkTracker == null || blockStateRewriter == null) {
+            return null;
+        }
+        final BlockPosition feet = feetBlockPosition(clientPlayer);
+        final BedrockChunk chunk = chunkTracker.getChunk(feet.x() >> 4, feet.z() >> 4);
+        if (chunk == null) {
+            return null;
+        }
+        final int sectionIndex = (feet.y() >> 4) + Math.abs(chunkTracker.getMinY() >> 4);
+        final boolean sectionInWorld = sectionIndex >= 0 && sectionIndex < chunk.getSections().length;
+        if (!sectionInWorld) {
+            return Boolean.FALSE;
+        }
+        if (chunk.getSections()[sectionIndex] == null) {
+            return null;
+        }
         return isWaterBlock(blockStateRewriter, chunkTracker.getBlockState(0, feet))
                 || isWaterBlock(blockStateRewriter, chunkTracker.getBlockState(1, feet));
+    }
+
+    /**
+     * {@code null} keeps the last in-water sample. A loaded column whose Y is outside the
+     * world is dry; a missing in-world section is still pending and must not look like air.
+     */
+    static Boolean waterSampleFromChunkState(final boolean chunkPresent, final boolean sectionInWorld,
+                                             final boolean sectionPresent, final boolean water) {
+        if (!chunkPresent) {
+            return null;
+        }
+        if (!sectionInWorld) {
+            return Boolean.FALSE;
+        }
+        if (!sectionPresent) {
+            return null;
+        }
+        return water;
+    }
+
+    static boolean keepLastInsideOfWater(final Boolean known, final boolean lastInside) {
+        return known != null ? known : lastInside;
     }
 
     static boolean isWaterBlock(final BlockStateRewriter blockStateRewriter, final int bedrockBlockStateId) {

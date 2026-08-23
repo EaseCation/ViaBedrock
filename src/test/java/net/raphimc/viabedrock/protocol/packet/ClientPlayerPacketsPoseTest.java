@@ -65,4 +65,35 @@ class ClientPlayerPacketsPoseTest {
         assertFalse(ClientPlayerPackets.isWaterIdentifier("lava"));
         assertFalse(ClientPlayerPackets.isWaterIdentifier(null));
     }
+
+    @Test
+    void unknownWaterKeepsLastInsideSample() {
+        assertTrue(ClientPlayerPackets.keepLastInsideOfWater(null, true));
+        assertFalse(ClientPlayerPackets.keepLastInsideOfWater(null, false));
+        assertTrue(ClientPlayerPackets.keepLastInsideOfWater(Boolean.TRUE, false));
+        assertFalse(ClientPlayerPackets.keepLastInsideOfWater(Boolean.FALSE, true));
+    }
+
+    @Test
+    void unknownWaterDoesNotStopWhileStillSprinting() {
+        final boolean inWater = ClientPlayerPackets.keepLastInsideOfWater(null, true);
+        assertTrue(ClientPlayerPackets.wantsJavaSwim(false, false, false, true, false, inWater));
+        assertNull(ClientPlayerPackets.swimTransitionFlag(true, true));
+    }
+
+    @Test
+    void unknownWaterDoesNotStartUntilFeetChunkLoads() {
+        final boolean inWater = ClientPlayerPackets.keepLastInsideOfWater(null, false);
+        assertFalse(ClientPlayerPackets.wantsJavaSwim(false, false, false, true, false, inWater));
+        assertNull(ClientPlayerPackets.swimTransitionFlag(false, false));
+    }
+
+    @Test
+    void pendingInWorldSectionKeepsLastInsideSample() {
+        assertNull(ClientPlayerPackets.waterSampleFromChunkState(false, false, false, true));
+        assertNull(ClientPlayerPackets.waterSampleFromChunkState(true, true, false, true));
+        assertEquals(Boolean.FALSE, ClientPlayerPackets.waterSampleFromChunkState(true, false, false, true));
+        assertEquals(Boolean.TRUE, ClientPlayerPackets.waterSampleFromChunkState(true, true, true, true));
+        assertEquals(Boolean.FALSE, ClientPlayerPackets.waterSampleFromChunkState(true, true, true, false));
+    }
 }
