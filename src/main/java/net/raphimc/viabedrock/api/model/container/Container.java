@@ -126,6 +126,10 @@ public abstract class Container {
         return slot;
     }
 
+    public int bedrockSlot(final int javaSlot) {
+        return javaSlot;
+    }
+
     public byte javaContainerId() {
         return this.containerId();
     }

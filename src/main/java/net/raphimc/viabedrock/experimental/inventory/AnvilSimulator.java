@@ -64,7 +64,10 @@ public final class AnvilSimulator {
             return null;
         }
         final BedrockItem material = anvil.getItem(1);
-        final int materialCount = material != null && !material.isEmpty() ? Math.min(1, material.amount()) : 0;
+        final int materialCount = AnvilRepairCost.materialCount(input, material, tracker.user() != null ? tracker.user().get(net.raphimc.viabedrock.protocol.rewriter.ItemRewriter.class) : null);
+        if (materialCount < 0) {
+            return null;
+        }
         // Java computes the anvil preview locally; MOT never fills AnvilResultPreview.
         // Use the input stack as a stand-in so the SAI request still consumes the inputs
         // and the Java cursor is not left holding a phantom item if the server rejects.
@@ -112,7 +115,10 @@ public final class AnvilSimulator {
             return false;
         }
         final BedrockItem material = anvil.getItem(1);
-        final int materialCount = material != null && !material.isEmpty() ? Math.min(1, material.amount()) : 0;
+        final int materialCount = AnvilRepairCost.materialCount(input, material, tracker.user() != null ? tracker.user().get(net.raphimc.viabedrock.protocol.rewriter.ItemRewriter.class) : null);
+        if (materialCount < 0) {
+            return false;
+        }
         final AnvilSessionStorage session = user.get(AnvilSessionStorage.class);
         final String renameText = session != null ? session.renameText() : "";
         final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encodeAnvilApply(

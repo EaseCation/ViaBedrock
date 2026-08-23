@@ -74,6 +74,14 @@ class ItemStackSlotMapperTest {
         final GenericContainer hopper = new GenericContainer(null, (byte) 4, ContainerType.HOPPER, null, new BlockPosition(0, 64, 0), 5);
         assertEquals(ContainerEnumName.LevelEntityContainer, ItemStackSlotMapper.fromOpenContainer(hopper, 0).container());
         assertEquals(0, ItemStackSlotMapper.fromOpenContainer(hopper, 0).slot());
+
+        final net.raphimc.viabedrock.api.model.container.SmithingTableContainer smithing =
+                new net.raphimc.viabedrock.api.model.container.SmithingTableContainer(null, (byte) 5, null, new BlockPosition(0, 64, 0));
+        assertEquals(1, smithing.javaSlot(0));
+        assertEquals(0, smithing.bedrockSlot(1));
+        assertEquals(ContainerEnumName.SmithingTableInputContainer, ItemStackSlotMapper.fromOpenContainer(smithing, 0).container());
+        assertEquals(51, ItemStackSlotMapper.fromOpenContainer(smithing, 0).slot());
+        assertEquals(ContainerEnumName.SmithingTableTemplateContainer, ItemStackSlotMapper.fromOpenContainer(smithing, 2).container());
     }
 
     @Test

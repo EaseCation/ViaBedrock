@@ -29,6 +29,7 @@ import java.util.List;
 public class RecipeRegistry extends StoredObject {
 
     private final List<BedrockRecipe> craftingRecipes = new ArrayList<>();
+    private final List<SmithingRecipe> smithingRecipes = new ArrayList<>();
 
     public RecipeRegistry(final UserConnection user) {
         super(user);
@@ -36,10 +37,15 @@ public class RecipeRegistry extends StoredObject {
 
     public void clear() {
         this.craftingRecipes.clear();
+        this.smithingRecipes.clear();
     }
 
     public void addRecipe(final BedrockRecipe recipe) {
         this.craftingRecipes.add(recipe);
+    }
+
+    public void addSmithingRecipe(final SmithingRecipe recipe) {
+        this.smithingRecipes.add(recipe);
     }
 
     public int recipeCount() {
@@ -60,6 +66,9 @@ public class RecipeRegistry extends StoredObject {
                     bestPriority = recipe.priority();
                 }
             } else if (recipe.type() == BedrockRecipe.RecipeType.SHAPELESS) {
+                if ("stonecutter".equals(recipe.tag()) || "smithing_table".equals(recipe.tag())) {
+                    continue;
+                }
                 if (matchShapeless(recipe, gridItems) && recipe.priority() < bestPriority) {
                     bestMatch = recipe;
                     bestPriority = recipe.priority();
@@ -68,6 +77,62 @@ public class RecipeRegistry extends StoredObject {
         }
 
         return bestMatch;
+    }
+
+    public BedrockRecipe matchStonecutter(final BedrockItem input) {
+        if (input == null || input.isEmpty()) {
+            return null;
+        }
+        BedrockRecipe unique = null;
+        for (final BedrockRecipe recipe : this.craftingRecipes) {
+            if (recipe.type() != BedrockRecipe.RecipeType.SHAPELESS) {
+                continue;
+            }
+            if (!"stonecutter".equals(recipe.tag())) {
+                continue;
+            }
+            if (recipe.ingredients().size() != 1 || !recipe.ingredients().get(0).matches(input)) {
+                continue;
+            }
+            if (unique != null) {
+                return null;
+            }
+            unique = recipe;
+        }
+        return unique;
+    }
+
+    public SmithingRecipe matchSmithingTransform(final BedrockItem equipment, final BedrockItem ingredient, final BedrockItem template) {
+        SmithingRecipe unique = null;
+        for (final SmithingRecipe recipe : this.smithingRecipes) {
+            if (recipe.trim()) {
+                continue;
+            }
+            if (!recipe.matches(equipment, ingredient, template)) {
+                continue;
+            }
+            if (unique != null) {
+                return null;
+            }
+            unique = recipe;
+        }
+        return unique;
+    }
+
+    public record SmithingRecipe(int networkId, boolean trim, RecipeIngredient equipment, RecipeIngredient ingredient,
+                                 RecipeIngredient template) {
+        public boolean matches(final BedrockItem equipmentItem, final BedrockItem ingredientItem, final BedrockItem templateItem) {
+            return matchesIngredient(this.equipment, equipmentItem)
+                    && matchesIngredient(this.ingredient, ingredientItem)
+                    && matchesIngredient(this.template, templateItem);
+        }
+
+        private static boolean matchesIngredient(final RecipeIngredient ingredient, final BedrockItem item) {
+            if (ingredient == null || ingredient.runtimeId() == 0) {
+                return item == null || item.isEmpty();
+            }
+            return item != null && ingredient.matches(item);
+        }
     }
 
     private static boolean matchShapeless(final BedrockRecipe recipe, final BedrockItem[] gridItems) {

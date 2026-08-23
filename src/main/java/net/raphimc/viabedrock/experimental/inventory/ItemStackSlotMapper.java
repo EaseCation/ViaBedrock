@@ -26,6 +26,7 @@ import net.raphimc.viabedrock.api.model.container.EnderChestContainer;
 import net.raphimc.viabedrock.api.model.container.FurnaceContainer;
 import net.raphimc.viabedrock.api.model.container.GenericContainer;
 import net.raphimc.viabedrock.api.model.container.ShulkerBoxContainer;
+import net.raphimc.viabedrock.api.model.container.SmithingTableContainer;
 import net.raphimc.viabedrock.experimental.inventory.SlotMapper.BedrockSlotRef;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
@@ -149,6 +150,15 @@ public final class ItemStackSlotMapper {
                 case 0 -> new ItemStackRequestLayout.SlotInfo(ContainerEnumName.BrewingStandInputContainer, 0, 0);
                 case 1, 2, 3 -> new ItemStackRequestLayout.SlotInfo(ContainerEnumName.BrewingStandResultContainer, slot, 0);
                 case 4 -> new ItemStackRequestLayout.SlotInfo(ContainerEnumName.BrewingStandFuelContainer, 4, 0);
+                default -> null;
+            };
+        }
+        if (container instanceof SmithingTableContainer) {
+            return switch (slot) {
+                case 0 -> new ItemStackRequestLayout.SlotInfo(ContainerEnumName.SmithingTableInputContainer, 51, 0);
+                case 1 -> new ItemStackRequestLayout.SlotInfo(ContainerEnumName.SmithingTableMaterialContainer, 52, 0);
+                case 2 -> new ItemStackRequestLayout.SlotInfo(ContainerEnumName.SmithingTableTemplateContainer, 53, 0);
+                case 3 -> new ItemStackRequestLayout.SlotInfo(ContainerEnumName.SmithingTableResultPreviewContainer, 54, 0);
                 default -> null;
             };
         }

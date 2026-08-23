@@ -22,47 +22,46 @@ import com.viaversion.viaversion.api.minecraft.BlockPosition;
 import com.viaversion.viaversion.api.minecraft.item.Item;
 import com.viaversion.viaversion.libs.mcstructs.text.TextComponent;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
-import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomBlockTags;
 import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 
-public class BrewingStandContainer extends Container {
+/**
+ * MOT / Bedrock smithing slots are equipment, ingredient, template, result.
+ * Java 1.20+ uses template, base, addition, result.
+ */
+public class SmithingTableContainer extends Container {
 
-    public BrewingStandContainer(final UserConnection user, final byte containerId, final TextComponent title, final BlockPosition position) {
-        super(user, containerId, ContainerType.BREWING_STAND, title, position, 5, CustomBlockTags.BREWING_STAND);
+    public SmithingTableContainer(final UserConnection user, final byte containerId, final TextComponent title, final BlockPosition position) {
+        super(user, containerId, ContainerType.SMITHING_TABLE, title, position, 4);
     }
 
     @Override
     public int javaSlot(final int slot) {
         return switch (slot) {
-            case 0 -> 3; // ingredient -> Java slot 3
-            case 1 -> 0; // potion 1 -> Java slot 0
-            case 2 -> 1; // potion 2 -> Java slot 1
-            case 3 -> 2; // potion 3 -> Java slot 2
-            default -> slot; // fuel (4) -> Java slot 4
+            case 0 -> 1; // equipment -> Java base
+            case 1 -> 2; // ingredient -> Java addition
+            case 2 -> 0; // template -> Java template
+            default -> slot; // result stays 3
         };
     }
 
     @Override
     public int bedrockSlot(final int javaSlot) {
         return switch (javaSlot) {
-            case 0 -> 1; // Java potion 1 -> Bedrock slot 1
-            case 1 -> 2; // Java potion 2 -> Bedrock slot 2
-            case 2 -> 3; // Java potion 3 -> Bedrock slot 3
-            case 3 -> 0; // Java ingredient -> Bedrock slot 0
-            default -> javaSlot; // fuel stays 4
+            case 0 -> 2; // Java template -> Bedrock slot 2
+            case 1 -> 0; // Java base -> Bedrock slot 0
+            case 2 -> 1; // Java addition -> Bedrock slot 1
+            default -> javaSlot; // result stays 3
         };
     }
 
     @Override
     public Item[] getJavaItems() {
         final ItemRewriter itemRewriter = this.user.get(ItemRewriter.class);
-        final Item[] javaItems = new Item[5];
-        javaItems[0] = itemRewriter.javaItem(this.items[1]); // potion 1
-        javaItems[1] = itemRewriter.javaItem(this.items[2]); // potion 2
-        javaItems[2] = itemRewriter.javaItem(this.items[3]); // potion 3
-        javaItems[3] = itemRewriter.javaItem(this.items[0]); // ingredient
-        javaItems[4] = itemRewriter.javaItem(this.items[4]); // fuel
+        final Item[] javaItems = new Item[4];
+        javaItems[0] = itemRewriter.javaItem(this.items[2]); // template
+        javaItems[1] = itemRewriter.javaItem(this.items[0]); // equipment
+        javaItems[2] = itemRewriter.javaItem(this.items[1]); // ingredient
+        javaItems[3] = itemRewriter.javaItem(this.items[3]); // result
         return javaItems;
     }
-
 }

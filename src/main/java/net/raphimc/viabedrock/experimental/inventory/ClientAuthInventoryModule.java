@@ -82,6 +82,7 @@ public class ClientAuthInventoryModule implements FeatureModule {
         registerContainerClickHandler(protocol);
         registerCreativeContentHandler(protocol);
         registerCreativeModeSlotHandler(protocol);
+        registerSetBeaconHandler(protocol);
         // Java expects the crafting output preview to be pushed by the server, but Bedrock computes it
         // client-side and never sends it. Recompute it locally whenever the (server-authoritative) grid
         // contents change, so the Java output slot reflects the matched recipe's result.
@@ -213,7 +214,10 @@ public class ClientAuthInventoryModule implements FeatureModule {
             // stuffing the input item onto the HUD cursor.
             if (AnvilSimulator.isTakeResult(actions)
                     || CartographySimulator.isTakeResult(actions)
-                    || GrindstoneSimulator.isTakeResult(actions)) {
+                    || GrindstoneSimulator.isTakeResult(actions)
+                    || LoomSimulator.isTakeResult(actions)
+                    || StonecutterSimulator.isTakeResult(actions)
+                    || SmithingSimulator.isTakeResult(actions)) {
                 return;
             }
 
@@ -299,6 +303,27 @@ public class ClientAuthInventoryModule implements FeatureModule {
         }
         PacketFactory.sendJavaContainerSetContent(user, container);
         sendJavaCursor(user, tracker);
+    }
+
+    private void registerSetBeaconHandler(final BedrockProtocol protocol) {
+        ProtocolUtil.prependServerbound(protocol, ServerboundPackets26_1.SET_BEACON, wrapper -> {
+            wrapper.cancel();
+            Integer primary = null;
+            Integer secondary = null;
+            if (wrapper.read(Types.BOOLEAN)) {
+                primary = wrapper.read(Types.VAR_INT);
+            }
+            if (wrapper.read(Types.BOOLEAN)) {
+                secondary = wrapper.read(Types.VAR_INT);
+            }
+            if (!BeaconPayment.send(wrapper.user(), primary, secondary)) {
+                final InventoryTracker tracker = wrapper.user().get(InventoryTracker.class);
+                final Container container = tracker.getCurrentContainer();
+                if (container != null) {
+                    PacketFactory.sendJavaContainerSetContent(wrapper.user(), container);
+                }
+            }
+        });
     }
 
     private void registerCreativeContentHandler(final BedrockProtocol protocol) {
@@ -425,6 +450,18 @@ public class ClientAuthInventoryModule implements FeatureModule {
         if (GrindstoneSimulator.isTakeResult(actions)) {
             return session != null && session.isInventoryServerAuthoritative()
                     && GrindstoneSimulator.sendTakeResult(user, user.get(InventoryTracker.class));
+        }
+        if (LoomSimulator.isTakeResult(actions)) {
+            return session != null && session.isInventoryServerAuthoritative()
+                    && LoomSimulator.sendTakeResult(user, user.get(InventoryTracker.class));
+        }
+        if (StonecutterSimulator.isTakeResult(actions)) {
+            return session != null && session.isInventoryServerAuthoritative()
+                    && StonecutterSimulator.sendTakeResult(user, user.get(InventoryTracker.class));
+        }
+        if (SmithingSimulator.isTakeResult(actions)) {
+            return session != null && session.isInventoryServerAuthoritative()
+                    && SmithingSimulator.sendTakeResult(user, user.get(InventoryTracker.class));
         }
         if (session != null && session.isInventoryServerAuthoritative()) {
             final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encode(actions, user.get(InventoryTracker.class));

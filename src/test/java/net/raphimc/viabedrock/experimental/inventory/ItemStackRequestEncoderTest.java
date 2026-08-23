@@ -458,6 +458,211 @@ class ItemStackRequestEncoderTest {
     }
 
     @Test
+    void netease860AnvilApplyConsumesMultipleRepairUnits() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final StubUserConnection user = new StubUserConnection(channel);
+            final InventoryTracker tracker = new InventoryTracker(user);
+            user.put(tracker);
+            final AnvilContainer anvil = new AnvilContainer(user, (byte) 1, null, new BlockPosition(0, 64, 0));
+            anvil.setItemSilent(0, damaged(276, 800, 7));
+            anvil.setItemSilent(1, item(264, 8, 8));
+            tracker.setCurrentContainer(anvil);
+
+            assertEquals(3, AnvilRepairCost.materialCount(anvil.getItem(0), anvil.getItem(1), null));
+            final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encodeAnvilApply(
+                    tracker, "Renamed", 1, 3, 1, true, 860);
+            assertFalse(encoded.unsupported());
+            final ByteBuf buffer = Unpooled.wrappedBuffer(encoded.payload());
+            try {
+                BedrockTypes.UNSIGNED_VAR_INT.read(buffer);
+                BedrockTypes.VAR_INT.read(buffer);
+                assertEquals(4, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                assertEquals(ItemStackRequestActionType.CraftRecipeOptional.getValue(), buffer.readUnsignedByte());
+                BedrockTypes.UNSIGNED_VAR_INT.read(buffer);
+                buffer.readIntLE();
+                assertEquals(ItemStackRequestActionType.Consume.getValue(), buffer.readUnsignedByte());
+                assertEquals(1, buffer.readUnsignedByte());
+                ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ItemStackRequestActionType.Consume.getValue(), buffer.readUnsignedByte());
+                assertEquals(3, buffer.readUnsignedByte());
+                final ItemStackRequestLayout.DecodedSlotInfo material = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ContainerEnumName.AnvilMaterialContainer, material.container());
+                assertEquals(8, material.stackNetworkId());
+            } finally {
+                buffer.release();
+            }
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void netease860LoomApplyWritesCraftLoomConsumeAndCreatedOutputTake() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final StubUserConnection user = new StubUserConnection(channel);
+            final InventoryTracker tracker = new InventoryTracker(user);
+            user.put(tracker);
+            final GenericContainer loom = new GenericContainer(user, (byte) 1, ContainerType.LOOM, null, new BlockPosition(0, 64, 0), 4);
+            loom.setItemSilent(0, item(12, 1, 7));
+            loom.setItemSilent(1, item(13, 1, 8));
+            tracker.setCurrentContainer(loom);
+
+            final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encodeLoomApply(
+                    tracker, 1, 1, 1, "cre", true, 860);
+            assertFalse(encoded.unsupported());
+            final ByteBuf buffer = Unpooled.wrappedBuffer(encoded.payload());
+            try {
+                BedrockTypes.UNSIGNED_VAR_INT.read(buffer);
+                BedrockTypes.VAR_INT.read(buffer);
+                assertEquals(4, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                assertEquals(ItemStackRequestActionType.CraftLoom.getValue(), buffer.readUnsignedByte());
+                assertEquals("cre", BedrockTypes.STRING.read(buffer));
+                assertEquals(1, buffer.readUnsignedByte());
+                assertEquals(ItemStackRequestActionType.Consume.getValue(), buffer.readUnsignedByte());
+                assertEquals(1, buffer.readUnsignedByte());
+                final ItemStackRequestLayout.DecodedSlotInfo banner = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ContainerEnumName.LoomInputContainer, banner.container());
+                assertEquals(9, banner.slot());
+                assertEquals(ItemStackRequestActionType.Consume.getValue(), buffer.readUnsignedByte());
+                assertEquals(1, buffer.readUnsignedByte());
+                final ItemStackRequestLayout.DecodedSlotInfo dye = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ContainerEnumName.LoomDyeContainer, dye.container());
+                assertEquals(10, dye.slot());
+                assertEquals(ItemStackRequestActionType.Take.getValue(), buffer.readUnsignedByte());
+                assertEquals(1, buffer.readUnsignedByte());
+                final ItemStackRequestLayout.DecodedSlotInfo source = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ContainerEnumName.CreatedOutputContainer, source.container());
+                assertEquals(50, source.slot());
+            } finally {
+                buffer.release();
+            }
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void netease860StonecutterApplyWritesCraftRecipeConsumeAndTake() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final StubUserConnection user = new StubUserConnection(channel);
+            final InventoryTracker tracker = new InventoryTracker(user);
+            user.put(tracker);
+            final GenericContainer cutter = new GenericContainer(user, (byte) 1, ContainerType.STONECUTTER, null, new BlockPosition(0, 64, 0), 2);
+            cutter.setItemSilent(0, item(12, 1, 7));
+            tracker.setCurrentContainer(cutter);
+
+            final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encodeStonecutterApply(
+                    tracker, 42, 1, 1, true, 860);
+            assertFalse(encoded.unsupported());
+            final ByteBuf buffer = Unpooled.wrappedBuffer(encoded.payload());
+            try {
+                BedrockTypes.UNSIGNED_VAR_INT.read(buffer);
+                BedrockTypes.VAR_INT.read(buffer);
+                assertEquals(3, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                assertEquals(ItemStackRequestActionType.CraftRecipe.getValue(), buffer.readUnsignedByte());
+                assertEquals(42, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                assertEquals(1, buffer.readUnsignedByte());
+                assertEquals(ItemStackRequestActionType.Consume.getValue(), buffer.readUnsignedByte());
+                assertEquals(1, buffer.readUnsignedByte());
+                final ItemStackRequestLayout.DecodedSlotInfo input = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ContainerEnumName.StonecutterInputContainer, input.container());
+                assertEquals(3, input.slot());
+                assertEquals(ItemStackRequestActionType.Take.getValue(), buffer.readUnsignedByte());
+            } finally {
+                buffer.release();
+            }
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void netease860SmithingApplyConsumesEquipmentIngredientAndTemplate() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final StubUserConnection user = new StubUserConnection(channel);
+            final InventoryTracker tracker = new InventoryTracker(user);
+            user.put(tracker);
+            final net.raphimc.viabedrock.api.model.container.SmithingTableContainer smithing =
+                    new net.raphimc.viabedrock.api.model.container.SmithingTableContainer(user, (byte) 1, null, new BlockPosition(0, 64, 0));
+            smithing.setItemSilent(0, item(12, 1, 7));
+            smithing.setItemSilent(1, item(13, 1, 8));
+            smithing.setItemSilent(2, item(14, 1, 9));
+            tracker.setCurrentContainer(smithing);
+
+            final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encodeSmithingApply(
+                    tracker, 1, true, 860);
+            assertFalse(encoded.unsupported());
+            final ByteBuf buffer = Unpooled.wrappedBuffer(encoded.payload());
+            try {
+                BedrockTypes.UNSIGNED_VAR_INT.read(buffer);
+                BedrockTypes.VAR_INT.read(buffer);
+                assertEquals(5, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                assertEquals(ItemStackRequestActionType.CraftRecipe.getValue(), buffer.readUnsignedByte());
+                assertEquals(1, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                assertEquals(1, buffer.readUnsignedByte());
+                assertEquals(ItemStackRequestActionType.Consume.getValue(), buffer.readUnsignedByte());
+                assertEquals(1, buffer.readUnsignedByte());
+                final ItemStackRequestLayout.DecodedSlotInfo equipment = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ContainerEnumName.SmithingTableInputContainer, equipment.container());
+                assertEquals(51, equipment.slot());
+                assertEquals(ItemStackRequestActionType.Consume.getValue(), buffer.readUnsignedByte());
+                buffer.readUnsignedByte();
+                final ItemStackRequestLayout.DecodedSlotInfo ingredient = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ContainerEnumName.SmithingTableMaterialContainer, ingredient.container());
+                assertEquals(ItemStackRequestActionType.Consume.getValue(), buffer.readUnsignedByte());
+                buffer.readUnsignedByte();
+                final ItemStackRequestLayout.DecodedSlotInfo template = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ContainerEnumName.SmithingTableTemplateContainer, template.container());
+                assertEquals(53, template.slot());
+            } finally {
+                buffer.release();
+            }
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void netease860BeaconPaymentWritesEffectAndDestroy() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final StubUserConnection user = new StubUserConnection(channel);
+            final InventoryTracker tracker = new InventoryTracker(user);
+            user.put(tracker);
+            final GenericContainer beacon = new GenericContainer(user, (byte) 1, ContainerType.BEACON, null, new BlockPosition(0, 64, 0), 1);
+            beacon.setItemSilent(0, item(264, 1, 7));
+            tracker.setCurrentContainer(beacon);
+
+            final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encodeBeaconPayment(
+                    tracker, 1, 10, true, 860);
+            assertFalse(encoded.unsupported());
+            final ByteBuf buffer = Unpooled.wrappedBuffer(encoded.payload());
+            try {
+                BedrockTypes.UNSIGNED_VAR_INT.read(buffer);
+                BedrockTypes.VAR_INT.read(buffer);
+                assertEquals(2, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                assertEquals(ItemStackRequestActionType.ScreenBeaconPayment.getValue(), buffer.readUnsignedByte());
+                assertEquals(1, (int) BedrockTypes.VAR_INT.read(buffer));
+                assertEquals(10, (int) BedrockTypes.VAR_INT.read(buffer));
+                assertEquals(ItemStackRequestActionType.Destroy.getValue(), buffer.readUnsignedByte());
+                assertEquals(1, buffer.readUnsignedByte());
+                final ItemStackRequestLayout.DecodedSlotInfo payment = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ContainerEnumName.BeaconPaymentContainer, payment.container());
+                assertEquals(0, payment.slot());
+                assertEquals(7, payment.stackNetworkId());
+            } finally {
+                buffer.release();
+            }
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
     void placeFromCursorUsesPlaceAction() {
         final BedrockItem stack = item(8, 5, 0);
         final ItemStackRequestEncoder.EncodedRequest encoded = encode(List.of(
@@ -501,5 +706,11 @@ class ItemStackRequestEncoderTest {
 
     private static BedrockItem item(final int id, final int amount, final int netId) {
         return new BedrockItem(id, (short) 0, (byte) amount, null, new String[0], new String[0], 0, 0, netId);
+    }
+
+    private static BedrockItem damaged(final int id, final int damage, final int netId) {
+        final com.viaversion.nbt.tag.CompoundTag tag = new com.viaversion.nbt.tag.CompoundTag();
+        tag.putInt("Damage", damage);
+        return new BedrockItem(id, (short) 0, (byte) 1, tag, new String[0], new String[0], 0, 0, netId);
     }
 }

@@ -200,7 +200,7 @@ public class InventoryPackets {
                     container = new GenericContainer(wrapper.user(), containerId, type, title, position, 3);
                 }
                 case SMITHING_TABLE -> {
-                    container = new GenericContainer(wrapper.user(), containerId, type, title, position, 4);
+                    container = new SmithingTableContainer(wrapper.user(), containerId, title, position);
                 }
                 case NONE, CAULDRON, JUKEBOX, ARMOR, HAND, HUD, DECORATED_POT -> { // Bedrock client can't open these containers
                     wrapper.cancel();

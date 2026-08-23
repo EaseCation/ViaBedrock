@@ -228,6 +228,107 @@ public final class ItemStackRequestEncoder {
         return encodeActions(stackActions, tracker, emulateNetEase, protocol);
     }
 
+    public static EncodedRequest encodeLoomApply(final InventoryTracker tracker, final int bannerCount,
+                                                 final int dyeCount, final int takeCount, final String patternId) {
+        return encodeLoomApply(tracker, bannerCount, dyeCount, takeCount, patternId, emulateNetEase(), encodeProtocol());
+    }
+
+    public static EncodedRequest encodeLoomApply(final InventoryTracker tracker, final int bannerCount,
+                                                 final int dyeCount, final int takeCount, final String patternId,
+                                                 final boolean emulateNetEase, final int protocol) {
+        if (bannerCount <= 0 || dyeCount <= 0 || takeCount <= 0) {
+            return EncodedRequest.notSupported();
+        }
+        final List<Action> stackActions = new ArrayList<>();
+        final ItemStackRequestLayout.SlotInfo banner = slotWithNetId(tracker, 0);
+        final ItemStackRequestLayout.SlotInfo dye = slotWithNetId(tracker, 1);
+        if (banner == null || dye == null) {
+            return EncodedRequest.notSupported();
+        }
+        stackActions.add(Action.craftLoom(patternId != null ? patternId : "", 1));
+        stackActions.add(Action.consume(bannerCount, banner));
+        stackActions.add(Action.consume(dyeCount, dye));
+        stackActions.add(Action.transfer(
+                ItemStackRequestActionType.Take, takeCount,
+                new ItemStackRequestLayout.SlotInfo(ContainerEnumName.CreatedOutputContainer, 50, 0),
+                new ItemStackRequestLayout.SlotInfo(ContainerEnumName.CursorContainer, 0, 0)));
+        return encodeActions(stackActions, tracker, emulateNetEase, protocol);
+    }
+
+    public static EncodedRequest encodeStonecutterApply(final InventoryTracker tracker, final int recipeNetworkId,
+                                                        final int inputCount, final int takeCount) {
+        return encodeStonecutterApply(tracker, recipeNetworkId, inputCount, takeCount, emulateNetEase(), encodeProtocol());
+    }
+
+    public static EncodedRequest encodeStonecutterApply(final InventoryTracker tracker, final int recipeNetworkId,
+                                                        final int inputCount, final int takeCount,
+                                                        final boolean emulateNetEase, final int protocol) {
+        if (recipeNetworkId <= 0 || inputCount <= 0 || takeCount <= 0) {
+            return EncodedRequest.notSupported();
+        }
+        final List<Action> stackActions = new ArrayList<>();
+        final ItemStackRequestLayout.SlotInfo input = slotWithNetId(tracker, 0);
+        if (input == null) {
+            return EncodedRequest.notSupported();
+        }
+        stackActions.add(Action.craft(recipeNetworkId));
+        stackActions.add(Action.consume(inputCount, input));
+        stackActions.add(Action.transfer(
+                ItemStackRequestActionType.Take, takeCount,
+                new ItemStackRequestLayout.SlotInfo(ContainerEnumName.CreatedOutputContainer, 50, 0),
+                new ItemStackRequestLayout.SlotInfo(ContainerEnumName.CursorContainer, 0, 0)));
+        return encodeActions(stackActions, tracker, emulateNetEase, protocol);
+    }
+
+    public static EncodedRequest encodeSmithingApply(final InventoryTracker tracker, final int recipeNetworkId) {
+        return encodeSmithingApply(tracker, recipeNetworkId, emulateNetEase(), encodeProtocol());
+    }
+
+    public static EncodedRequest encodeSmithingApply(final InventoryTracker tracker, final int recipeNetworkId,
+                                                     final boolean emulateNetEase, final int protocol) {
+        if (recipeNetworkId <= 0) {
+            return EncodedRequest.notSupported();
+        }
+        final List<Action> stackActions = new ArrayList<>();
+        final ItemStackRequestLayout.SlotInfo equipment = occupiedSlot(tracker, 0);
+        if (equipment == null) {
+            return EncodedRequest.notSupported();
+        }
+        stackActions.add(Action.craft(recipeNetworkId));
+        stackActions.add(Action.consume(1, equipment));
+        final ItemStackRequestLayout.SlotInfo ingredient = occupiedSlot(tracker, 1);
+        if (ingredient != null) {
+            stackActions.add(Action.consume(1, ingredient));
+        }
+        final ItemStackRequestLayout.SlotInfo template = occupiedSlot(tracker, 2);
+        if (template != null) {
+            stackActions.add(Action.consume(1, template));
+        }
+        stackActions.add(Action.transfer(
+                ItemStackRequestActionType.Take, 1,
+                new ItemStackRequestLayout.SlotInfo(ContainerEnumName.CreatedOutputContainer, 50, 0),
+                new ItemStackRequestLayout.SlotInfo(ContainerEnumName.CursorContainer, 0, 0)));
+        return encodeActions(stackActions, tracker, emulateNetEase, protocol);
+    }
+
+    public static EncodedRequest encodeBeaconPayment(final InventoryTracker tracker, final int primaryEffect,
+                                                     final int secondaryEffect) {
+        return encodeBeaconPayment(tracker, primaryEffect, secondaryEffect, emulateNetEase(), encodeProtocol());
+    }
+
+    public static EncodedRequest encodeBeaconPayment(final InventoryTracker tracker, final int primaryEffect,
+                                                     final int secondaryEffect, final boolean emulateNetEase,
+                                                     final int protocol) {
+        final List<Action> stackActions = new ArrayList<>();
+        final ItemStackRequestLayout.SlotInfo payment = slotWithNetId(tracker, 0);
+        if (payment == null) {
+            return EncodedRequest.notSupported();
+        }
+        stackActions.add(Action.beaconPayment(primaryEffect, secondaryEffect));
+        stackActions.add(Action.destroy(1, payment));
+        return encodeActions(stackActions, tracker, emulateNetEase, protocol);
+    }
+
     private static void writeAction(final ByteBuf buffer, final Action action,
                                     final boolean emulateNetEase, final int protocol) {
         switch (action.type) {
@@ -244,6 +345,8 @@ public final class ItemStackRequestEncoder {
                     buffer, action.count, action.timesCrafted, action.filterIndex, emulateNetEase, protocol);
             case CraftLoom -> ItemStackRequestLayout.writeCraftLoom(
                     buffer, action.patternId, action.timesCrafted, emulateNetEase, protocol);
+            case ScreenBeaconPayment -> ItemStackRequestLayout.writeBeaconPayment(
+                    buffer, action.count, action.filterIndex, emulateNetEase, protocol);
             case Destroy -> ItemStackRequestLayout.writeDestroy(buffer, action.count, action.source, emulateNetEase, protocol);
             default -> throw new IllegalStateException("Unsupported item-stack action: " + action.type);
         }
@@ -626,6 +729,17 @@ public final class ItemStackRequestEncoder {
         return withNetId(info, container.getItem(slot));
     }
 
+    private static ItemStackRequestLayout.SlotInfo occupiedSlot(final InventoryTracker tracker, final int slot) {
+        if (tracker == null || tracker.getCurrentContainer() == null) {
+            return null;
+        }
+        final BedrockItem item = tracker.getCurrentContainer().getItem(slot);
+        if (item == null || item.isEmpty()) {
+            return null;
+        }
+        return slotWithNetId(tracker, slot);
+    }
+
     private static Container resolveContainer(final int containerId, final InventoryTracker tracker) {
         if (tracker == null) {
             return null;
@@ -786,6 +900,10 @@ public final class ItemStackRequestEncoder {
 
         static Action destroy(final int count, final ItemStackRequestLayout.SlotInfo source) {
             return new Action(ItemStackRequestActionType.Destroy, count, 0, 0, null, source, null);
+        }
+
+        static Action beaconPayment(final int primaryEffect, final int secondaryEffect) {
+            return new Action(ItemStackRequestActionType.ScreenBeaconPayment, primaryEffect, secondaryEffect, 0, null, null, null);
         }
     }
 

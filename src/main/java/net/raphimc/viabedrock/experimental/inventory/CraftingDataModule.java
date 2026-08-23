@@ -63,6 +63,7 @@ public class CraftingDataModule implements FeatureModule {
 
     private static void readCraftingData(final PacketWrapper wrapper, final RecipeRegistry registry) {
         final List<BedrockRecipe> parsedRecipes = new ArrayList<>();
+        final List<RecipeRegistry.SmithingRecipe> parsedSmithing = new ArrayList<>();
 
         final int recipeCount = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
 
@@ -94,7 +95,7 @@ public class CraftingDataModule implements FeatureModule {
                 case ShapelessRecipe, UserDataShapelessRecipe, ShapelessChemistryRecipe -> readShapelessRecipe(wrapper, parsedRecipes);
                 case ShapedRecipe, ShapedChemistryRecipe -> readShapedRecipe(wrapper, parsedRecipes);
                 case MultiRecipe -> skipMultiRecipe(wrapper);
-                case SmithingTransformRecipe -> skipSmithingTransformRecipe(wrapper);
+                case SmithingTransformRecipe -> readSmithingTransformRecipe(wrapper, parsedSmithing);
                 case SmithingTrimRecipe -> skipSmithingTrimRecipe(wrapper);
             }
         }
@@ -136,6 +137,9 @@ public class CraftingDataModule implements FeatureModule {
         }
         for (final BedrockRecipe recipe : parsedRecipes) {
             registry.addRecipe(recipe);
+        }
+        for (final RecipeRegistry.SmithingRecipe recipe : parsedSmithing) {
+            registry.addSmithingRecipe(recipe);
         }
 
         ViaBedrock.getPlatform().getLogger().fine("[CraftingData] Parsed " + parsedRecipes.size() + " crafting recipes (cleanRecipes=" + cleanRecipes + ", total=" + registry.recipeCount() + ")");
@@ -235,14 +239,15 @@ public class CraftingDataModule implements FeatureModule {
         wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // network id
     }
 
-    private static void skipSmithingTransformRecipe(final PacketWrapper wrapper) {
+    private static void readSmithingTransformRecipe(final PacketWrapper wrapper, final List<RecipeRegistry.SmithingRecipe> recipes) {
         wrapper.read(BedrockTypes.STRING); // recipe id
-        wrapper.read(RecipeIngredientType.INSTANCE); // template
-        wrapper.read(RecipeIngredientType.INSTANCE); // base
-        wrapper.read(RecipeIngredientType.INSTANCE); // addition
+        final RecipeIngredient template = wrapper.read(RecipeIngredientType.INSTANCE);
+        final RecipeIngredient base = wrapper.read(RecipeIngredientType.INSTANCE);
+        final RecipeIngredient addition = wrapper.read(RecipeIngredientType.INSTANCE);
         wrapper.read(InstanceItemType.INSTANCE); // output
         wrapper.read(BedrockTypes.STRING); // tag
-        wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // network id
+        final int networkId = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
+        recipes.add(new RecipeRegistry.SmithingRecipe(networkId, false, base, addition, template));
     }
 
     private static void skipSmithingTrimRecipe(final PacketWrapper wrapper) {

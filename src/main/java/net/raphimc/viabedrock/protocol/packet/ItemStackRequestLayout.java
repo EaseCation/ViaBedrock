@@ -218,6 +218,13 @@ public final class ItemStackRequestLayout {
         BedrockTypes.VAR_INT.write(buffer, repairCost);
     }
 
+    public static void writeBeaconPayment(final ByteBuf buffer, final int primaryEffect, final int secondaryEffect,
+                                          final boolean emulateNetEase, final int protocol) {
+        writeActionType(buffer, ItemStackRequestActionType.ScreenBeaconPayment, emulateNetEase, protocol);
+        BedrockTypes.VAR_INT.write(buffer, primaryEffect);
+        BedrockTypes.VAR_INT.write(buffer, secondaryEffect);
+    }
+
     public static void writeCraftLoom(final ByteBuf buffer, final String patternId, final int timesCrafted,
                                       final boolean emulateNetEase, final int protocol) {
         writeActionType(buffer, ItemStackRequestActionType.CraftLoom, emulateNetEase, protocol);

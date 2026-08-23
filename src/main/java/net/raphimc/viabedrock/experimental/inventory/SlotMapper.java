@@ -103,8 +103,9 @@ public class SlotMapper {
         final int containerSize = currentContainer.size();
 
         if (javaSlot >= 0 && javaSlot < containerSize) {
-            // Slots within the container itself
-            return new BedrockSlotRef(currentContainer.containerId(), javaSlot, currentContainer);
+            // Slots within the container itself. Brewing / smithing Java menus
+            // are not identity-mapped onto MOT's Bedrock arrays.
+            return new BedrockSlotRef(currentContainer.containerId(), currentContainer.bedrockSlot(javaSlot), currentContainer);
         } else if (javaSlot >= containerSize && javaSlot < containerSize + 27) {
             // Player inventory slots 9-35 (main inventory area below the container)
             int inventorySlot = 9 + (javaSlot - containerSize);

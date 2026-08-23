@@ -99,6 +99,15 @@ public class ClickSimulator {
         if (javaSlot == 2 && javaContainerId != 0 && GrindstoneSimulator.isGrindstone(tracker.getCurrentContainer())) {
             return action == ContainerInput.PICKUP ? GrindstoneSimulator.simulateTakeResult(tracker) : null;
         }
+        if (javaSlot == LoomSimulator.JAVA_RESULT_SLOT && javaContainerId != 0 && LoomSimulator.isLoom(tracker.getCurrentContainer())) {
+            return action == ContainerInput.PICKUP ? LoomSimulator.simulateTakeResult(tracker) : null;
+        }
+        if (javaSlot == StonecutterSimulator.JAVA_RESULT_SLOT && javaContainerId != 0 && StonecutterSimulator.isStonecutter(tracker.getCurrentContainer())) {
+            return action == ContainerInput.PICKUP ? StonecutterSimulator.simulateTakeResult(tracker) : null;
+        }
+        if (javaSlot == SmithingSimulator.JAVA_RESULT_SLOT && javaContainerId != 0 && SmithingSimulator.isSmithing(tracker.getCurrentContainer())) {
+            return action == ContainerInput.PICKUP ? SmithingSimulator.simulateTakeResult(tracker) : null;
+        }
 
         return switch (action) {
             case PICKUP -> simulatePickup(javaContainerId, javaSlot, button, tracker, stackLimits);
