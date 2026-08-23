@@ -395,12 +395,31 @@ public class RidingTracker extends StoredObject {
         }
 
         final Position3f vehiclePosition = vehicle.position();
-        if (mode == LocalRidingMode.VIRTUAL_INPUT_ONLY) {
-            final Position3f seatPosition = vehiclePosition.add(this.seatOffset(vehicle, clientPlayer, this.rawSeatOffset(clientPlayer), 0F));
-            return new Position3f(seatPosition.x(), seatPosition.y() + clientPlayer.eyeOffset(), seatPosition.z());
+        if (mode == LocalRidingMode.VIRTUAL_INPUT_ONLY || mode == LocalRidingMode.PASSENGER_ONLY) {
+            // MOT SAI riding subtracts riding.getMountedOffset().y (horse 1.2), not player 1.62.
+            // Writing vehicle.y + eyeOffset drops the seat and lands ~0.78 below the passenger
+            // foot, which trips GanAC AntiVehicle.FlyCheck (0.5). Match VIRTUAL_INPUT_ONLY /
+            // safeDismountPosition: vehicle + seat + player eye.
+            // Ref: MOT Player.java clientPosition; Entity.getMountedOffset; EntityHorse height 1.6.
+            return passengerAuthInputPosition(
+                    vehiclePosition,
+                    this.seatOffset(vehicle, clientPlayer, this.rawSeatOffset(clientPlayer), 0F),
+                    clientPlayer.eyeOffset());
         }
 
         return new Position3f(vehiclePosition.x(), vehiclePosition.y() + clientPlayer.eyeOffset(), vehiclePosition.z());
+    }
+
+    /**
+     * PASSENGER_ONLY / VIRTUAL_INPUT_ONLY SAI Y is the passenger network position:
+     * vehicle foot + seat offset + player {@code getBaseOffset()} (1.62). MOT then
+     * subtracts {@code riding.getMountedOffset().y}.
+     */
+    static Position3f passengerAuthInputPosition(final Position3f vehiclePosition, final Position3f seatOffset, final float playerEyeOffset) {
+        return new Position3f(
+                vehiclePosition.x() + seatOffset.x(),
+                vehiclePosition.y() + seatOffset.y() + playerEyeOffset,
+                vehiclePosition.z() + seatOffset.z());
     }
 
     /**

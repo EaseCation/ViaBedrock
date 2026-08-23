@@ -73,4 +73,20 @@ class RidingTrackerTest {
         );
     }
 
+    @Test
+    void passengerAuthInputKeepsHorseSeatPlusPlayerEye() {
+        final Position3f vehicle = new Position3f(10F, 64F, -3F);
+        final Position3f horseSeat = new Position3f(0F, 1.2F, 0F);
+        final Position3f auth = RidingTracker.passengerAuthInputPosition(vehicle, horseSeat, 1.62F);
+        assertEquals(10F, auth.x());
+        assertEquals(66.82F, auth.y(), 1.0e-5F);
+        assertEquals(-3F, auth.z());
+        final float motFeetY = auth.y() - horseSeat.y();
+        final float passengerFootY = vehicle.y() + horseSeat.y();
+        assertEquals(65.62F, motFeetY, 1.0e-5F);
+        assertEquals(65.2F, passengerFootY, 1.0e-5F);
+        assertTrue(Math.abs(motFeetY - passengerFootY) < 0.5F,
+                "MOT subtracts the 1.2 seat; dropping the seat would land 0.78 below the passenger foot");
+    }
+
 }
