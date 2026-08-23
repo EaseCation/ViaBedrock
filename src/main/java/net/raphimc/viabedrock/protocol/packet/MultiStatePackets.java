@@ -101,16 +101,14 @@ public class MultiStatePackets {
         final long timestamp = wrapper.read(BedrockTypes.LONG_LE); // timestamp
         final boolean fromServer = wrapper.read(Types.BOOLEAN); // from server
         if (ViaBedrock.getConfig().shouldEmulateNetEaseClient()) {
-            // NetEase 860 zero-fills NETWORK_STACK_LATENCY (timestamp=0, fromServer=false).
-            // The vanilla handler drops fromServer=false pings, so echo unconditionally.
-            final PacketWrapper reply = PacketWrapper.create(ServerboundBedrockPackets.NETWORK_STACK_LATENCY, wrapper.user());
-            reply.write(BedrockTypes.LONG_LE, timestamp); // timestamp
-            reply.write(Types.BOOLEAN, true); // from server
-            // scheduleSendToServer defers to the event loop tail: a synchronous sendToServer
-            // from inside the clientbound transform re-enters the serverbound pipeline on the
-            // same thread and gets silently cancelled (sendToServer0 swallows CancelException).
-            reply.scheduleSendToServer(BedrockProtocol.class);
-            wrapper.cancel();
+            // MOT 860 zero-fills NETWORK_STACK_LATENCY (timestamp=0, fromServer=false).
+            // GanAC also sends its own pings with timestamp=id and expects the client
+            // echo as id * 1_000_000. Echoing on the proxy made compensation 0ms and
+            // never matched those ids (Timed out! after max-latency-wait).
+            // Treat every NetEase ping as a server ping and wait for Java PONG.
+            // PONG_HANDLER already writes response.timestamp() * 1_000_000.
+            final int id = wrapper.user().get(PacketSyncStorage.class).addNetworkStackLatencyResponse(timestamp);
+            wrapper.write(Types.INT, id); // parameter
             return;
         }
         if (!fromServer) {
@@ -134,7 +132,7 @@ public class MultiStatePackets {
             }
 
             if (PacketSyncStorage.isJavaOnlyLatencyProbe(response)) {
-                // NetEase already echoed NETWORK_STACK_LATENCY on the proxy.
+                // HUD / tab-list probe. Must never be written back as Bedrock NSL.
                 wrapper.cancel();
                 return;
             }

@@ -17,8 +17,8 @@
  */
 package net.raphimc.viabedrock.protocol.storage;
 
-import com.viaversion.viaversion.connection.UserConnectionImpl;
 import io.netty.channel.embedded.EmbeddedChannel;
+import net.raphimc.viabedrock.test.StubUserConnection;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -26,13 +26,14 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PacketSyncStorageTest {
 
     private final EmbeddedChannel channel = new EmbeddedChannel();
-    private final PacketSyncStorage storage = new PacketSyncStorage(new UserConnectionImpl(this.channel));
+    private final PacketSyncStorage storage = new PacketSyncStorage(new StubUserConnection(this.channel));
 
     @AfterEach
     void closeChannel() {
@@ -91,6 +92,14 @@ class PacketSyncStorageTest {
         assertTrue(PacketSyncStorage.isJavaOnlyLatencyProbe(response));
         assertFalse(PacketSyncStorage.isJavaOnlyLatencyProbe(new PacketSyncStorage.NetworkStackLatencyResponse(1234L, 1L)));
         assertFalse(PacketSyncStorage.isJavaOnlyLatencyProbe(null));
+    }
+
+    @Test
+    void keepAliveRoundTripUpdatesLatencyOnce() {
+        this.storage.noteKeepAliveSent(42L);
+        assertNull(this.storage.consumeKeepAlive(7L));
+        assertNotNull(this.storage.consumeKeepAlive(42L));
+        assertNull(this.storage.consumeKeepAlive(42L));
     }
 
 }

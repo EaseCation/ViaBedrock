@@ -17,11 +17,22 @@
  */
 package net.raphimc.viabedrock.protocol.packet;
 
+import com.viaversion.viaversion.api.Via;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
+import com.viaversion.viaversion.api.protocol.packet.State;
+import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ServerboundPackets26_1;
 import com.viaversion.viaversion.protocols.v1_21_7to1_21_9.packet.ServerboundConfigurationPackets1_21_9;
+import net.raphimc.viabedrock.api.util.PacketFactory;
+import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
+import net.raphimc.viabedrock.protocol.provider.NettyPipelineProvider;
+import net.raphimc.viabedrock.protocol.storage.EntityTracker;
+import net.raphimc.viabedrock.protocol.storage.PacketSyncStorage;
+import net.raphimc.viabedrock.protocol.storage.PlayerListStorage;
+
+import java.util.Map;
 
 public class UnhandledPackets {
 
@@ -48,14 +59,50 @@ public class UnhandledPackets {
         protocol.cancelClientbound(ClientboundBedrockPackets.CAMERA_SPLINE); // Not possible in Java Edition
         protocol.cancelClientbound(ClientboundBedrockPackets.CAMERA_AIM_ASSIST_ACTOR_PRIORITY); // Not possible in Java Edition
 
-        protocol.registerServerboundTransition(ServerboundConfigurationPackets1_21_9.KEEP_ALIVE, null, PacketWrapper::cancel);
+        protocol.registerServerboundTransition(ServerboundConfigurationPackets1_21_9.KEEP_ALIVE, null, UnhandledPackets::handleJavaKeepAlive);
         protocol.cancelServerbound(ServerboundPackets26_1.CHAT_ACK);
         protocol.cancelServerbound(ServerboundPackets26_1.CHAT_SESSION_UPDATE);
         protocol.cancelServerbound(ServerboundPackets26_1.COOKIE_RESPONSE);
         protocol.cancelServerbound(ServerboundPackets26_1.DEBUG_SAMPLE_SUBSCRIPTION);
-        protocol.cancelServerbound(ServerboundPackets26_1.KEEP_ALIVE);
+        protocol.registerServerbound(ServerboundPackets26_1.KEEP_ALIVE, null, UnhandledPackets::handleJavaKeepAlive);
         protocol.cancelServerbound(ServerboundPackets26_1.SET_TEST_BLOCK);
         protocol.cancelServerbound(ServerboundPackets26_1.TEST_INSTANCE_BLOCK_ACTION);
+    }
+
+    static void handleJavaKeepAlive(final PacketWrapper wrapper) {
+        final long id = wrapper.read(Types.LONG);
+        wrapper.cancel();
+        final PacketSyncStorage packetSyncStorage = wrapper.user().get(PacketSyncStorage.class);
+        if (packetSyncStorage == null) {
+            return;
+        }
+        final Long sentNanos = packetSyncStorage.consumeKeepAlive(id);
+        if (sentNanos == null) {
+            return;
+        }
+        final long nowNanos = System.nanoTime();
+        final int serverTransportLatencyMillis = Via.getManager().getProviders().get(NettyPipelineProvider.class)
+                .getServerTransportLatencyMillis(wrapper.user());
+        packetSyncStorage.updateLatency(nowNanos - sentNanos, serverTransportLatencyMillis);
+        publishJavaPlayerLatency(wrapper, packetSyncStorage, nowNanos);
+    }
+
+    private static void publishJavaPlayerLatency(final PacketWrapper wrapper, final PacketSyncStorage packetSyncStorage, final long nowNanos) {
+        if (wrapper.user().getProtocolInfo().getServerState() != State.PLAY || !packetSyncStorage.shouldPublishLatency(nowNanos)) {
+            return;
+        }
+        final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
+        if (entityTracker == null || entityTracker.getClientPlayer() == null) {
+            return;
+        }
+        final java.util.UUID javaUuid = entityTracker.getClientPlayer().javaUuid();
+        final PlayerListStorage playerListStorage = wrapper.user().get(PlayerListStorage.class);
+        if (playerListStorage == null || !playerListStorage.containsPlayer(javaUuid)) {
+            return;
+        }
+        PacketFactory.createJavaPlayerLatencyUpdate(wrapper.user(), javaUuid, packetSyncStorage.latencyMillis()).send(BedrockProtocol.class);
+        packetSyncStorage.markLatencyPublished(nowNanos);
+        ExperimentalFeatures.dispatchPlayerLatenciesUpdated(wrapper.user(), Map.of(javaUuid, packetSyncStorage.latencyMillis()));
     }
 
 }

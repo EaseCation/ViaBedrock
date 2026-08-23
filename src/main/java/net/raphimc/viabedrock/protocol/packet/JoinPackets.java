@@ -812,8 +812,8 @@ public class JoinPackets {
                 ping.write(BedrockTypes.LONG_LE, System.currentTimeMillis()); // timestamp
                 ping.write(Types.BOOLEAN, false); // from server
                 ping.scheduleSendToServer(BedrockProtocol.class);
-                // NetEase echoes NETWORK_STACK_LATENCY on the proxy, so that path
-                // never samples the Java client. Probe Java PING/PONG separately.
+                // Extra HUD sample. Server NETWORK_STACK_LATENCY already
+                // round-trips through Java PING/PONG for GanAC.
                 final PacketSyncStorage packetSyncStorage = user.get(PacketSyncStorage.class);
                 if (packetSyncStorage != null) {
                     packetSyncStorage.sendJavaLatencyProbe();
@@ -1206,7 +1206,16 @@ public class JoinPackets {
         playerInfoUpdate.write(Types.STRING, StringUtil.encodeUUID(clientPlayer.javaUuid())); // username
         playerInfoUpdate.write(Types.PROFILE_PROPERTY_ARRAY, new GameProfile.Property[0]); // properties
         playerInfoUpdate.write(Types.VAR_INT, clientPlayer.javaGameMode().ordinal()); // game mode
-        playerInfoUpdate.write(Types.VAR_INT, user.get(PacketSyncStorage.class).latencyMillis()); // latency
+        final PacketSyncStorage packetSyncStorage = user.get(PacketSyncStorage.class);
+        final int latency = packetSyncStorage.latencyMillis();
+        playerInfoUpdate.write(Types.VAR_INT, latency); // latency
+        final PlayerListStorage playerListStorage = user.get(PlayerListStorage.class);
+        if (!playerListStorage.containsPlayer(clientPlayer.javaUuid())) {
+            playerListStorage.addPlayer(clientPlayer.javaUuid(), clientPlayer.uniqueId(), user.getProtocolInfo().getUsername());
+        }
+        if (latency != PacketSyncStorage.UNKNOWN_LATENCY) {
+            packetSyncStorage.markLatencyPublished(System.nanoTime());
+        }
         playerInfoUpdate.send(BedrockProtocol.class);
 
         if (joinGameStorage.rainLevel() > 0F || joinGameStorage.lightningLevel() > 0F) {

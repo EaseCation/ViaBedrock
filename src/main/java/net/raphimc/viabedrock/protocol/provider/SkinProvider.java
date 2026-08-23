@@ -32,10 +32,10 @@ import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.data.DataValues;
 import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.MemoryTier;
-import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.BuildPlatform;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.GraphicsMode;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InputMode;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.UIProfile;
+import net.raphimc.viabedrock.api.util.JavaClientDevice;
 import net.raphimc.viabedrock.protocol.model.JavaSkinData;
 import net.raphimc.viabedrock.protocol.model.SkinData;
 import net.raphimc.viabedrock.protocol.storage.AuthData;
@@ -243,8 +243,8 @@ public class SkinProvider implements Provider {
             }
         }
 
+        final HandshakeStorage handshakeStorage = user.get(HandshakeStorage.class);
         { // Session claims
-            final HandshakeStorage handshakeStorage = user.get(HandshakeStorage.class);
             claims.put("ServerAddress", handshakeStorage.hostname() + ":" + handshakeStorage.port());
             claims.put("ThirdPartyName", user.getProtocolInfo().getUsername());
         }
@@ -267,8 +267,7 @@ public class SkinProvider implements Provider {
         }
         { // Device claims
             claims.put("DeviceId", authData.getDeviceId().toString().replace("-", ""));
-            claims.put("DeviceModel", "MS-7E51 Micro-Star International Co., Ltd. (Unknown)");
-            claims.put("DeviceOS", BuildPlatform.Win32.getValue());
+            applyDeviceClaims(claims, handshakeStorage != null ? handshakeStorage.device() : null);
             claims.put("CurrentInputMode", InputMode.Mouse.getValue());
             claims.put("DefaultInputMode", InputMode.Mouse.getValue());
         }
@@ -304,6 +303,12 @@ public class SkinProvider implements Provider {
         }
 
         return claims;
+    }
+
+    static void applyDeviceClaims(final Map<String, Object> claims, final JavaClientDevice device) {
+        final JavaClientDevice resolved = device != null ? device : JavaClientDevice.JAVA_EDITION;
+        claims.put("DeviceModel", resolved.model());
+        claims.put("DeviceOS", resolved.deviceOs());
     }
 
     static void addJavaClientEncryptionKeyClaim(final Map<String, Object> claims, final String authSecret,

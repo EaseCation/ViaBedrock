@@ -37,10 +37,10 @@ public class PacketSyncStorage extends StoredObject {
 
     public static final int UNKNOWN_LATENCY = -1;
     /**
-     * Marker timestamp for a Java-only PING/PONG sample. NetEase echoes
-     * {@code NETWORK_STACK_LATENCY} on the proxy, so those packets never
-     * measure the Java client. A probe with this timestamp must not be
-     * forwarded back to Bedrock.
+     * Marker timestamp for a Java-only PING/PONG sample. Used by the NetEase
+     * spawn heartbeat for HUD ping when no server {@code NETWORK_STACK_LATENCY}
+     * is in flight. A probe with this timestamp must not be forwarded back
+     * to Bedrock.
      */
     public static final long JAVA_ONLY_LATENCY_PROBE = Long.MIN_VALUE;
     static final long LATENCY_UPDATE_INTERVAL_NANOS = TimeUnit.SECONDS.toNanos(1L);
@@ -52,6 +52,8 @@ public class PacketSyncStorage extends StoredObject {
     private int lastPublishedLatencyMillis = UNKNOWN_LATENCY;
     private long lastLatencyPublishNanos;
     private boolean hasPublishedLatency;
+    private Long pendingKeepAliveId;
+    private long pendingKeepAliveNanos;
 
     public PacketSyncStorage(final UserConnection user) {
         super(user);
@@ -82,7 +84,8 @@ public class PacketSyncStorage extends StoredObject {
 
     /**
      * Measures Java-client RTT without touching Bedrock {@code NETWORK_STACK_LATENCY}.
-     * Used when the proxy must echo NetEase pings locally.
+     * Server NSL on the NetEase path already round-trips through Java PING/PONG;
+     * this probe only fills HUD samples between those pings.
      */
     public void sendJavaLatencyProbe() {
         if (this.user().getProtocolInfo().getServerState() != State.PLAY
@@ -93,6 +96,19 @@ public class PacketSyncStorage extends StoredObject {
         final PacketWrapper pingPacket = PacketWrapper.create(ClientboundPackets26_1.PING, this.user());
         pingPacket.write(Types.INT, id); // parameter
         pingPacket.send(BedrockProtocol.class);
+    }
+
+    public void noteKeepAliveSent(final long id) {
+        this.pendingKeepAliveId = id;
+        this.pendingKeepAliveNanos = System.nanoTime();
+    }
+
+    public Long consumeKeepAlive(final long id) {
+        if (this.pendingKeepAliveId == null || this.pendingKeepAliveId != id) {
+            return null;
+        }
+        this.pendingKeepAliveId = null;
+        return this.pendingKeepAliveNanos;
     }
 
     public int updateLatency(final long clientLatencyNanos, final int serverTransportLatencyMillis) {

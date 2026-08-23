@@ -18,6 +18,25 @@
 package net.raphimc.viabedrock.protocol.storage;
 
 import com.viaversion.viaversion.api.connection.StorableObject;
+import net.raphimc.viabedrock.api.util.JavaClientDevice;
 
-public record HandshakeStorage(int protocolVersion, String hostname, int port) implements StorableObject {
+public record HandshakeStorage(int protocolVersion, String hostname, int port, JavaClientDevice device) implements StorableObject {
+
+    public HandshakeStorage(final int protocolVersion, final String hostname, final int port) {
+        this(protocolVersion, hostname, port, JavaClientDevice.JAVA_EDITION);
+    }
+
+    public static HandshakeStorage fromHandshake(final int protocolVersion, final String rawHostname, final int port) {
+        return new HandshakeStorage(
+                protocolVersion,
+                JavaClientDevice.stripHandshakeSuffix(rawHostname),
+                port,
+                JavaClientDevice.parseFromHandshake(rawHostname)
+        );
+    }
+
+    public JavaClientDevice device() {
+        return this.device != null ? this.device : JavaClientDevice.JAVA_EDITION;
+    }
+
 }

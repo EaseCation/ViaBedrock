@@ -695,7 +695,7 @@ public class ClientPlayerPackets {
             wrapper.write(BedrockTypes.UNSIGNED_VAR_BIG_INTEGER, PlayerAuthInputLayout.encodeBitmask(clientPlayer.authInputData())); // input flags
             wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, InputMode.Mouse.getValue()); // input mode
             wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, ClientPlayMode.Screen.getValue()); // play mode
-            wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, NewInteractionModel.Touch.getValue()); // interaction mode
+            wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, NewInteractionModel.Crosshair.getValue()); // interaction mode
             wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().x()); // interact pitch
             wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().y()); // interact yaw
             wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG, (long) clientPlayer.age()); // tick
@@ -727,9 +727,15 @@ public class ClientPlayerPackets {
                 wrapper.write(BedrockTypes.FLOAT_LE, authInputContext.vehicleYaw()); // vehicle yaw
                 wrapper.write(BedrockTypes.VAR_LONG, authInputContext.predictedVehicleUniqueId()); // predicted vehicle entity unique id
             }
-            wrapper.write(BedrockTypes.POSITION_2F, new Position2f(0F, 0F)); // analog move vector
+            final Position2f analogMoveVector = immobile
+                    ? new Position2f(0F, 0F)
+                    : MathUtil.calculateMovementDirections(clientPlayer.authInputData(), clientPlayer.isSneaking());
+            final Position2f rawMoveVector = immobile
+                    ? new Position2f(0F, 0F)
+                    : MathUtil.calculateMovementDirections(clientPlayer.authInputData(), false);
+            wrapper.write(BedrockTypes.POSITION_2F, analogMoveVector); // analog move vector
             wrapper.write(BedrockTypes.POSITION_3F, MathUtil.calculateCameraOrientation(clientPlayer.rotation().y(), clientPlayer.rotation().x())); // camera orientation
-            wrapper.write(BedrockTypes.POSITION_2F, immobile ? new Position2f(0F, 0F) : MathUtil.calculateMovementDirections(clientPlayer.authInputData(), false)); // raw move vector
+            wrapper.write(BedrockTypes.POSITION_2F, rawMoveVector); // raw move vector
 
             clientPlayer.authInputData().clear();
             clientPlayer.authInputBlockActions().clear();

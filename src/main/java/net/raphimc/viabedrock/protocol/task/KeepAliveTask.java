@@ -27,6 +27,7 @@ import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPack
 import com.viaversion.viaversion.protocols.v1_21_7to1_21_9.packet.ClientboundConfigurationPackets1_21_9;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.provider.NettyPipelineProvider;
+import net.raphimc.viabedrock.protocol.storage.PacketSyncStorage;
 
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -48,11 +49,16 @@ public class KeepAliveTask implements Runnable {
                                         info, info.getProtocolInfo().getServerState()));
                         if (packetType == null) return;
 
+                        final long keepAliveId = ThreadLocalRandom.current().nextLong();
                         final PacketWrapper keepAlive = PacketWrapper.create(packetType, info);
-                        keepAlive.write(Types.LONG, ThreadLocalRandom.current().nextLong()); // id
+                        keepAlive.write(Types.LONG, keepAliveId); // id
                         pipelineProvider.beginJavaClientboundPacket(info, "ViaBedrock/KeepAliveTask", packetType);
                         try {
                             keepAlive.send(BedrockProtocol.class);
+                            final PacketSyncStorage packetSyncStorage = info.get(PacketSyncStorage.class);
+                            if (packetSyncStorage != null) {
+                                packetSyncStorage.noteKeepAliveSent(keepAliveId);
+                            }
                         } finally {
                             pipelineProvider.endJavaClientboundPacket(info);
                         }

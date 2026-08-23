@@ -130,7 +130,9 @@ public class HudPackets {
                         ));
 
                         if (localPlayer) {
-                            packetSyncStorage.markLatencyPublished(System.nanoTime());
+                            if (latency != PacketSyncStorage.UNKNOWN_LATENCY) {
+                                packetSyncStorage.markLatencyPublished(System.nanoTime());
+                            }
                         } else {
                             playerListStorage.markLatencyPublished(uuids[i], latency);
                         }

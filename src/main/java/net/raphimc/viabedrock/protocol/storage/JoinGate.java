@@ -75,7 +75,10 @@ public class JoinGate extends StoredObject {
             ClientboundPackets26_1.GAME_EVENT,
             ClientboundPackets26_1.KEEP_ALIVE,
             ClientboundPackets26_1.PING,
-            ClientboundPackets26_1.PONG_RESPONSE
+            ClientboundPackets26_1.PONG_RESPONSE,
+            ClientboundPackets26_1.PLAYER_INFO_UPDATE,
+            ClientboundPackets26_1.PLAYER_INFO_REMOVE,
+            ClientboundPackets26_1.TAB_LIST
     );
 
     private static final EnumSet<ServerboundPackets26_1> ALLOW_SERVERBOUND_BEFORE_OPEN = EnumSet.of(

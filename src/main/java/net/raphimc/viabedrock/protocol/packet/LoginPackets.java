@@ -34,6 +34,7 @@ import io.jsonwebtoken.Jwts;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.util.CryptUtil;
 import net.raphimc.viabedrock.api.util.FNV1;
+import net.raphimc.viabedrock.api.util.JavaClientDevice;
 import net.raphimc.viabedrock.api.util.Jwt;
 import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.api.util.ServerBlacklist;
@@ -138,7 +139,7 @@ public class LoginPackets {
             final int protocolVersion = wrapper.read(Types.VAR_INT); // protocol version
             final String hostname = wrapper.read(Types.STRING); // hostname
             final int port = wrapper.read(Types.UNSIGNED_SHORT); // port
-            wrapper.user().put(new HandshakeStorage(protocolVersion, hostname, port));
+            wrapper.user().put(HandshakeStorage.fromHandshake(protocolVersion, hostname, port));
         });
         protocol.registerServerboundTransition(ServerboundLoginPackets.HELLO, ServerboundBedrockPackets.REQUEST_NETWORK_SETTINGS, wrapper -> {
             final HandshakeStorage handshakeStorage = wrapper.user().get(HandshakeStorage.class);
@@ -167,7 +168,7 @@ public class LoginPackets {
             protocolInfo.setUuid(javaUuid);
 
             try {
-                validateAndFillAuthData(wrapper.user(), javaUsername, javaUuid);
+                validateAndFillAuthData(wrapper.user(), javaUsername, javaUuid, handshakeStorage);
             } catch (Throwable e) {
                 throw new RuntimeException("Could not validate and fill auth data", e);
             }
@@ -176,6 +177,10 @@ public class LoginPackets {
     }
 
     private static void validateAndFillAuthData(final UserConnection user, final String javaUsername, final UUID javaUuid) {
+        validateAndFillAuthData(user, javaUsername, javaUuid, user.get(HandshakeStorage.class));
+    }
+
+    private static void validateAndFillAuthData(final UserConnection user, final String javaUsername, final UUID javaUuid, final HandshakeStorage handshakeStorage) {
         if (user.has(AuthData.class)) { // Externally supplied auth data
             final AuthData authData = user.get(AuthData.class);
             if (authData.getMojangJwt() != null && authData.getSelfSignedJwt() == null) {
@@ -207,7 +212,8 @@ public class LoginPackets {
                 extraData.put("XUID", xuid);
                 extraData.put("identity", identity);
                 if (ViaBedrock.getConfig().shouldEmulateNetEaseClient()) {
-                    extraData.putAll(createNetEaseExtraData(javaUsername, javaUuid, xuid));
+                    extraData.putAll(createNetEaseExtraData(javaUsername, javaUuid, xuid,
+                            handshakeStorage != null ? handshakeStorage.device() : JavaClientDevice.JAVA_EDITION));
                 }
 
                 final String identityJwt = Jwts.builder()
@@ -284,12 +290,17 @@ public class LoginPackets {
     }
 
     static java.util.Map<String, Object> createNetEaseExtraData(final String javaUsername, final UUID javaUuid, final String xuid) {
+        return createNetEaseExtraData(javaUsername, javaUuid, xuid, JavaClientDevice.JAVA_EDITION);
+    }
+
+    static java.util.Map<String, Object> createNetEaseExtraData(final String javaUsername, final UUID javaUuid, final String xuid,
+                                                                final JavaClientDevice device) {
         final java.util.Map<String, Object> extraData = new java.util.HashMap<>();
         final long uid = javaUuid != null ? Math.abs(javaUuid.getMostSignificantBits()) : Math.abs(FNV1.fnv1_64(javaUsername.getBytes(StandardCharsets.UTF_8)));
         extraData.put("uid", uid);
         extraData.put("netease_sid", "je-" + (javaUuid != null ? javaUuid.toString().replace("-", "") : xuid));
         extraData.put("platform", "pc_java");
-        extraData.put("os_name", "windows");
+        extraData.put("os_name", device != null ? device.osName() : "windows");
         extraData.put("env", "release");
         extraData.put("engineVersion", ViaBedrock.getConfig().getNetEaseGameVersion());
         extraData.put("patchVersion", ViaBedrock.getConfig().getNetEaseGameVersion());
