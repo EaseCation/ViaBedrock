@@ -725,11 +725,11 @@ public class ResourcePackPackets {
         wrapper.write(Types.UUID, id);
         wrapper.write(Types.STRING, url);
         wrapper.write(Types.STRING, hash);
-        wrapper.write(Types.BOOLEAN, false);
+        wrapper.write(Types.BOOLEAN, true);
         wrapper.write(Types.OPTIONAL_TAG, TextUtil.stringToNbt(
-                "\n§aIf you press 'Yes', the resource packs will be downloaded and converted to the Java Edition format. "
+                "\n§aThe resource packs will be downloaded and converted to the Java Edition format. "
                         + "This may take a while, depending on your internet connection and the size of the packs. "
-                        + "If you press 'No', you can join without loading the resource packs but you will have a worse gameplay experience."));
+                        + "This pack is required to join the server."));
     }
 
     private static void finishBedrockPackDownloadsWhenReady(
