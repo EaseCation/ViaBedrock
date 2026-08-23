@@ -273,16 +273,26 @@ public class ClientAuthInventoryModule implements FeatureModule {
             PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
             return true;
         }
-        if (needsBedrockPlayerInventoryOpen(ContainerID.CONTAINER_ID_INVENTORY.getValue(), tracker.isBedrockPlayerInventoryOpen())) {
+        final boolean openedForThisAction = needsBedrockPlayerInventoryOpen(
+                ContainerID.CONTAINER_ID_INVENTORY.getValue(), tracker.isBedrockPlayerInventoryOpen());
+        if (openedForThisAction) {
             PacketFactory.sendBedrockOpenInventory(user);
         }
 
         if (!sendPredictedActions(user, actions)) {
             PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
+            if (openedForThisAction) {
+                closeTransientBedrockPlayerInventory(tracker);
+            }
             return true;
         }
         applyMirrorUpdates(actions, tracker);
         PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
+        // F works with Java inventory still open. Only unwind MOT when this
+        // swap was the SAI handshake, not an already-open E screen.
+        if (openedForThisAction) {
+            closeTransientBedrockPlayerInventory(tracker);
+        }
         return true;
     }
 
@@ -335,15 +345,25 @@ public class ClientAuthInventoryModule implements FeatureModule {
             PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
             return true;
         }
-        if (needsBedrockPlayerInventoryOpen(ContainerID.CONTAINER_ID_INVENTORY.getValue(), tracker.isBedrockPlayerInventoryOpen())) {
+        final boolean openedForThisAction = needsBedrockPlayerInventoryOpen(
+                ContainerID.CONTAINER_ID_INVENTORY.getValue(), tracker.isBedrockPlayerInventoryOpen());
+        if (openedForThisAction) {
             PacketFactory.sendBedrockOpenInventory(user);
         }
         if (!sendPredictedActions(user, actions)) {
             PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
+            if (openedForThisAction) {
+                closeTransientBedrockPlayerInventory(tracker);
+            }
             return true;
         }
         applyMirrorUpdates(actions, tracker);
         PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
+        // Hotbar Q never opens a Java GUI. Keep MOT closed unless Java E was
+        // already open (Interact.OpenInventory already acknowledged).
+        if (openedForThisAction) {
+            closeTransientBedrockPlayerInventory(tracker);
+        }
         return true;
     }
 
@@ -804,6 +824,20 @@ public class ClientAuthInventoryModule implements FeatureModule {
 
     static boolean needsBedrockPlayerInventoryOpen(final int containerId, final boolean bedrockInventoryOpen) {
         return containerId == ContainerID.CONTAINER_ID_INVENTORY.getValue() && !bedrockInventoryOpen;
+    }
+
+    /**
+     * Java Q / F never open a GUI. Interact.OpenInventory still opens MOT player
+     * inventory for SAI Drop/Swap. Close window -1 immediately so
+     * {@code inventoryOpen} does not stick and later attacks / chests fail.
+     * DropActionProcessor itself does not require inventoryOpen.
+     * Ref: MOT Player.java Interact action 6, USE_ITEM_ON_ENTITY ATTACK while
+     * inventoryOpen, addWindow.
+     */
+    static void closeTransientBedrockPlayerInventory(final InventoryTracker tracker) {
+        if (tracker != null) {
+            tracker.closeTransientBedrockPlayerInventory();
+        }
     }
 
     private static final int HUD_OUTPUT_SLOT = 50;

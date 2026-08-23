@@ -12,6 +12,7 @@ package net.raphimc.viabedrock.experimental.storage;
 import com.viaversion.viaversion.api.minecraft.entities.EntityTypes1_21_11;
 import org.junit.jupiter.api.Test;
 
+import net.raphimc.viabedrock.protocol.model.Position3f;
 import net.raphimc.viabedrock.protocol.packet.EntityPacketLayout;
 
 import static net.raphimc.viabedrock.experimental.storage.RidingTracker.LocalRidingMode.BOAT_PREDICTED;
@@ -35,6 +36,16 @@ class RidingTrackerTest {
     @Test
     void keepsBoatPredictionSeparateFromMinecartInput() {
         assertEquals(BOAT_PREDICTED, RidingTracker.localRidingMode(EntityTypes1_21_11.OAK_BOAT, true));
+    }
+
+    @Test
+    void predictedBoatAuthInputUsesBoatNetworkOffsetNotPlayerEye() {
+        final Position3f javaBoat = new Position3f(10F, 64F, -3F);
+        final Position3f auth = RidingTracker.predictedBoatAuthInputPosition(javaBoat, 0.375F);
+        assertEquals(10F, auth.x());
+        assertEquals(64.375F, auth.y(), 1.0e-6F);
+        assertEquals(-3F, auth.z());
+        assertTrue(auth.y() - javaBoat.y() < 1.0F, "player eye 1.62 would lift the boat into GanAC FlyCheck");
     }
 
     @Test

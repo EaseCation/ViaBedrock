@@ -391,8 +391,7 @@ public class RidingTracker extends StoredObject {
 
     private Position3f authInputPosition(final Entity vehicle, final ClientPlayerEntity clientPlayer, final LocalRidingMode mode) {
         if (mode == LocalRidingMode.BOAT_PREDICTED && this.lastMoveVehicleInputFresh && this.lastMoveVehicleInput != null) {
-            final Position3f vehiclePosition = this.lastMoveVehicleInput.position();
-            return new Position3f(vehiclePosition.x(), vehiclePosition.y() + clientPlayer.eyeOffset(), vehiclePosition.z());
+            return predictedBoatAuthInputPosition(this.lastMoveVehicleInput.position(), vehicle.eyeOffset());
         }
 
         final Position3f vehiclePosition = vehicle.position();
@@ -402,6 +401,20 @@ public class RidingTracker extends StoredObject {
         }
 
         return new Position3f(vehiclePosition.x(), vehiclePosition.y() + clientPlayer.eyeOffset(), vehiclePosition.z());
+    }
+
+    /**
+     * Java {@code MOVE_VEHICLE} Y is the boat foot. MOT predicted-boat SAI is the
+     * boat network Y ({@code EntityBoat.getBaseOffset()} = 0.375) and {@code onInput}
+     * subtracts that offset. Adding the player eye (1.62) lifts the boat +1.245
+     * every tick and trips GanAC AntiVehicle.FlyCheck (0.5).
+     * Ref: MOT Player.java IN_CLIENT_PREDICTED_IN_VEHICLE; EntityBoat.onInput.
+     */
+    static Position3f predictedBoatAuthInputPosition(final Position3f javaVehiclePosition, final float vehicleEyeOffset) {
+        return new Position3f(
+                javaVehiclePosition.x(),
+                javaVehiclePosition.y() + vehicleEyeOffset,
+                javaVehiclePosition.z());
     }
 
     private Position3f safeDismountPosition(final Entity vehicle, final ClientPlayerEntity clientPlayer, final LocalRidingMode mode, final Position3f authInputPosition) {

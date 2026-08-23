@@ -235,6 +235,33 @@ class InventoryTrackerContainerStateTest {
         assertEquals(CLOSED, this.tracker.getContainerState());
     }
 
+    @Test
+    void transientHotbarDropClosesBedrockPlayerInventoryAndIgnoresLateOpen() {
+        this.tracker.closeTransientBedrockPlayerInventory();
+
+        assertFalse(this.tracker.isBedrockPlayerInventoryOpen());
+        assertTrue(this.tracker.isSuppressingNextBedrockPlayerInventoryOpen());
+        assertEquals(List.of(new BedrockClose((byte) -1, ContainerType.NONE)), this.packets.bedrockCloses);
+        assertEquals(List.of(), this.packets.javaCloses);
+        assertEquals(CLOSED, this.tracker.getContainerState());
+
+        this.tracker.acknowledgeBedrockInventoryOpen((byte) 0, new com.viaversion.viaversion.api.minecraft.BlockPosition(0, 64, 0));
+        assertFalse(this.tracker.isBedrockPlayerInventoryOpen());
+        assertFalse(this.tracker.isSuppressingNextBedrockPlayerInventoryOpen());
+        assertNull(this.tracker.getCurrentContainer());
+    }
+
+    @Test
+    void transientCloseDoesNotTouchAnOpenChest() {
+        this.openContainer();
+        this.tracker.closeTransientBedrockPlayerInventory();
+
+        assertSame(this.container, this.tracker.getCurrentContainer());
+        assertEquals(OPEN, this.tracker.getContainerState());
+        assertEquals(List.of(), this.packets.bedrockCloses);
+        assertFalse(this.tracker.isSuppressingNextBedrockPlayerInventoryOpen());
+    }
+
     private void openContainer() {
         this.tracker.setCurrentContainer(this.container);
         assertEquals(OPEN, this.tracker.getContainerState());

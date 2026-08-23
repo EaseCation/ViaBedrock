@@ -71,6 +71,16 @@ class ClientAuthInventoryModuleTest {
     }
 
     @Test
+    void javaHotbarDropNeedsOpenThenCloseHandshake() {
+        // Interact.OpenInventory is still required for MOT SAI Drop/Swap, then
+        // closeTransientBedrockPlayerInventory must run so inventoryOpen does not stick.
+        assertTrue(ClientAuthInventoryModule.needsBedrockPlayerInventoryOpen(
+                ContainerID.CONTAINER_ID_INVENTORY.getValue(), false));
+        assertFalse(ClientAuthInventoryModule.needsBedrockPlayerInventoryOpen(
+                ContainerID.CONTAINER_ID_INVENTORY.getValue(), true));
+    }
+
+    @Test
     void creativeDestinationsKeepJavaSlotSemantics() {
         final ClientAuthInventoryModule.CreativeDestination cursor = ClientAuthInventoryModule.resolveCreativeDestination(
                 new ItemStackRequestLayout.SlotInfo(ContainerEnumName.CursorContainer, 0, 0));

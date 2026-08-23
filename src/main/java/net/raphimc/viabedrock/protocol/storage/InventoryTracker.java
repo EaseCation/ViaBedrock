@@ -102,6 +102,13 @@ public class InventoryTracker extends StoredObject {
     private IntObjectPair<Form> currentForm = null;
     private byte bedrockInventoryContainerId = (byte) ContainerID.CONTAINER_ID_NONE.getValue();
     private boolean bedrockPlayerInventoryOpen;
+    /**
+     * Java Q / F never open a GUI. Interact.OpenInventory still sets MOT
+     * {@code inventoryOpen}. The matching CONTAINER_OPEN type=-1 must be ignored
+     * so it cannot re-open after we immediately close -1.
+     * Ref: MOT Player.java Interact action 6 / CONTAINER_CLOSE windowId -1.
+     */
+    private boolean suppressNextBedrockPlayerInventoryOpen;
     private PendingItemStackRequest pendingItemStackRequest;
     private NpcDialogueState currentNpcDialogue = null;
     private int nextItemStackRequestId = -1;
@@ -387,9 +394,37 @@ public class InventoryTracker extends StoredObject {
     }
 
     public void acknowledgeBedrockInventoryOpen(final byte containerId, final BlockPosition position) {
+        if (this.suppressNextBedrockPlayerInventoryOpen) {
+            this.suppressNextBedrockPlayerInventoryOpen = false;
+            this.bedrockPlayerInventoryOpen = false;
+            this.bedrockInventoryContainerId = (byte) ContainerID.CONTAINER_ID_NONE.getValue();
+            this.inventoryContainer.clearBedrockOpen();
+            return;
+        }
         this.bedrockInventoryContainerId = containerId;
         this.bedrockPlayerInventoryOpen = true;
         this.inventoryContainer.rememberBedrockOpen(containerId, position);
+    }
+
+    /**
+     * Close MOT player inventory after a Java-only hotbar Drop/Swap. MOT
+     * {@code inventoryOpen} blocks melee and later {@code addWindow}.
+     * If CONTAINER_OPEN type=-1 has not arrived yet, ignore that one OPEN so it
+     * cannot re-open after this close.
+     */
+    public void closeTransientBedrockPlayerInventory() {
+        if (this.currentContainer != null || this.pendingCloseContainer != null) {
+            return;
+        }
+        if (!this.bedrockPlayerInventoryOpen) {
+            this.suppressNextBedrockPlayerInventoryOpen = true;
+        }
+        this.closePacketSink.sendBedrockClose(this.user(), (byte) -1, ContainerType.NONE);
+        this.clearBedrockPlayerInventoryOpen();
+    }
+
+    public boolean isSuppressingNextBedrockPlayerInventoryOpen() {
+        return this.suppressNextBedrockPlayerInventoryOpen;
     }
 
     public boolean isBedrockPlayerInventoryOpen() {
