@@ -217,16 +217,19 @@ public final class ConfirmSkinLayout {
         }
         try {
             final JsonElement root = JsonParser.parseString(trimmed);
-            final Float armWidth = minArmWidth(root);
-            if (armWidth != null) {
-                return armWidth < 3.5f;
-            }
-            final String identifier = unambiguousHumanoidIdentifier(root);
-            if (isSlimGeometryName(identifier)) {
-                return true;
-            }
-            if (isWideGeometryName(identifier)) {
-                return false;
+            final JsonObject selected = selectHumanoidGeometry(root);
+            if (selected != null) {
+                final String identifier = geometryIdentifier(selected);
+                if (isSlimGeometryName(identifier)) {
+                    return true;
+                }
+                if (isWideGeometryName(identifier)) {
+                    return false;
+                }
+                final Float armWidth = minArmWidth(selected);
+                if (armWidth != null) {
+                    return armWidth < 3.5f;
+                }
             }
         } catch (final Exception ignored) {
         }
@@ -251,56 +254,52 @@ public final class ConfirmSkinLayout {
         return geo.contains("\"geometry.humanoid.custom\"") || geo.contains("'geometry.humanoid.custom'");
     }
 
-    private static String unambiguousHumanoidIdentifier(final JsonElement element) {
-        boolean slim = false;
-        boolean wide = false;
-        String lastSlim = null;
-        String lastWide = null;
-        for (final String identifier : collectIdentifiers(element, new ArrayList<>())) {
-            if (isSlimGeometryName(identifier)) {
-                slim = true;
-                lastSlim = identifier;
-            } else if (isWideGeometryName(identifier)) {
-                wide = true;
-                lastWide = identifier;
+    private static JsonObject selectHumanoidGeometry(final JsonElement element) {
+        if (element == null || element.isJsonNull()) {
+            return null;
+        }
+        if (element.isJsonArray()) {
+            JsonObject firstHumanoid = null;
+            for (final JsonElement child : element.getAsJsonArray()) {
+                final JsonObject match = selectHumanoidGeometry(child);
+                if (match == null) {
+                    continue;
+                }
+                final String identifier = geometryIdentifier(match);
+                if (isWideGeometryName(identifier)) {
+                    return match;
+                }
+                if (firstHumanoid == null) {
+                    firstHumanoid = match;
+                }
             }
+            return firstHumanoid;
         }
-        if (slim && !wide) {
-            return lastSlim;
+        if (!element.isJsonObject()) {
+            return null;
         }
-        if (wide && !slim) {
-            return lastWide;
+        final JsonObject object = element.getAsJsonObject();
+        if (object.has("minecraft:geometry")) {
+            return selectHumanoidGeometry(object.get("minecraft:geometry"));
+        }
+        final String identifier = geometryIdentifier(object);
+        if (isSlimGeometryName(identifier) || isWideGeometryName(identifier)) {
+            return object;
         }
         return null;
     }
 
-    private static List<String> collectIdentifiers(final JsonElement element, final List<String> out) {
-        if (element == null || element.isJsonNull()) {
-            return out;
-        }
-        if (element.isJsonArray()) {
-            for (final JsonElement child : element.getAsJsonArray()) {
-                collectIdentifiers(child, out);
-            }
-            return out;
-        }
-        if (!element.isJsonObject()) {
-            return out;
-        }
-        final JsonObject object = element.getAsJsonObject();
-        if (object.has("minecraft:geometry")) {
-            collectIdentifiers(object.get("minecraft:geometry"), out);
-        }
+    private static String geometryIdentifier(final JsonObject object) {
         if (object.has("description") && object.get("description").isJsonObject()) {
             final JsonObject description = object.getAsJsonObject("description");
             if (description.has("identifier") && description.get("identifier").isJsonPrimitive()) {
-                out.add(description.get("identifier").getAsString());
+                return description.get("identifier").getAsString();
             }
         }
-        if (object.has("identifier") && object.get("identifier").isJsonPrimitive() && !object.has("description")) {
-            out.add(object.get("identifier").getAsString());
+        if (object.has("identifier") && object.get("identifier").isJsonPrimitive()) {
+            return object.get("identifier").getAsString();
         }
-        return out;
+        return null;
     }
 
     private static Float minArmWidth(final JsonElement element) {

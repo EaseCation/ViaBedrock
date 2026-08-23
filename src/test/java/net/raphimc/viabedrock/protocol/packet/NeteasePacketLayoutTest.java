@@ -121,7 +121,13 @@ class NeteasePacketLayoutTest {
                         {"name": "rightArm", "cubes": [{"size": [4, 12, 4]}]}
                       ]
                     },
-                    {"description": {"identifier": "geometry.humanoid.customSlim"}}
+                    {
+                      "description": {"identifier": "geometry.humanoid.customSlim"},
+                      "bones": [
+                        {"name": "leftArm", "cubes": [{"size": [3, 12, 4]}]},
+                        {"name": "rightArm", "cubes": [{"size": [3, 12, 4]}]}
+                      ]
+                    }
                   ]
                 }
                 """;
