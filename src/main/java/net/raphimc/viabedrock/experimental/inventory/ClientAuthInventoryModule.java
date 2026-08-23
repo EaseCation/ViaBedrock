@@ -324,10 +324,17 @@ public class ClientAuthInventoryModule implements FeatureModule {
             return;
         }
         final InventoryTracker tracker = user.get(InventoryTracker.class);
-        if (tracker == null || !decoded.anyRejected()) {
-            if (tracker != null && !decoded.anyRejected()) {
-                tracker.takeLatestPendingItemStackRequest();
-            }
+        if (tracker == null) {
+            return;
+        }
+        if (!decoded.anyRejected()) {
+            // MOT success responses include the authoritative stackNetworkId.
+            // The actor is not resent INVENTORY_SLOT/CONTENT, so the predicted
+            // mirror must stamp those ids or the next click fails netId check.
+            // Ref: MOT ItemStackRequestHandler.handleRequests OK path and
+            // TransferItemActionProcessor.buildContainer.
+            tracker.takeLatestPendingItemStackRequest();
+            applyStackResponse(tracker, decoded);
             return;
         }
         InventorySnapshot snapshot = null;
@@ -351,6 +358,67 @@ public class ClientAuthInventoryModule implements FeatureModule {
             PacketFactory.sendJavaContainerSetContent(user, tracker.getCurrentContainer());
         }
         sendJavaCursor(user, tracker);
+    }
+
+    /**
+     * Writes MOT ITEM_STACK_RESPONSE netIds/counts into the SAI mirror.
+     * Does not push Java CONTAINER_SET_CONTENT: Java already has the predicted
+     * items, and ISR has no item id/NBT to rebuild from.
+     */
+    static void applyStackResponse(final InventoryTracker tracker, final ItemStackResponseLayout.DecodedResponse decoded) {
+        if (tracker == null || decoded == null || decoded.entries() == null) {
+            return;
+        }
+        for (final ItemStackResponseLayout.DecodedEntry entry : decoded.entries()) {
+            if (entry == null || !entry.ok() || entry.containers() == null) {
+                continue;
+            }
+            for (final ItemStackResponseLayout.DecodedContainer container : entry.containers()) {
+                if (container == null || container.slots() == null) {
+                    continue;
+                }
+                for (final ItemStackResponseLayout.DecodedSlot slot : container.slots()) {
+                    applyStackResponseSlot(tracker, container, slot);
+                }
+            }
+        }
+    }
+
+    static void applyStackResponseSlot(final InventoryTracker tracker, final ItemStackResponseLayout.DecodedContainer container,
+                                       final ItemStackResponseLayout.DecodedSlot slot) {
+        if (tracker == null || container == null || slot == null) {
+            return;
+        }
+        final SlotMapper.BedrockSlotRef ref = ItemStackSlotMapper.resolveResponseSlot(tracker, container.container(), slot.slot());
+        if (ref == null || ref.container() == null) {
+            return;
+        }
+        if (slot.count() <= 0) {
+            ref.container().setItemSilent(ref.slot(), BedrockItem.empty());
+            return;
+        }
+        final BedrockItem current = safeItem(ref.container(), ref.slot());
+        if (current == null || current.isEmpty()) {
+            // ISR has no identifier/NBT. Keep the predicted empty slot rather
+            // than inventing an item; later CONTENT/SLOT can still fill it.
+            return;
+        }
+        final BedrockItem updated = current.copy();
+        updated.setAmount(slot.count());
+        // MOT treats client netId 0 as "skip check". Keep the predicted id when
+        // the success entry omitted a real stackNetworkId.
+        if (slot.stackNetworkId() > 0) {
+            updated.setNetId(slot.stackNetworkId());
+        }
+        ref.container().setItemSilent(ref.slot(), updated);
+    }
+
+    private static BedrockItem safeItem(final Container container, final int slot) {
+        if (container == null || slot < 0 || slot >= container.size()) {
+            return BedrockItem.empty();
+        }
+        final BedrockItem item = container.getItem(slot);
+        return item != null ? item : BedrockItem.empty();
     }
 
     private void registerSelectTradeHandler(final BedrockProtocol protocol) {

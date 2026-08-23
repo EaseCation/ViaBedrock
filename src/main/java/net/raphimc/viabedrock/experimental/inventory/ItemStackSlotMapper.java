@@ -32,7 +32,9 @@ import net.raphimc.viabedrock.experimental.inventory.SlotMapper.BedrockSlotRef;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
+import net.raphimc.viabedrock.protocol.model.FullContainerName;
 import net.raphimc.viabedrock.protocol.packet.ItemStackRequestLayout;
+import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 
 /**
  * Maps a Bedrock container-id/slot pair onto Nukkit's ItemStackRequest slot info.
@@ -227,5 +229,78 @@ public final class ItemStackSlotMapper {
             };
         }
         return new ItemStackRequestLayout.SlotInfo(ContainerEnumName.LevelEntityContainer, slot, 0);
+    }
+
+    /**
+     * Inverse of {@link #fromOpenContainer} / {@link #playerInventory} / {@link #hud}.
+     * MOT ITEM_STACK_RESPONSE slots use the same network numbers as ItemStackRequest.
+     * Ref: MOT NetworkMapping.toInternalSlot and TransferItemActionProcessor.buildContainer.
+     */
+    public static BedrockSlotRef resolveResponseSlot(final InventoryTracker tracker, final FullContainerName containerName, final int networkSlot) {
+        if (tracker == null || containerName == null || containerName.name() == null) {
+            return null;
+        }
+        return resolveResponseSlot(tracker, containerName.name(), networkSlot, containerName.dynamicId());
+    }
+
+    public static BedrockSlotRef resolveResponseSlot(final InventoryTracker tracker, final ContainerEnumName name, final int networkSlot, final Integer dynamicId) {
+        if (tracker == null || name == null) {
+            return null;
+        }
+        return switch (name) {
+            case HotbarContainer, InventoryContainer, CombinedHotbarAndInventoryContainer -> {
+                if (networkSlot < 0 || networkSlot > 35) {
+                    yield null;
+                }
+                yield new BedrockSlotRef(ContainerID.CONTAINER_ID_INVENTORY.getValue(), networkSlot, tracker.getInventoryContainer());
+            }
+            case ArmorContainer -> {
+                if (networkSlot < 0 || networkSlot > 3) {
+                    yield null;
+                }
+                yield new BedrockSlotRef(ContainerID.CONTAINER_ID_ARMOR.getValue(), networkSlot, tracker.getArmorContainer());
+            }
+            case OffhandContainer -> new BedrockSlotRef(ContainerID.CONTAINER_ID_OFFHAND.getValue(), 0, tracker.getOffhandContainer());
+            case CursorContainer -> new BedrockSlotRef(ContainerID.CONTAINER_ID_PLAYER_ONLY_UI.getValue(), 0, tracker.getHudContainer());
+            case CreatedOutputContainer, CraftingOutputPreviewContainer -> new BedrockSlotRef(ContainerID.CONTAINER_ID_PLAYER_ONLY_UI.getValue(), 50, tracker.getHudContainer());
+            case CraftingInputContainer -> {
+                if (networkSlot < 28 || networkSlot > 40) {
+                    yield null;
+                }
+                yield new BedrockSlotRef(ContainerID.CONTAINER_ID_PLAYER_ONLY_UI.getValue(), networkSlot, tracker.getHudContainer());
+            }
+            case DynamicContainer -> {
+                final var dynamic = tracker.getDynamicContainer(new FullContainerName(name, dynamicId));
+                if (dynamic == null) {
+                    yield null;
+                }
+                yield new BedrockSlotRef(dynamic.containerId(), networkSlot, dynamic);
+            }
+            default -> resolveOpenContainerSlot(tracker.getCurrentContainer(), name, networkSlot);
+        };
+    }
+
+    static BedrockSlotRef resolveOpenContainerSlot(final Container container, final ContainerEnumName name, final int networkSlot) {
+        if (container == null || name == null) {
+            return null;
+        }
+        final int size = container.size();
+        for (int slot = 0; slot < size; slot++) {
+            final ItemStackRequestLayout.SlotInfo info = fromOpenContainer(container, slot);
+            if (info != null && info.container() == name && info.slot() == networkSlot) {
+                return new BedrockSlotRef(container.containerId(), slot, container);
+            }
+        }
+        if (isLevelEntityLike(name) && networkSlot >= 0 && networkSlot < size) {
+            return new BedrockSlotRef(container.containerId(), networkSlot, container);
+        }
+        return null;
+    }
+
+    private static boolean isLevelEntityLike(final ContainerEnumName name) {
+        return name == ContainerEnumName.LevelEntityContainer
+                || name == ContainerEnumName.ShulkerBoxContainer
+                || name == ContainerEnumName.BarrelContainer
+                || name == ContainerEnumName.CrafterLevelEntityContainer;
     }
 }

@@ -22,8 +22,13 @@ import net.raphimc.viabedrock.api.model.container.AnvilContainer;
 import net.raphimc.viabedrock.api.model.container.ChestContainer;
 import net.raphimc.viabedrock.api.model.container.FurnaceContainer;
 import net.raphimc.viabedrock.api.model.container.GenericContainer;
+import io.netty.channel.embedded.EmbeddedChannel;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
+import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
+import net.raphimc.viabedrock.protocol.model.FullContainerName;
+import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
+import net.raphimc.viabedrock.test.StubUserConnection;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -89,6 +94,53 @@ class ItemStackSlotMapperTest {
         final ChestContainer chest = new ChestContainer(null, (byte) 5, null, new BlockPosition(0, 64, 0), 27);
         assertEquals(ContainerEnumName.LevelEntityContainer, ItemStackSlotMapper.fromOpenContainer(chest, 3).container());
         assertEquals(3, ItemStackSlotMapper.fromOpenContainer(chest, 3).slot());
+    }
+
+    @Test
+    void responseSlotsInvertPlayerAndOpenContainerMappings() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final StubUserConnection user = new StubUserConnection(channel);
+            final InventoryTracker tracker = new InventoryTracker(user);
+            user.put(tracker);
+
+            final SlotMapper.BedrockSlotRef hotbar = ItemStackSlotMapper.resolveResponseSlot(
+                    tracker, new FullContainerName(ContainerEnumName.HotbarContainer, null), 3);
+            assertEquals(ContainerID.CONTAINER_ID_INVENTORY.getValue(), hotbar.containerId());
+            assertEquals(3, hotbar.slot());
+
+            final SlotMapper.BedrockSlotRef cursor = ItemStackSlotMapper.resolveResponseSlot(
+                    tracker, new FullContainerName(ContainerEnumName.CursorContainer, null), 0);
+            assertEquals(0, cursor.slot());
+            assertEquals(tracker.getHudContainer(), cursor.container());
+
+            final SlotMapper.BedrockSlotRef created = ItemStackSlotMapper.resolveResponseSlot(
+                    tracker, new FullContainerName(ContainerEnumName.CreatedOutputContainer, null), 50);
+            assertEquals(50, created.slot());
+
+            final AnvilContainer anvil = new AnvilContainer(user, (byte) 1, null, new BlockPosition(0, 64, 0));
+            tracker.setCurrentContainer(anvil);
+            final SlotMapper.BedrockSlotRef anvilInput = ItemStackSlotMapper.resolveResponseSlot(
+                    tracker, new FullContainerName(ContainerEnumName.AnvilInputContainer, null), 1);
+            assertEquals(0, anvilInput.slot());
+            assertEquals(anvil, anvilInput.container());
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+
+        final EmbeddedChannel chestChannel = new EmbeddedChannel();
+        try {
+            final StubUserConnection user = new StubUserConnection(chestChannel);
+            final InventoryTracker tracker = new InventoryTracker(user);
+            final ChestContainer chest = new ChestContainer(user, (byte) 5, null, new BlockPosition(0, 64, 0), 27);
+            tracker.setCurrentContainer(chest);
+            final SlotMapper.BedrockSlotRef chestSlot = ItemStackSlotMapper.resolveResponseSlot(
+                    tracker, new FullContainerName(ContainerEnumName.LevelEntityContainer, null), 5);
+            assertEquals(5, chestSlot.slot());
+            assertEquals(chest, chestSlot.container());
+        } finally {
+            chestChannel.finishAndReleaseAll();
+        }
     }
 }
 

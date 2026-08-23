@@ -56,7 +56,9 @@ public final class JavaContainerTitles {
             case "chest", "trapped_chest" -> "container.chest";
             case "dispenser" -> "container.dispenser";
             case "dropper" -> "container.dropper";
-            default -> "container." + bedrockBlockTag;
+            // Unmapped NetEase custom tags have no Java lang key. Falling back
+            // to container.<tag> shows a raw translation key on JE 1.21.
+            default -> keyForType(type);
         };
     }
 
@@ -85,7 +87,7 @@ public final class JavaContainerTitles {
             case SMITHING_TABLE -> "container.upgrade";
             case CRAFTER -> "container.crafter";
             case INVENTORY -> "container.inventory";
-            default -> "container." + type.name().toLowerCase(java.util.Locale.ROOT);
+            default -> "container.chest";
         };
     }
 }

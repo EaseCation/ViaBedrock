@@ -325,7 +325,7 @@ public class InventoryPackets {
             // next mapped packet is not parsed as leftover ITEM_STACK_RESPONSE bytes.
             // NetEase 860 error entries have no containers, so a rejected click must
             // roll the optimistic Java prediction back from the pre-click snapshot.
-            final ItemStackResponseLayout.DecodedResponse decoded = ItemStackResponseLayout.skip(wrapper);
+            final ItemStackResponseLayout.DecodedResponse decoded = ItemStackResponseLayout.decode(wrapper);
             PacketLeftoverLayout.discardUnreadInput(wrapper);
             ClientAuthInventoryModule.handleItemStackResponse(wrapper.user(), decoded);
         });

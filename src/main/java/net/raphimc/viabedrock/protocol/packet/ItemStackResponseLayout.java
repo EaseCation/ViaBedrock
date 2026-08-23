@@ -13,7 +13,13 @@ import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Types;
 import io.netty.buffer.ByteBuf;
 import net.raphimc.viabedrock.ViaBedrock;
+import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
+import net.raphimc.viabedrock.protocol.model.FullContainerName;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+import net.raphimc.viabedrock.protocol.types.model.ContainerSlotTypeLayout;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Wire-layout helpers for Bedrock ITEM_STACK_RESPONSE (packet 0x94).
@@ -57,112 +63,156 @@ public final class ItemStackResponseLayout {
     }
 
     public static DecodedResponse skip(final PacketWrapper wrapper) {
-        return skip(wrapper, emulateNetEase(), encodeProtocol());
+        return decode(wrapper, emulateNetEase(), encodeProtocol());
     }
 
     public static DecodedResponse skip(final PacketWrapper wrapper, final boolean emulateNetEase, final int protocol) {
-        final int count = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
-        boolean anyRejected = false;
-        final int[] requestIds = new int[Math.max(0, count)];
-        for (int i = 0; i < count; i++) {
-            final DecodedEntry entry = skipEntryDetailed(wrapper, emulateNetEase, protocol);
-            requestIds[i] = entry.requestId();
-            if (!entry.ok()) {
-                anyRejected = true;
-            }
-        }
-        return new DecodedResponse(count, anyRejected, requestIds);
+        return decode(wrapper, emulateNetEase, protocol);
     }
 
     public static DecodedResponse skip(final ByteBuf buffer, final boolean emulateNetEase, final int protocol) {
-        final int count = BedrockTypes.UNSIGNED_VAR_INT.read(buffer);
+        return decode(buffer, emulateNetEase, protocol);
+    }
+
+    public static DecodedResponse decode(final PacketWrapper wrapper) {
+        return decode(wrapper, emulateNetEase(), encodeProtocol());
+    }
+
+    public static DecodedResponse decode(final PacketWrapper wrapper, final boolean emulateNetEase, final int protocol) {
+        final int count = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
         boolean anyRejected = false;
         final int[] requestIds = new int[Math.max(0, count)];
+        final List<DecodedEntry> entries = new ArrayList<>(Math.max(0, count));
         for (int i = 0; i < count; i++) {
-            final DecodedEntry entry = skipEntryDetailed(buffer, emulateNetEase, protocol);
+            final DecodedEntry entry = decodeEntry(wrapper, emulateNetEase, protocol);
             requestIds[i] = entry.requestId();
+            entries.add(entry);
             if (!entry.ok()) {
                 anyRejected = true;
             }
         }
-        return new DecodedResponse(count, anyRejected, requestIds);
+        return new DecodedResponse(count, anyRejected, requestIds, List.copyOf(entries));
+    }
+
+    public static DecodedResponse decode(final ByteBuf buffer, final boolean emulateNetEase, final int protocol) {
+        final int count = BedrockTypes.UNSIGNED_VAR_INT.read(buffer);
+        boolean anyRejected = false;
+        final int[] requestIds = new int[Math.max(0, count)];
+        final List<DecodedEntry> entries = new ArrayList<>(Math.max(0, count));
+        for (int i = 0; i < count; i++) {
+            final DecodedEntry entry = decodeEntry(buffer, emulateNetEase, protocol);
+            requestIds[i] = entry.requestId();
+            entries.add(entry);
+            if (!entry.ok()) {
+                anyRejected = true;
+            }
+        }
+        return new DecodedResponse(count, anyRejected, requestIds, List.copyOf(entries));
     }
 
     public static boolean skipEntry(final PacketWrapper wrapper, final boolean emulateNetEase, final int protocol) {
-        return skipEntryDetailed(wrapper, emulateNetEase, protocol).ok();
+        return decodeEntry(wrapper, emulateNetEase, protocol).ok();
     }
 
     public static boolean skipEntry(final ByteBuf buffer, final boolean emulateNetEase, final int protocol) {
-        return skipEntryDetailed(buffer, emulateNetEase, protocol).ok();
+        return decodeEntry(buffer, emulateNetEase, protocol).ok();
     }
 
     public static DecodedEntry skipEntryDetailed(final PacketWrapper wrapper, final boolean emulateNetEase, final int protocol) {
+        return decodeEntry(wrapper, emulateNetEase, protocol);
+    }
+
+    public static DecodedEntry skipEntryDetailed(final ByteBuf buffer, final boolean emulateNetEase, final int protocol) {
+        return decodeEntry(buffer, emulateNetEase, protocol);
+    }
+
+    public static DecodedEntry decodeEntry(final PacketWrapper wrapper, final boolean emulateNetEase, final int protocol) {
         final byte result = wrapper.read(Types.BYTE);
         final int requestId = wrapper.read(BedrockTypes.VAR_INT);
         if (usesOptionalContainerEntries(emulateNetEase, protocol)) {
             wrapper.read(Types.BOOLEAN); // always true on current Nukkit
             if (!wrapper.read(Types.BOOLEAN)) {
-                return new DecodedEntry(requestId, result == RESULT_OK);
+                return new DecodedEntry(requestId, result == RESULT_OK, List.of());
             }
         } else if (result != RESULT_OK) {
-            return new DecodedEntry(requestId, false);
+            return new DecodedEntry(requestId, false, List.of());
         }
-        skipContainers(wrapper, emulateNetEase, protocol);
-        return new DecodedEntry(requestId, result == RESULT_OK);
+        return new DecodedEntry(requestId, result == RESULT_OK, decodeContainers(wrapper, emulateNetEase, protocol));
     }
 
-    public static DecodedEntry skipEntryDetailed(final ByteBuf buffer, final boolean emulateNetEase, final int protocol) {
+    public static DecodedEntry decodeEntry(final ByteBuf buffer, final boolean emulateNetEase, final int protocol) {
         final byte result = buffer.readByte();
         final int requestId = BedrockTypes.VAR_INT.read(buffer);
         if (usesOptionalContainerEntries(emulateNetEase, protocol)) {
             buffer.readBoolean(); // always true on current Nukkit
             if (!buffer.readBoolean()) {
-                return new DecodedEntry(requestId, result == RESULT_OK);
+                return new DecodedEntry(requestId, result == RESULT_OK, List.of());
             }
         } else if (result != RESULT_OK) {
-            return new DecodedEntry(requestId, false);
+            return new DecodedEntry(requestId, false, List.of());
         }
-        skipContainers(buffer, emulateNetEase, protocol);
-        return new DecodedEntry(requestId, result == RESULT_OK);
+        return new DecodedEntry(requestId, result == RESULT_OK, decodeContainers(buffer, emulateNetEase, protocol));
     }
 
     public static void skipContainers(final PacketWrapper wrapper, final boolean emulateNetEase, final int protocol) {
-        final int containerCount = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
-        for (int i = 0; i < containerCount; i++) {
-            if (usesFullContainerName(emulateNetEase, protocol)) {
-                wrapper.read(BedrockTypes.FULL_CONTAINER_NAME);
-            } else {
-                wrapper.read(Types.BYTE);
-            }
-            skipSlots(wrapper, emulateNetEase, protocol);
-        }
+        decodeContainers(wrapper, emulateNetEase, protocol);
     }
 
     public static void skipContainers(final ByteBuf buffer, final boolean emulateNetEase, final int protocol) {
-        final int containerCount = BedrockTypes.UNSIGNED_VAR_INT.read(buffer);
+        decodeContainers(buffer, emulateNetEase, protocol);
+    }
+
+    public static List<DecodedContainer> decodeContainers(final PacketWrapper wrapper, final boolean emulateNetEase, final int protocol) {
+        final int containerCount = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
+        final List<DecodedContainer> containers = new ArrayList<>(Math.max(0, containerCount));
         for (int i = 0; i < containerCount; i++) {
+            final FullContainerName name;
             if (usesFullContainerName(emulateNetEase, protocol)) {
-                BedrockTypes.FULL_CONTAINER_NAME.read(buffer);
+                name = wrapper.read(BedrockTypes.FULL_CONTAINER_NAME);
             } else {
-                buffer.readByte();
+                name = new FullContainerName(ContainerSlotTypeLayout.fromWire(wrapper.read(Types.BYTE) & 0xFF, emulateNetEase), null);
             }
-            skipSlots(buffer, emulateNetEase, protocol);
+            containers.add(new DecodedContainer(name, decodeSlots(wrapper, emulateNetEase, protocol)));
         }
+        return List.copyOf(containers);
+    }
+
+    public static List<DecodedContainer> decodeContainers(final ByteBuf buffer, final boolean emulateNetEase, final int protocol) {
+        final int containerCount = BedrockTypes.UNSIGNED_VAR_INT.read(buffer);
+        final List<DecodedContainer> containers = new ArrayList<>(Math.max(0, containerCount));
+        for (int i = 0; i < containerCount; i++) {
+            final FullContainerName name;
+            if (usesFullContainerName(emulateNetEase, protocol)) {
+                name = BedrockTypes.FULL_CONTAINER_NAME.read(buffer);
+            } else {
+                name = new FullContainerName(ContainerSlotTypeLayout.fromWire(buffer.readByte() & 0xFF, emulateNetEase), null);
+            }
+            containers.add(new DecodedContainer(name, decodeSlots(buffer, emulateNetEase, protocol)));
+        }
+        return List.copyOf(containers);
     }
 
     public static void skipSlots(final PacketWrapper wrapper, final boolean emulateNetEase, final int protocol) {
+        decodeSlots(wrapper, emulateNetEase, protocol);
+    }
+
+    public static void skipSlots(final ByteBuf buffer, final boolean emulateNetEase, final int protocol) {
+        decodeSlots(buffer, emulateNetEase, protocol);
+    }
+
+    public static List<DecodedSlot> decodeSlots(final PacketWrapper wrapper, final boolean emulateNetEase, final int protocol) {
         final int slotCount = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
+        final List<DecodedSlot> slots = new ArrayList<>(Math.max(0, slotCount));
         for (int i = 0; i < slotCount; i++) {
-            wrapper.read(Types.BYTE); // slot
-            wrapper.read(Types.BYTE); // hotbar slot
-            wrapper.read(Types.BYTE); // count
+            final int slot = wrapper.read(Types.BYTE) & 0xFF;
+            final int hotbarSlot = wrapper.read(Types.BYTE) & 0xFF;
+            final int count = wrapper.read(Types.BYTE) & 0xFF;
+            final int stackNetworkId;
             if (usesOptionalContainerEntries(emulateNetEase, protocol)) {
                 wrapper.read(Types.BOOLEAN); // always true on current Nukkit
-                if (wrapper.read(Types.BOOLEAN)) {
-                    wrapper.read(BedrockTypes.VAR_INT);
-                }
+                stackNetworkId = wrapper.read(Types.BOOLEAN) ? wrapper.read(BedrockTypes.VAR_INT) : 0;
             } else {
-                wrapper.read(BedrockTypes.VAR_INT); // stack network id
+                stackNetworkId = wrapper.read(BedrockTypes.VAR_INT);
             }
             if (usesCustomName(emulateNetEase, protocol)) {
                 wrapper.read(BedrockTypes.STRING);
@@ -173,22 +223,24 @@ public final class ItemStackResponseLayout {
             if (usesDurabilityCorrection(emulateNetEase, protocol)) {
                 wrapper.read(BedrockTypes.VAR_INT);
             }
+            slots.add(new DecodedSlot(slot, hotbarSlot, count, stackNetworkId));
         }
+        return List.copyOf(slots);
     }
 
-    public static void skipSlots(final ByteBuf buffer, final boolean emulateNetEase, final int protocol) {
+    public static List<DecodedSlot> decodeSlots(final ByteBuf buffer, final boolean emulateNetEase, final int protocol) {
         final int slotCount = BedrockTypes.UNSIGNED_VAR_INT.read(buffer);
+        final List<DecodedSlot> slots = new ArrayList<>(Math.max(0, slotCount));
         for (int i = 0; i < slotCount; i++) {
-            buffer.readByte(); // slot
-            buffer.readByte(); // hotbar slot
-            buffer.readByte(); // count
+            final int slot = buffer.readByte() & 0xFF;
+            final int hotbarSlot = buffer.readByte() & 0xFF;
+            final int count = buffer.readByte() & 0xFF;
+            final int stackNetworkId;
             if (usesOptionalContainerEntries(emulateNetEase, protocol)) {
                 buffer.readBoolean(); // always true on current Nukkit
-                if (buffer.readBoolean()) {
-                    BedrockTypes.VAR_INT.read(buffer);
-                }
+                stackNetworkId = buffer.readBoolean() ? BedrockTypes.VAR_INT.read(buffer) : 0;
             } else {
-                BedrockTypes.VAR_INT.read(buffer); // stack network id
+                stackNetworkId = BedrockTypes.VAR_INT.read(buffer);
             }
             if (usesCustomName(emulateNetEase, protocol)) {
                 BedrockTypes.STRING.read(buffer);
@@ -199,7 +251,9 @@ public final class ItemStackResponseLayout {
             if (usesDurabilityCorrection(emulateNetEase, protocol)) {
                 BedrockTypes.VAR_INT.read(buffer);
             }
+            slots.add(new DecodedSlot(slot, hotbarSlot, count, stackNetworkId));
         }
+        return List.copyOf(slots);
     }
 
     public static void writeOkEntry(final ByteBuf buffer, final boolean emulateNetEase, final int protocol,
@@ -264,12 +318,45 @@ public final class ItemStackResponseLayout {
         return 975;
     }
 
-    public record DecodedEntry(int requestId, boolean ok) {
+    public record DecodedSlot(int slot, int hotbarSlot, int count, int stackNetworkId) {
     }
 
-    public record DecodedResponse(int entryCount, boolean anyRejected, int[] requestIds) {
+    public record DecodedContainer(FullContainerName container, List<DecodedSlot> slots) {
+        public DecodedContainer {
+            slots = slots == null ? List.of() : List.copyOf(slots);
+        }
+
+        public ContainerEnumName name() {
+            return this.container != null ? this.container.name() : null;
+        }
+
+        public Integer dynamicId() {
+            return this.container != null ? this.container.dynamicId() : null;
+        }
+    }
+
+    public record DecodedEntry(int requestId, boolean ok, List<DecodedContainer> containers) {
+        public DecodedEntry(final int requestId, final boolean ok) {
+            this(requestId, ok, List.of());
+        }
+
+        public DecodedEntry {
+            containers = containers == null ? List.of() : List.copyOf(containers);
+        }
+    }
+
+    public record DecodedResponse(int entryCount, boolean anyRejected, int[] requestIds, List<DecodedEntry> entries) {
         public DecodedResponse(final int entryCount, final boolean anyRejected) {
-            this(entryCount, anyRejected, new int[0]);
+            this(entryCount, anyRejected, new int[0], List.of());
+        }
+
+        public DecodedResponse(final int entryCount, final boolean anyRejected, final int[] requestIds) {
+            this(entryCount, anyRejected, requestIds, List.of());
+        }
+
+        public DecodedResponse {
+            requestIds = requestIds == null ? new int[0] : requestIds;
+            entries = entries == null ? List.of() : List.copyOf(entries);
         }
     }
 

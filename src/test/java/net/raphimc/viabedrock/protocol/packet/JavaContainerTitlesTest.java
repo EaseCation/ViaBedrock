@@ -34,4 +34,11 @@ class JavaContainerTitlesTest {
         assertEquals("container.chest", JavaContainerTitles.key(null, ContainerType.CONTAINER));
         assertEquals("container.hopper", JavaContainerTitles.key(null, ContainerType.HOPPER));
     }
+
+    @Test
+    void unmappedCustomTagFallsBackToContainerType() {
+        assertEquals("container.chest", JavaContainerTitles.key("netease_custom_chest", ContainerType.CONTAINER));
+        assertEquals("container.hopper", JavaContainerTitles.key("unknown_hopper", ContainerType.HOPPER));
+        assertEquals("container.chest", JavaContainerTitles.keyForType(ContainerType.NONE));
+    }
 }
