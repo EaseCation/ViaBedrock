@@ -44,16 +44,19 @@ import net.raphimc.viabedrock.experimental.inventory.ItemUseHandContext;
 import net.raphimc.viabedrock.experimental.model.PlayerAuthInputContext;
 import net.raphimc.viabedrock.experimental.model.inventory.BedrockInventoryTransaction;
 import net.raphimc.viabedrock.experimental.rewriter.InventoryTransactionRewriter;
+import net.raphimc.viabedrock.experimental.storage.RidingTracker;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
+import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomBlockTags;
 import net.raphimc.viabedrock.protocol.data.enums.Direction;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
 import net.raphimc.viabedrock.protocol.data.enums.java.*;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.*;
 import net.raphimc.viabedrock.protocol.model.Position2f;
 import net.raphimc.viabedrock.protocol.model.Position3f;
+import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.GameTypeRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.neighbor.BlockNeighborView;
@@ -414,6 +417,8 @@ public class ClientPlayerPackets {
                 clientPlayer.setSprinting(true);
             } else if (action == PlayerCommandAction.STOP_SPRINTING) {
                 clientPlayer.setSprinting(false);
+            } else if (action == PlayerCommandAction.START_FALL_FLYING) {
+                clientPlayer.setGliding(true);
             }
             clientPlayer.addAuthInputData(inputData);
         });
@@ -655,6 +660,8 @@ public class ClientPlayerPackets {
                 clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.SneakReleasedRaw, PlayerAuthInputPacket_InputData.StopSneaking);
             }
 
+            applyJavaPoseTransitions(wrapper.user(), clientPlayer);
+
             final Position3f positionDelta = clientPlayer.position().subtract(prevPosition);
             final Position3f velocity;
             if (immobile) {
@@ -824,6 +831,119 @@ public class ClientPlayerPackets {
             case START_FALL_FLYING -> PlayerAuthInputPacket_InputData.StartGliding;
             default -> throw new IllegalStateException("Unhandled PlayerCommandAction: " + action);
         };
+    }
+
+    /**
+     * Java never emits Bedrock {@code START/STOP_SWIMMING} or {@code STOP_GLIDING}. MOT 860 and
+     * GanAC only enter the swimming/gliding pose from those AuthInput flags, so translate the
+     * Java sprint-in-water and land-while-gliding edges here.
+     */
+    static void applyJavaPoseTransitions(final UserConnection user, final ClientPlayerEntity clientPlayer) {
+        if (clientPlayer == null) {
+            return;
+        }
+        applyJavaSwimTransition(user, clientPlayer);
+        applyJavaGlideStop(clientPlayer);
+    }
+
+    static void applyJavaSwimTransition(final UserConnection user, final ClientPlayerEntity clientPlayer) {
+        final PlayerAuthInputPacket_InputData flag = swimTransitionFlag(wantsJavaSwim(user, clientPlayer), clientPlayer.isSwimming());
+        if (flag == PlayerAuthInputPacket_InputData.StartSwimming) {
+            clientPlayer.setSwimming(true);
+            clientPlayer.addAuthInputData(flag);
+        } else if (flag == PlayerAuthInputPacket_InputData.StopSwimming) {
+            clientPlayer.setSwimming(false);
+            clientPlayer.addAuthInputData(flag);
+        }
+    }
+
+    static void applyJavaGlideStop(final ClientPlayerEntity clientPlayer) {
+        if (shouldStopGliding(clientPlayer.isGliding(), clientPlayer.isOnGround())) {
+            clientPlayer.setGliding(false);
+            clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StopGliding);
+        }
+    }
+
+    static PlayerAuthInputPacket_InputData swimTransitionFlag(final boolean wantSwim, final boolean currentlySwimming) {
+        if (wantSwim && !currentlySwimming) {
+            return PlayerAuthInputPacket_InputData.StartSwimming;
+        }
+        if (!wantSwim && currentlySwimming) {
+            return PlayerAuthInputPacket_InputData.StopSwimming;
+        }
+        return null;
+    }
+
+    static boolean shouldStopGliding(final boolean gliding, final boolean onGround) {
+        return gliding && onGround;
+    }
+
+    static boolean wantsJavaSwim(final boolean gliding, final boolean flying, final boolean riding,
+                                 final boolean sprinting, final boolean sprintHeld, final boolean inWater) {
+        if (gliding || flying || riding) {
+            return false;
+        }
+        return (sprinting || sprintHeld) && inWater;
+    }
+
+    static boolean wantsJavaSwim(final UserConnection user, final ClientPlayerEntity clientPlayer) {
+        return wantsJavaSwim(
+                clientPlayer.isGliding(),
+                clientPlayer.abilities().getBooleanValue(AbilitiesIndex.Flying),
+                isLocalRiding(user),
+                clientPlayer.isSprinting(),
+                clientPlayer.inputFlags().contains(InputFlag.SPRINT),
+                isInsideOfWater(user, clientPlayer)
+        );
+    }
+
+    static boolean isLocalRiding(final UserConnection user) {
+        if (user == null) {
+            return false;
+        }
+        final RidingTracker ridingTracker = user.get(RidingTracker.class);
+        return ridingTracker != null && ridingTracker.isLocalRiding();
+    }
+
+    /**
+     * MOT {@code Entity#isInsideOfWater()} checks the feet block on layer 0, then layer 1
+     * waterlogging. ClientPlayerEntity.position() is the eye, so subtract {@code eyeOffset()}.
+     */
+    static boolean isInsideOfWater(final UserConnection user, final ClientPlayerEntity clientPlayer) {
+        if (user == null || clientPlayer == null || clientPlayer.position() == null) {
+            return false;
+        }
+        final ChunkTracker chunkTracker = user.get(ChunkTracker.class);
+        final BlockStateRewriter blockStateRewriter = user.get(BlockStateRewriter.class);
+        if (chunkTracker == null || blockStateRewriter == null) {
+            return false;
+        }
+        final Position3f position = clientPlayer.position();
+        final BlockPosition feet = new BlockPosition(
+                (int) Math.floor(position.x()),
+                (int) Math.floor(position.y() - clientPlayer.eyeOffset()),
+                (int) Math.floor(position.z())
+        );
+        return isWaterBlock(blockStateRewriter, chunkTracker.getBlockState(0, feet))
+                || isWaterBlock(blockStateRewriter, chunkTracker.getBlockState(1, feet));
+    }
+
+    static boolean isWaterBlock(final BlockStateRewriter blockStateRewriter, final int bedrockBlockStateId) {
+        if (blockStateRewriter == null) {
+            return false;
+        }
+        if (CustomBlockTags.WATER.equals(blockStateRewriter.tag(bedrockBlockStateId))) {
+            return true;
+        }
+        final BlockState state = blockStateRewriter.blockState(bedrockBlockStateId);
+        if (state == null) {
+            return false;
+        }
+        return isWaterIdentifier(state.identifier());
+    }
+
+    static boolean isWaterIdentifier(final String identifier) {
+        return "water".equals(identifier) || "flowing_water".equals(identifier);
     }
 
     /**

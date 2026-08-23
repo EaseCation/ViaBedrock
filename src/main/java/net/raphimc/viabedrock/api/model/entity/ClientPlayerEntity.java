@@ -91,6 +91,10 @@ public class ClientPlayerEntity extends PlayerEntity {
     private boolean horizontalCollision;
     private boolean sneaking;
     private boolean sprinting;
+    // Java never sends Bedrock START/STOP_SWIMMING or STOP_GLIDING. Track the
+    // translated pose so AuthInput can emit the one-tick MOT flags GanAC needs.
+    private boolean swimming;
+    private boolean gliding;
     // MOT UPDATE_CLIENT_INPUT_LOCKS bit 4. Protocol 560+ no longer sets ActorFlags.NOAI
     // for movement locks, so Java would otherwise keep walking while the backend is frozen.
     private boolean inputMovementLocked;
@@ -448,6 +452,22 @@ public class ClientPlayerEntity extends PlayerEntity {
 
     public boolean isSprinting() {
         return this.sprinting;
+    }
+
+    public boolean isSwimming() {
+        return this.swimming;
+    }
+
+    public void setSwimming(final boolean swimming) {
+        this.swimming = swimming;
+    }
+
+    public boolean isGliding() {
+        return this.gliding;
+    }
+
+    public void setGliding(final boolean gliding) {
+        this.gliding = gliding;
     }
 
     public void setSprinting(final boolean sprinting) {
