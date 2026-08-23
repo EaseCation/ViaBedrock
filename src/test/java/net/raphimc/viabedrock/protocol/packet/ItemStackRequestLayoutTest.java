@@ -114,6 +114,20 @@ class ItemStackRequestLayoutTest {
     }
 
     @Test
+    void netease860CraftRecipeWritesByteTypeUnsignedNetIdAndTimesCrafted() {
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            ItemStackRequestLayout.writeCraftRecipe(buffer, 0x10000001, 1, true, 860);
+            assertEquals(ItemStackRequestActionType.CraftRecipe.getValue(), buffer.readUnsignedByte());
+            assertEquals(0x10000001, (int) net.raphimc.viabedrock.protocol.types.BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+            assertEquals(1, buffer.readUnsignedByte());
+            assertFalse(buffer.isReadable());
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
     void netease860CraftCreativeWritesByteTypeUnsignedNetIdAndTimesCrafted() {
         final ByteBuf buffer = Unpooled.buffer();
         try {

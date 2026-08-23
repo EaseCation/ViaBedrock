@@ -42,26 +42,32 @@ import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.chunk.BedrockBlockEntity;
 import net.raphimc.viabedrock.api.model.container.*;
 import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
+import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
 import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.api.util.PacketFactory;
-import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
-import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
+import net.raphimc.viabedrock.api.util.RegistryUtil;
 import net.raphimc.viabedrock.api.util.TextUtil;
+import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.experimental.inventory.ClientAuthInventoryModule;
+import net.raphimc.viabedrock.experimental.inventory.ItemStackRequestEncoder;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.ContainerInput;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.EquipmentSlot;
+import net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode;
 import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomBlockTags;
+import net.raphimc.viabedrock.protocol.data.generated.java.RegistryKeys;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
+import net.raphimc.viabedrock.protocol.model.EntityAttribute;
 import net.raphimc.viabedrock.protocol.model.FullContainerName;
 import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 import net.raphimc.viabedrock.protocol.storage.*;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
+import java.util.List;
 import java.util.logging.Level;
 
 public class InventoryPackets {
@@ -241,6 +247,9 @@ public class InventoryPackets {
                     wrapper.set(Types.VAR_INT, 0, (int) container.javaContainerId());
 
                     clearClosedCraftingTable(inventoryTracker, container);
+                    if (container.type() == ContainerType.ENCHANTMENT) {
+                        wrapper.user().get(EnchantingSessionStorage.class).clear();
+                    }
                 });
             }
         });
@@ -337,6 +346,20 @@ public class InventoryPackets {
             wrapper.write(Types.VAR_INT, javaWindowId); // container id
             wrapper.write(Types.SHORT, (short) numeratorSlot); // property
             wrapper.write(Types.SHORT, (short) value); // value
+        });
+        protocol.registerClientbound(ClientboundBedrockPackets.PLAYER_ENCHANT_OPTIONS, null, wrapper -> {
+            wrapper.cancel();
+            final List<PlayerEnchantOptionsLayout.EnchantOption> options = PlayerEnchantOptionsLayout.readPacket(wrapper);
+            PacketLeftoverLayout.discardUnreadInput(wrapper);
+            final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
+            final Container container = inventoryTracker.getCurrentContainer();
+            final EnchantingSessionStorage enchantingSession = wrapper.user().get(EnchantingSessionStorage.class);
+            if (container == null || container.type() != ContainerType.ENCHANTMENT) {
+                enchantingSession.clear();
+                return;
+            }
+            enchantingSession.setOptions(options);
+            sendJavaEnchantmentData(wrapper.user(), container, options, enchantingSession.seed());
         });
         protocol.registerClientbound(ClientboundBedrockPackets.MODAL_FORM_REQUEST, ClientboundPackets26_1.SHOW_DIALOG, wrapper -> {
             final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
@@ -443,6 +466,12 @@ public class InventoryPackets {
             }
         });
 
+        protocol.registerServerbound(ServerboundPackets26_1.CONTAINER_BUTTON_CLICK, null, wrapper -> {
+            wrapper.cancel();
+            final int containerId = wrapper.read(Types.VAR_INT); // container id
+            final int buttonId = wrapper.read(Types.VAR_INT); // button id
+            handleEnchantButtonClick(wrapper.user(), containerId, buttonId);
+        });
         protocol.registerServerbound(ServerboundPackets26_1.CONTAINER_CLICK, null, wrapper -> {
             wrapper.cancel();
             final int containerId = wrapper.read(Types.VAR_INT); // container id
@@ -636,6 +665,124 @@ public class InventoryPackets {
             wrapper.write(Types.UNSIGNED_BYTE, (short) 9); // number of empty hotbar slots (vanilla client always sends 9)
             wrapper.write(Types.BOOLEAN, includeData); // include data
         });
+    }
+
+    private static void sendJavaEnchantmentData(final UserConnection user, final Container container,
+                                                final List<PlayerEnchantOptionsLayout.EnchantOption> options, final int seed) {
+        final int javaWindowId = container.javaContainerId();
+        for (int button = 0; button < 3; button++) {
+            final PlayerEnchantOptionsLayout.EnchantOption option = button < options.size() ? options.get(button) : null;
+            sendJavaContainerSetData(user, javaWindowId, button, option != null ? option.javaXpCost() : 0);
+            sendJavaContainerSetData(user, javaWindowId, button + 4, option != null ? javaEnchantmentClue(user, option) : -1);
+            sendJavaContainerSetData(user, javaWindowId, button + 7, option != null ? javaEnchantmentLevelClue(option) : -1);
+        }
+        sendJavaContainerSetData(user, javaWindowId, 3, seed);
+    }
+
+    private static int javaEnchantmentClue(final UserConnection user, final PlayerEnchantOptionsLayout.EnchantOption option) {
+        final PlayerEnchantOptionsLayout.EnchantData clue = option.primaryClue();
+        if (clue == null) {
+            return -1;
+        }
+        final Enchant_Type bedrockType = Enchant_Type.getByValue(clue.type());
+        if (bedrockType == null) {
+            return -1;
+        }
+        final String javaIdentifier = BedrockProtocol.MAPPINGS.getBedrockToJavaEnchantments().get(bedrockType);
+        if (javaIdentifier == null) {
+            return -1;
+        }
+        final CompoundTag registry = user.get(GameSessionStorage.class).getJavaRegistries().getCompoundTag(RegistryKeys.ENCHANTMENT);
+        if (registry == null) {
+            return -1;
+        }
+        final CompoundTag entry = registry.getCompoundTag(javaIdentifier);
+        if (entry == null) {
+            return -1;
+        }
+        try {
+            return RegistryUtil.getRegistryIndex(registry, entry);
+        } catch (final IllegalArgumentException ignored) {
+            return -1;
+        }
+    }
+
+    private static int javaEnchantmentLevelClue(final PlayerEnchantOptionsLayout.EnchantOption option) {
+        final PlayerEnchantOptionsLayout.EnchantData clue = option.primaryClue();
+        return clue != null ? clue.level() : -1;
+    }
+
+    private static void sendJavaContainerSetData(final UserConnection user, final int windowId, final int property, final int value) {
+        final PacketWrapper packet = PacketWrapper.create(ClientboundPackets26_1.CONTAINER_SET_DATA, user);
+        packet.write(Types.VAR_INT, windowId);
+        packet.write(Types.SHORT, (short) property);
+        packet.write(Types.SHORT, (short) value);
+        packet.send(BedrockProtocol.class);
+    }
+
+    private static void handleEnchantButtonClick(final UserConnection user, final int containerId, final int buttonId) {
+        final InventoryTracker inventoryTracker = user.get(InventoryTracker.class);
+        if (inventoryTracker.getPendingCloseContainer() != null) {
+            return;
+        }
+        final Container container = inventoryTracker.getContainerServerbound((byte) containerId);
+        if (container == null || container.type() != ContainerType.ENCHANTMENT) {
+            return;
+        }
+        final EnchantingSessionStorage enchantingSession = user.get(EnchantingSessionStorage.class);
+        final PlayerEnchantOptionsLayout.EnchantOption option = enchantingSession.option(buttonId);
+        if (option == null) {
+            return;
+        }
+        if (!user.get(GameSessionStorage.class).isInventoryServerAuthoritative()) {
+            ViaBedrock.getPlatform().getLogger().log(Level.FINE, "Ignoring enchant button click without SAI inventory");
+            return;
+        }
+        final BedrockItem input = container.getItem(0);
+        if (input == null || input.isEmpty()) {
+            return;
+        }
+        final ClientPlayerEntity clientPlayer = user.get(EntityTracker.class).getClientPlayer();
+        final boolean creative = clientPlayer != null && clientPlayer.javaGameMode() == GameMode.CREATIVE;
+        final int cost = option.javaXpCost();
+        int reagentCount = 0;
+        if (!creative) {
+            if (experienceLevel(clientPlayer) < cost || experienceLevel(clientPlayer) < option.minLevel()) {
+                return;
+            }
+            final BedrockItem reagent = container.getItem(1);
+            if (reagent == null || reagent.isEmpty() || reagent.amount() < cost || !isLapisLazuli(user, reagent)) {
+                return;
+            }
+            reagentCount = cost;
+        }
+        final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encodeEnchantApply(
+                inventoryTracker, option.enchantNetId(), Math.max(1, input.amount() > 0 ? 1 : 0), reagentCount, creative);
+        if (encoded.unsupported() || encoded.isEmpty()) {
+            PacketFactory.sendJavaContainerSetContent(user, container);
+            return;
+        }
+        sendEnchantItemStackRequest(user, encoded.payload());
+        enchantingSession.clear();
+        sendJavaEnchantmentData(user, container, List.of(), 0);
+    }
+
+    private static int experienceLevel(final ClientPlayerEntity clientPlayer) {
+        if (clientPlayer == null) {
+            return 0;
+        }
+        final EntityAttribute level = clientPlayer.attributes().get("minecraft:player.level");
+        return level != null ? (int) level.computeClampedValue() : 0;
+    }
+
+    private static boolean isLapisLazuli(final UserConnection user, final BedrockItem item) {
+        return "minecraft:lapis_lazuli".equals(user.get(ItemRewriter.class).bedrockIdentifier(item));
+    }
+
+    private static void sendEnchantItemStackRequest(final UserConnection user, final byte[] payload) {
+        final PacketWrapper request = PacketWrapper.create(ServerboundBedrockPackets.ITEM_STACK_REQUEST, user);
+        request.write(Types.REMAINING_BYTES, payload);
+        request.sendToServer(BedrockProtocol.class);
     }
 
     private static void sendModalFormCancel(final UserConnection user, final int formId, final ModalFormCancelReason reason) {

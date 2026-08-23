@@ -54,6 +54,41 @@ public final class ItemStackRequestEncoder {
         return encode(actions, tracker, emulateNetEase(), encodeProtocol());
     }
 
+    public static EncodedRequest encodeEnchantApply(final InventoryTracker tracker, final int recipeNetworkId,
+                                                    final int inputCount, final int reagentCount, final boolean creative) {
+        return encodeEnchantApply(tracker, recipeNetworkId, inputCount, reagentCount, creative, emulateNetEase(), encodeProtocol());
+    }
+
+    public static EncodedRequest encodeEnchantApply(final InventoryTracker tracker, final int recipeNetworkId,
+                                                    final int inputCount, final int reagentCount, final boolean creative,
+                                                    final boolean emulateNetEase, final int protocol) {
+        if (inputCount <= 0) {
+            return EncodedRequest.notSupported();
+        }
+        final List<Action> stackActions = new ArrayList<>();
+        final ItemStackRequestLayout.SlotInfo input = slotWithNetId(tracker, 0);
+        if (input == null) {
+            return EncodedRequest.notSupported();
+        }
+        stackActions.add(Action.craft(recipeNetworkId));
+        // MOT still runs ConsumeActionProcessor in creative. Emptying the input first
+        // lets the following Take land on EnchantingInput instead of stacking onto the
+        // unenchanted original.
+        stackActions.add(Action.consume(inputCount, input));
+        if (!creative && reagentCount > 0) {
+            final ItemStackRequestLayout.SlotInfo reagent = slotWithNetId(tracker, 1);
+            if (reagent == null) {
+                return EncodedRequest.notSupported();
+            }
+            stackActions.add(Action.consume(reagentCount, reagent));
+        }
+        stackActions.add(Action.transfer(
+                ItemStackRequestActionType.Take, inputCount,
+                new ItemStackRequestLayout.SlotInfo(ContainerEnumName.CreatedOutputContainer, 50, 0),
+                new ItemStackRequestLayout.SlotInfo(input.container(), input.slot(), 0, input.dynamicId())));
+        return encodeActions(stackActions, tracker, emulateNetEase, protocol);
+    }
+
     public static EncodedRequest encode(final List<InventoryActionData> actions, final InventoryTracker tracker,
                                         final boolean emulateNetEase, final int protocol) {
         if (actions == null || actions.isEmpty()) {
@@ -461,6 +496,21 @@ public final class ItemStackRequestEncoder {
     private static ItemStackRequestLayout.SlotInfo withNetId(final ItemStackRequestLayout.SlotInfo info, final BedrockItem item) {
         final int netId = item != null && item.netId() != null ? item.netId() : 0;
         return new ItemStackRequestLayout.SlotInfo(info.container(), info.slot(), netId, info.dynamicId());
+    }
+
+    private static ItemStackRequestLayout.SlotInfo slotWithNetId(final InventoryTracker tracker, final int slot) {
+        if (tracker == null) {
+            return null;
+        }
+        final Container container = tracker.getCurrentContainer();
+        if (container == null) {
+            return null;
+        }
+        final ItemStackRequestLayout.SlotInfo info = ItemStackSlotMapper.fromOpenContainer(container, slot);
+        if (info == null) {
+            return null;
+        }
+        return withNetId(info, container.getItem(slot));
     }
 
     private static Container resolveContainer(final int containerId, final InventoryTracker tracker) {
