@@ -52,5 +52,9 @@ class OfficialBedrockLayoutForkTest {
         assertTrue(PlayerListLayout.usesNetEaseAddTrailer(true, 860));
         assertFalse(PlayerListLayout.usesNetEaseAddTrailer(false, 975));
         assertFalse(PlayerListLayout.usesNetEaseAddTrailer(true, 648));
+        assertFalse(BookEditLayout.usesVarIntLayout(true, 860));
+        assertTrue(BookEditLayout.usesVarIntLayout(false, 975));
+        assertTrue(UpdateClientInputLocksLayout.usesServerPosition(true, 860));
+        assertFalse(UpdateClientInputLocksLayout.usesServerPosition(false, 975));
     }
 }

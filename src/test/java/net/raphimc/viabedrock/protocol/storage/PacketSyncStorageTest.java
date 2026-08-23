@@ -83,4 +83,14 @@ class PacketSyncStorageTest {
         assertTrue(this.storage.shouldPublishLatency(101L));
     }
 
+    @Test
+    void javaOnlyLatencyProbeIsNotForwardedToBedrock() {
+        final int id = this.storage.addNetworkStackLatencyResponse(PacketSyncStorage.JAVA_ONLY_LATENCY_PROBE, 1L);
+        final PacketSyncStorage.NetworkStackLatencyResponse response = this.storage.getNetworkStackLatencyResponse(id);
+
+        assertTrue(PacketSyncStorage.isJavaOnlyLatencyProbe(response));
+        assertFalse(PacketSyncStorage.isJavaOnlyLatencyProbe(new PacketSyncStorage.NetworkStackLatencyResponse(1234L, 1L)));
+        assertFalse(PacketSyncStorage.isJavaOnlyLatencyProbe(null));
+    }
+
 }

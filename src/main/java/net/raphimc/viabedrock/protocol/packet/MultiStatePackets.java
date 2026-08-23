@@ -133,6 +133,12 @@ public class MultiStatePackets {
                 publishJavaPlayerLatency(wrapper.user(), packetSyncStorage, nowNanos);
             }
 
+            if (PacketSyncStorage.isJavaOnlyLatencyProbe(response)) {
+                // NetEase already echoed NETWORK_STACK_LATENCY on the proxy.
+                wrapper.cancel();
+                return;
+            }
+
             wrapper.write(BedrockTypes.LONG_LE, response.timestamp() * 1_000_000L); // timestamp
             wrapper.write(Types.BOOLEAN, true); // from server
         } else {

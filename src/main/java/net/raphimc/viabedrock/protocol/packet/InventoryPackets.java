@@ -67,6 +67,7 @@ import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 import net.raphimc.viabedrock.protocol.storage.*;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Level;
 
@@ -665,6 +666,69 @@ public class InventoryPackets {
             wrapper.write(Types.UNSIGNED_BYTE, (short) 9); // number of empty hotbar slots (vanilla client always sends 9)
             wrapper.write(Types.BOOLEAN, includeData); // include data
         });
+        protocol.registerServerbound(ServerboundPackets26_1.EDIT_BOOK, null, wrapper -> {
+            wrapper.cancel();
+            sendBookEditPackets(wrapper.user(),
+                    wrapper.read(Types.VAR_INT),
+                    readJavaBookPages(wrapper),
+                    wrapper.read(Types.BOOLEAN) ? wrapper.read(Types.STRING) : null);
+        });
+    }
+
+    private static List<String> readJavaBookPages(final PacketWrapper wrapper) {
+        final int pageCount = wrapper.read(Types.VAR_INT);
+        final List<String> pages = new ArrayList<>(Math.max(0, pageCount));
+        for (int i = 0; i < pageCount; i++) {
+            pages.add(wrapper.read(Types.STRING));
+        }
+        return pages;
+    }
+
+    private static void sendBookEditPackets(final UserConnection user, final int javaSlot, final List<String> javaPages, final String title) {
+        final InventoryTracker inventoryTracker = user.get(InventoryTracker.class);
+        if (inventoryTracker == null) {
+            return;
+        }
+        final InventoryContainer inventory = inventoryTracker.getInventoryContainer();
+        final int bedrockSlot = javaInventorySlotToBedrock(javaSlot);
+        if (bedrockSlot < 0 || bedrockSlot >= inventory.size()) {
+            ViaBedrock.getPlatform().getLogger().log(Level.FINE, "Ignoring EDIT_BOOK for out-of-range Java slot " + javaSlot);
+            return;
+        }
+        final BedrockItem current = inventory.getItem(bedrockSlot);
+        final ItemRewriter itemRewriter = user.get(ItemRewriter.class);
+        if (itemRewriter == null || !BookEditLayout.WRITABLE_BOOK.equals(itemRewriter.bedrockIdentifier(current))) {
+            ViaBedrock.getPlatform().getLogger().log(Level.FINE, "Ignoring EDIT_BOOK for non-writable-book slot " + bedrockSlot);
+            return;
+        }
+        final boolean emulateNetEase = ViaBedrock.getConfig().shouldEmulateNetEaseClient();
+        final int protocol = ViaBedrock.getConfig().getNetEaseProtocolVersion();
+        for (final byte[] payload : BookEditLayout.diffPages(bedrockSlot, BookEditLayout.pagesFromItem(current), javaPages, emulateNetEase, protocol)) {
+            sendBookEdit(user, payload);
+        }
+        if (title != null) {
+            final ClientPlayerEntity clientPlayer = user.get(EntityTracker.class).getClientPlayer();
+            final String author = clientPlayer != null ? clientPlayer.name() : "";
+            final AuthData authData = user.get(AuthData.class);
+            final String xuid = authData != null && authData.getXuid() != null ? authData.getXuid() : "";
+            sendBookEdit(user, BookEditLayout.encodeSignBook(bedrockSlot, title, author, xuid, emulateNetEase, protocol));
+        }
+    }
+
+    private static int javaInventorySlotToBedrock(final int javaSlot) {
+        if (javaSlot >= 36 && javaSlot <= 44) {
+            return javaSlot - 36;
+        }
+        if (javaSlot >= 9 && javaSlot <= 35) {
+            return javaSlot;
+        }
+        return -1;
+    }
+
+    private static void sendBookEdit(final UserConnection user, final byte[] payload) {
+        final PacketWrapper packet = PacketWrapper.create(ServerboundBedrockPackets.BOOK_EDIT, user);
+        packet.write(Types.REMAINING_BYTES, payload);
+        packet.sendToServer(BedrockProtocol.class);
     }
 
     private static void sendJavaEnchantmentData(final UserConnection user, final Container container,

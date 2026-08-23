@@ -17,12 +17,15 @@
  */
 package net.raphimc.viabedrock.api.model.scoreboard;
 
+import com.viaversion.nbt.tag.CompoundTag;
+import com.viaversion.nbt.tag.Tag;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.libs.fastutil.longs.Long2ObjectMap;
 import com.viaversion.viaversion.libs.fastutil.longs.Long2ObjectOpenHashMap;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
+import net.raphimc.viabedrock.api.util.TextUtil;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.IdentityDefinition_Type;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ObjectiveSortOrder;
@@ -96,7 +99,7 @@ public class ScoreboardObjective {
         setScore.write(Types.STRING, entry.javaName()); // player name
         setScore.write(Types.STRING, this.name); // objective name
         setScore.write(Types.VAR_INT, this.sortOrder == ObjectiveSortOrder.Ascending ? -entry.score() : entry.score()); // score
-        setScore.write(Types.OPTIONAL_TAG, null); // display name
+        setScore.write(Types.OPTIONAL_TAG, ganquanScoreboardEntryName(entry.javaName())); // display name
         setScore.write(Types.BOOLEAN, false); // has number format
         setScore.send(BedrockProtocol.class);
     }
@@ -106,6 +109,20 @@ public class ScoreboardObjective {
         resetScore.write(Types.STRING, entry.javaName()); // player name
         resetScore.write(Types.OPTIONAL_STRING, this.name); // objective name
         resetScore.send(BedrockProtocol.class);
+    }
+
+    /**
+     * Java scoreboard text drops unknown Bedrock {@code §} pairs such as Ganquan's
+     * {@code §rh}/{@code §le}. Keep the raw name in {@code insertion} so ModUIClient
+     * can keep chips on the same JSON-UI slot across SET_SCORE replacements.
+     */
+    static Tag ganquanScoreboardEntryName(final String javaName) {
+        if (javaName == null || javaName.isEmpty()) {
+            return null;
+        }
+        final CompoundTag tag = TextUtil.ensureCompoundTag(TextUtil.stringToNbt(javaName));
+        tag.putString("insertion", javaName);
+        return tag;
     }
 
 }

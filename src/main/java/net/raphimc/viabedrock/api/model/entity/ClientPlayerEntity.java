@@ -91,6 +91,9 @@ public class ClientPlayerEntity extends PlayerEntity {
     private boolean horizontalCollision;
     private boolean sneaking;
     private boolean sprinting;
+    // MOT UPDATE_CLIENT_INPUT_LOCKS bit 4. Protocol 560+ no longer sets ActorFlags.NOAI
+    // for movement locks, so Java would otherwise keep walking while the backend is frozen.
+    private boolean inputMovementLocked;
 
     // Misc data
     private GameType gameType;
@@ -297,7 +300,15 @@ public class ClientPlayerEntity extends PlayerEntity {
     }
 
     private boolean isImmobile() {
-        return this.hasEntityFlag(ActorFlags.NOAI);
+        return this.inputMovementLocked || this.hasEntityFlag(ActorFlags.NOAI);
+    }
+
+    public boolean isInputMovementLocked() {
+        return this.inputMovementLocked;
+    }
+
+    public void setInputMovementLocked(final boolean inputMovementLocked) {
+        this.inputMovementLocked = inputMovementLocked;
     }
 
     public void addAuthInputData(final PlayerAuthInputPacket_InputData data) {

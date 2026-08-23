@@ -36,6 +36,13 @@ import java.util.logging.Level;
 public class PacketSyncStorage extends StoredObject {
 
     public static final int UNKNOWN_LATENCY = -1;
+    /**
+     * Marker timestamp for a Java-only PING/PONG sample. NetEase echoes
+     * {@code NETWORK_STACK_LATENCY} on the proxy, so those packets never
+     * measure the Java client. A probe with this timestamp must not be
+     * forwarded back to Bedrock.
+     */
+    public static final long JAVA_ONLY_LATENCY_PROBE = Long.MIN_VALUE;
     static final long LATENCY_UPDATE_INTERVAL_NANOS = TimeUnit.SECONDS.toNanos(1L);
 
     private final AtomicInteger ID_COUNTER = new AtomicInteger(0);
@@ -67,6 +74,25 @@ public class PacketSyncStorage extends StoredObject {
 
     public NetworkStackLatencyResponse getNetworkStackLatencyResponse(final int id) {
         return this.pendingNetworkStackLatencyResponses.remove(id);
+    }
+
+    public static boolean isJavaOnlyLatencyProbe(final NetworkStackLatencyResponse response) {
+        return response != null && response.timestamp() == JAVA_ONLY_LATENCY_PROBE;
+    }
+
+    /**
+     * Measures Java-client RTT without touching Bedrock {@code NETWORK_STACK_LATENCY}.
+     * Used when the proxy must echo NetEase pings locally.
+     */
+    public void sendJavaLatencyProbe() {
+        if (this.user().getProtocolInfo().getServerState() != State.PLAY
+                || this.user().getProtocolInfo().getClientState() != State.PLAY) {
+            return;
+        }
+        final int id = this.addNetworkStackLatencyResponse(JAVA_ONLY_LATENCY_PROBE);
+        final PacketWrapper pingPacket = PacketWrapper.create(ClientboundPackets26_1.PING, this.user());
+        pingPacket.write(Types.INT, id); // parameter
+        pingPacket.send(BedrockProtocol.class);
     }
 
     public int updateLatency(final long clientLatencyNanos, final int serverTransportLatencyMillis) {

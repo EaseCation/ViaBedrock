@@ -812,6 +812,12 @@ public class JoinPackets {
                 ping.write(BedrockTypes.LONG_LE, System.currentTimeMillis()); // timestamp
                 ping.write(Types.BOOLEAN, false); // from server
                 ping.scheduleSendToServer(BedrockProtocol.class);
+                // NetEase echoes NETWORK_STACK_LATENCY on the proxy, so that path
+                // never samples the Java client. Probe Java PING/PONG separately.
+                final PacketSyncStorage packetSyncStorage = user.get(PacketSyncStorage.class);
+                if (packetSyncStorage != null) {
+                    packetSyncStorage.sendJavaLatencyProbe();
+                }
             } catch (Throwable t) {
                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to send NetEase NETWORK_STACK_LATENCY heartbeat", t);
             }

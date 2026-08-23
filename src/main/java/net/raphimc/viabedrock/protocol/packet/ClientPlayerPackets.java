@@ -230,6 +230,25 @@ public class ClientPlayerPackets {
                 default -> throw new IllegalStateException("Unhandled PlayerRespawnState: " + state);
             }
         });
+        protocol.registerClientbound(ClientboundBedrockPackets.UPDATE_CLIENT_INPUT_LOCKS, null, wrapper -> {
+            wrapper.cancel();
+            final UpdateClientInputLocksLayout.DecodedLocks locks = UpdateClientInputLocksLayout.read(wrapper);
+            PacketLeftoverLayout.discardUnreadInput(wrapper);
+            final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
+            if (clientPlayer == null) {
+                return;
+            }
+            final boolean wasLocked = clientPlayer.isInputMovementLocked();
+            clientPlayer.setInputMovementLocked(locks.movementLocked());
+            if (locks.movementLocked()) {
+                if (locks.serverPosition() != null) {
+                    clientPlayer.setPosition(locks.serverPosition());
+                }
+                if (!wasLocked) {
+                    clientPlayer.beginPositionSync(Relative.ROTATION);
+                }
+            }
+        });
         protocol.registerClientbound(ClientboundBedrockPackets.PLAYER_ACTION, null, wrapper -> {
             wrapper.cancel();
             wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // entity runtime id
@@ -574,7 +593,7 @@ public class ClientPlayerPackets {
             final boolean prevOnGround = clientPlayer.prevOnGround();
             final Set<InputFlag> prevInputFlags = clientPlayer.prevInputFlags();
             clientPlayer.tick();
-            final boolean immobile = clientPlayer.hasEntityFlag(ActorFlags.NOAI);
+            final boolean immobile = clientPlayer.isInputMovementLocked() || clientPlayer.hasEntityFlag(ActorFlags.NOAI);
 
             if (prevOnGround && clientPlayer.inputFlags().contains(InputFlag.JUMP)) {
                 clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StartJumping);
