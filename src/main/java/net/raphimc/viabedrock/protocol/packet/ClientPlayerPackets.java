@@ -156,14 +156,15 @@ public class ClientPlayerPackets {
     }
 
     private static void finishBlockBreak(final UserConnection user, final GameSessionStorage gameSession, final ClientPlayerEntity clientPlayer, final ChunkTracker chunkTracker, final BlockPosition position, final Direction direction) {
+        // MOT PredictDestroy already aborts then completes; StopDestroy also aborts.
+        // A same-tick Abort(face=0) is redundant and can leave lastBlockAction=Abort.
+        // Ref: MOT Player.java PREDICT_DESTROY_BLOCK / STOP_DESTROY_BLOCK.
         if (!gameSession.isBlockBreakingServerAuthoritative()) {
             clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.StopDestroyBlock));
             clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.CrackBlock, position, direction.ordinal()));
-            clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.AbortDestroyBlock, position, 0));
         } else {
             clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.ContinueDestroyBlock, position, direction.ordinal()));
             clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.PredictDestroyBlock, position, direction.ordinal()));
-            clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.AbortDestroyBlock, position, 0));
         }
 
         chunkTracker.handleBlockChange(position, 0, chunkTracker.bedrockAirId());
@@ -500,8 +501,9 @@ public class ClientPlayerPackets {
                     }
                 }
                 case ABORT_DESTROY_BLOCK -> {
+                    final int abortFacing = abortDestroyFacing(direction, clientPlayer.blockBreakingInfo());
                     clientPlayer.setBlockBreakingInfo(null);
-                    clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.AbortDestroyBlock, position, 0/*TODO: Figure this value out*/));
+                    clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.AbortDestroyBlock, position, abortFacing));
                 }
                 case STOP_DESTROY_BLOCK -> {
                     clientPlayer.cancelNextSwingPacket();
@@ -642,7 +644,15 @@ public class ClientPlayerPackets {
             clientPlayer.tick();
             final boolean immobile = clientPlayer.isInputMovementLocked() || clientPlayer.hasEntityFlag(ActorFlags.NOAI);
 
-            if (prevOnGround && clientPlayer.inputFlags().contains(InputFlag.JUMP)) {
+            // MOT PlayerJumpEvent is START_JUMPING only. Emitting it every grounded
+            // tick while JUMP is held makes GanAC AirJump see a second jump after MOT
+            // is already airborne. One pulse per press or landing is enough.
+            // Ref: MOT Player.java START_JUMPING; GanAC AirJumpCheck.
+            if (shouldEmitStartJumping(
+                    prevOnGround,
+                    clientPlayer.isOnGround(),
+                    clientPlayer.inputFlags().contains(InputFlag.JUMP),
+                    prevInputFlags.contains(InputFlag.JUMP))) {
                 clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StartJumping);
             }
 
@@ -876,6 +886,35 @@ public class ClientPlayerPackets {
             case START_FALL_FLYING -> PlayerAuthInputPacket_InputData.StartGliding;
             case STOP_SLEEPING, START_RIDING_JUMP, STOP_RIDING_JUMP, OPEN_INVENTORY -> null;
         };
+    }
+
+    /**
+     * MOT fires {@code PlayerJumpEvent} on {@code START_JUMPING}. Vanilla Bedrock pulses
+     * that bit on the first airborne tick of a jump, not every grounded tick JUMP is held.
+     * Java can keep JUMP down across landings, so emit on a new press while grounded or
+     * on the first grounded tick after a landing with JUMP still held.
+     */
+    static boolean shouldEmitStartJumping(final boolean prevOnGround, final boolean onGround,
+                                          final boolean jumpHeld, final boolean prevJumpHeld) {
+        if (!jumpHeld || (!prevOnGround && !onGround)) {
+            return false;
+        }
+        return !prevJumpHeld || !prevOnGround;
+    }
+
+    /**
+     * MOT abort particles use BlockFace.fromIndex(facing). Prefer the face from this
+     * abort packet, then the cached START/CONTINUE face, then DOWN (MOT itself uses
+     * DOWN when aborting because the target block changed).
+     */
+    static int abortDestroyFacing(final Direction packetDirection, final ClientPlayerEntity.BlockBreakingInfo breakingInfo) {
+        if (packetDirection != null) {
+            return packetDirection.ordinal();
+        }
+        if (breakingInfo != null && breakingInfo.direction() != null) {
+            return breakingInfo.direction().ordinal();
+        }
+        return Direction.DOWN.ordinal();
     }
 
     /**

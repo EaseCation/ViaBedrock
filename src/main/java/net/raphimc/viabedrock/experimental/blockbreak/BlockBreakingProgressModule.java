@@ -197,14 +197,14 @@ public final class BlockBreakingProgressModule implements FeatureModule {
 
         clientPlayer.cancelNextSwingPacket();
         clientPlayer.setBlockBreakingInfo(null);
+        // MOT PredictDestroy already aborts then completes. Same-tick Abort(face=0)
+        // is redundant. Ref: MOT Player.java PREDICT_DESTROY_BLOCK.
         if (!gameSession.isBlockBreakingServerAuthoritative()) {
             clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.StopDestroyBlock));
             clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.CrackBlock, position, direction.ordinal()));
-            clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.AbortDestroyBlock, position, 0));
         } else {
             clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.ContinueDestroyBlock, position, direction.ordinal()));
             clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.PredictDestroyBlock, position, direction.ordinal()));
-            clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.AbortDestroyBlock, position, 0));
         }
         tracker.finishMining(position, sequence, chunkTracker.getJavaBlockState(position));
     }
@@ -251,7 +251,8 @@ public final class BlockBreakingProgressModule implements FeatureModule {
     }
 
     private void abortBedrockMining(final UserConnection user, final ClientPlayerEntity clientPlayer, final MiningTarget target) {
-        clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.AbortDestroyBlock, target.position(), 0));
+        final Direction abortFace = target.direction() != null ? target.direction() : Direction.DOWN;
+        clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.AbortDestroyBlock, target.position(), abortFace.ordinal()));
     }
 
     private boolean isInstantBreak(final UserConnection user, final ChunkTracker chunkTracker, final BlockPosition position) {
