@@ -99,10 +99,61 @@ class NeteasePacketLayoutTest {
             assertEquals(64, skin.skinData().getHeight());
             assertEquals(0xFF112233, skin.skinData().getRGB(0, 0));
             assertTrue(skin.skinResourcePatch().contains("geometry.humanoid.custom"));
+            assertFalse(skin.skinResourcePatch().contains("customSlim"));
+            assertEquals("wide", skin.armSize());
             assertEquals(written.geoStr(), skin.geometryData());
         } finally {
             buffer.release();
         }
+    }
+
+    @Test
+    void confirmSkinDoesNotTreatMotCustomSlimMentionAsAlex() {
+        final String steveGeo = """
+                {
+                  "format_version": "1.12.0",
+                  "minecraft:geometry": [
+                    {"description": {"identifier": "geometry.cape"}},
+                    {
+                      "description": {"identifier": "geometry.humanoid.custom"},
+                      "bones": [
+                        {"name": "leftArm", "cubes": [{"size": [4, 12, 4]}]},
+                        {"name": "rightArm", "cubes": [{"size": [4, 12, 4]}]}
+                      ]
+                    },
+                    {"description": {"identifier": "geometry.humanoid.customSlim"}}
+                  ]
+                }
+                """;
+        assertTrue(steveGeo.contains("customSlim"));
+        assertFalse(ConfirmSkinLayout.isSlimGeometry(steveGeo));
+
+        final ConfirmSkinLayout.Entry entry = new ConfirmSkinLayout.Entry(
+                true, UUID.fromString("00112233-4455-6677-8899-aabbccddeeff"), new byte[0], "uid", steveGeo);
+        final SkinData skin = ConfirmSkinLayout.toSkinData(entry);
+        assertEquals("wide", skin.armSize());
+        assertEquals(ConfirmSkinLayout.DEFAULT_RESOURCE_PATCH, skin.skinResourcePatch());
+    }
+
+    @Test
+    void confirmSkinDetectsSlimFromArmWidthAndIdentifier() {
+        final String alexGeo = """
+                {
+                  "minecraft:geometry": [
+                    {
+                      "description": {"identifier": "geometry.humanoid.customSlim"},
+                      "bones": [
+                        {"name": "leftArm", "cubes": [{"size": [3, 12, 4]}]},
+                        {"name": "rightArm", "cubes": [{"size": [3, 12, 4]}]}
+                      ]
+                    }
+                  ]
+                }
+                """;
+        assertTrue(ConfirmSkinLayout.isSlimGeometry(alexGeo));
+        assertTrue(ConfirmSkinLayout.isSlimGeometry("geometry.humanoid.customSlim"));
+        assertFalse(ConfirmSkinLayout.isSlimGeometry("geometry.humanoid.custom"));
+        assertFalse(ConfirmSkinLayout.isSlimGeometry("geometry.humanoid.custom.1742391406.1704"));
     }
 
     @Test
