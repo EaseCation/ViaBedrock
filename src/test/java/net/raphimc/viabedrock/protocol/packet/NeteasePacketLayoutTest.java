@@ -48,6 +48,10 @@ class NeteasePacketLayoutTest {
         assertEquals(ClientboundBedrockPackets.SYNC_SKIN, ClientboundBedrockPackets.getPacket(0xEC));
         assertEquals(163, ClientboundBedrockPackets.FILTER_TEXT.getId());
         assertEquals(163, ServerboundBedrockPackets.FILTER_TEXT.getId());
+        assertEquals(176, ClientboundBedrockPackets.PLAYER_START_ITEM_COOLDOWN.getId());
+        assertEquals(186, ClientboundBedrockPackets.TOAST_REQUEST.getId());
+        assertEquals(ClientboundBedrockPackets.PLAYER_START_ITEM_COOLDOWN, ClientboundBedrockPackets.getPacket(176));
+        assertEquals(ClientboundBedrockPackets.TOAST_REQUEST, ClientboundBedrockPackets.getPacket(186));
         assertEquals(173, ClientboundBedrockPackets.PHOTO_INFO_REQUEST.getId());
         assertEquals(197, ClientboundBedrockPackets.CLIENT_CHEAT_ABILITY.getId());
         assertEquals(301, ClientboundBedrockPackets.COMPRESSED_BIOME_DEFINITION_LIST.getId());

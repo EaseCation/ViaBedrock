@@ -542,6 +542,31 @@ public class HudPackets {
             }
             wrapper.write(Types.BOOLEAN, true); // overlay
         });
+        // MOT ToastRequestPacket (186): string title + string content.
+        // Java 1.21.11 has no toast packet; MOT itself falls back to sendTitle below
+        // protocol 527. Action-bar keeps the current title/subtitle intact.
+        protocol.registerClientbound(ClientboundBedrockPackets.TOAST_REQUEST, ClientboundPackets26_1.SET_ACTION_BAR_TEXT, wrapper -> {
+            final ToastRequestLayout.Packet toast = ToastRequestLayout.read(wrapper);
+            PacketLeftoverLayout.discardUnreadInput(wrapper);
+            final Function<String, String> translator = wrapper.user().get(ResourcePackStorage.class).getTexts().lookup();
+            final String title = BedrockTranslator.translate(toast.title(), translator, new Object[0]);
+            final String content = BedrockTranslator.translate(toast.content(), translator, new Object[0]);
+            wrapper.write(Types.TAG, TextUtil.stringToNbt(TextUtil.toSingleLine(ToastRequestLayout.actionBarText(title, content))));
+        });
+        // MOT PlayerStartItemCoolDownPacket (176): string itemCategory + varint ticks.
+        // Java 1.21.2+ cooldown packets take an item Identifier; MOT currently emits
+        // goat_horn / shield without a namespace.
+        protocol.registerClientbound(ClientboundBedrockPackets.PLAYER_START_ITEM_COOLDOWN, ClientboundPackets26_1.COOLDOWN, wrapper -> {
+            final PlayerStartItemCooldownLayout.Packet cooldown = PlayerStartItemCooldownLayout.read(wrapper);
+            PacketLeftoverLayout.discardUnreadInput(wrapper);
+            final String javaIdentifier = PlayerStartItemCooldownLayout.javaCooldownIdentifier(cooldown.itemCategory());
+            if (javaIdentifier == null) {
+                wrapper.cancel();
+                return;
+            }
+            wrapper.write(Types.STRING, javaIdentifier); // item identifier
+            wrapper.write(Types.VAR_INT, cooldown.coolDownDuration()); // ticks
+        });
     }
 
     private static boolean restoreClearedBossBar(final PacketWrapper wrapper, final BossBarStorage bossBars, final UUID uuid, final BossBarStorage.BossBar bar) {
