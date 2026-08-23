@@ -61,6 +61,7 @@ import net.raphimc.viabedrock.protocol.storage.AnvilSessionStorage;
 import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
 import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 import net.raphimc.viabedrock.protocol.storage.TradeSessionStorage;
+import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -86,6 +87,7 @@ public class ClientAuthInventoryModule implements FeatureModule {
         registerCreativeModeSlotHandler(protocol);
         registerSelectTradeHandler(protocol);
         registerSetBeaconHandler(protocol);
+        registerCrafterSlotStateHandler(protocol);
         // Java expects the crafting output preview to be pushed by the server, but Bedrock computes it
         // client-side and never sends it. Recompute it locally whenever the (server-authoritative) grid
         // contents change, so the Java output slot reflects the matched recipe's result.
@@ -329,6 +331,38 @@ public class ClientAuthInventoryModule implements FeatureModule {
             }
             session.setSelectedSlot(selectedSlot);
         });
+    }
+
+    private void registerCrafterSlotStateHandler(final BedrockProtocol protocol) {
+        ProtocolUtil.prependServerbound(protocol, ServerboundPackets26_1.CONTAINER_SLOT_STATE_CHANGED, wrapper -> {
+            wrapper.cancel();
+            final int slot = wrapper.read(Types.VAR_INT);
+            final int windowId = wrapper.read(Types.VAR_INT);
+            final boolean enabled = wrapper.read(Types.BOOLEAN);
+            sendCrafterSlotToggle(wrapper.user(), windowId, slot, enabled);
+        });
+    }
+
+    static void sendCrafterSlotToggle(final UserConnection user, final int javaWindowId, final int slot, final boolean enabled) {
+        if (slot < 0 || slot >= 9) {
+            return;
+        }
+        final InventoryTracker tracker = user.get(InventoryTracker.class);
+        if (tracker == null) {
+            return;
+        }
+        final Container container = tracker.getContainerServerbound(javaWindowId);
+        if (container == null || container.type() != ContainerType.CRAFTER || container.position() == null) {
+            return;
+        }
+        // MOT ToggleCrafterSlotRequestPacket: 3x LE int block pos, byte slot, boolean disabled.
+        final PacketWrapper toggle = PacketWrapper.create(ServerboundBedrockPackets.TOGGLE_CRAFTER_SLOT_REQUEST, user);
+        toggle.write(BedrockTypes.INT_LE, container.position().x());
+        toggle.write(BedrockTypes.INT_LE, container.position().y());
+        toggle.write(BedrockTypes.INT_LE, container.position().z());
+        toggle.write(Types.BYTE, (byte) slot);
+        toggle.write(Types.BOOLEAN, !enabled);
+        toggle.sendToServer(BedrockProtocol.class);
     }
 
     private void registerSetBeaconHandler(final BedrockProtocol protocol) {

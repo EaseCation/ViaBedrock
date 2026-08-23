@@ -107,6 +107,40 @@ class EntityPacketLayoutTest {
     }
 
     @Test
+    void netease860WritesRowingTimeAfterRowAnimate() {
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            EntityPacketLayout.writeAnimateAction(buffer, EntityPacketLayout.ROW_LEFT_ACTION, true, 860);
+            BedrockTypes.UNSIGNED_VAR_LONG.write(buffer, 1L);
+            BedrockTypes.FLOAT_LE.write(buffer, 0F);
+            EntityPacketLayout.writeRowingTime(buffer, EntityPacketLayout.ROW_LEFT_ACTION, 1F, true, 860);
+            EntityPacketLayout.writeAnimateTrailer(buffer, null, true, 860);
+            assertEquals(EntityPacketLayout.ROW_LEFT_ACTION, EntityPacketLayout.readAnimateAction(buffer, true, 860));
+            assertEquals(1L, BedrockTypes.UNSIGNED_VAR_LONG.read(buffer).longValue());
+            assertEquals(0F, BedrockTypes.FLOAT_LE.read(buffer));
+            EntityPacketLayout.skipRowingTime(buffer, EntityPacketLayout.ROW_LEFT_ACTION, true, 860);
+            assertFalse(buffer.isReadable());
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
+    void officialAnimateOmitsRowingTimeEvenForRowActions() {
+        assertFalse(EntityPacketLayout.usesRowingTime(false, 860));
+        assertTrue(EntityPacketLayout.usesRowingTime(true, 860));
+        assertFalse(EntityPacketLayout.usesRowingTime(true, 897));
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            EntityPacketLayout.writeRowingTime(buffer, EntityPacketLayout.ROW_RIGHT_ACTION, 1F, false, 975);
+            EntityPacketLayout.writeRowingTime(buffer, EntityPacketLayout.ROW_RIGHT_ACTION, 1F, true, 897);
+            assertEquals(0, buffer.readableBytes());
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
     void officialAnimateStillWritesByteActionAndSwingSource() {
         final ByteBuf buffer = Unpooled.buffer();
         try {

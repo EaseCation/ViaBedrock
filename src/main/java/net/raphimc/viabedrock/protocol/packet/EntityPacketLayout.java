@@ -38,6 +38,14 @@ public final class EntityPacketLayout {
     public static final int AMBIENT_PROTOCOL = 897;
     public static final int SWING_SOURCE_PROTOCOL = 897;
     public static final int ENTITY_EVENT_FIRE_AT_POSITION_PROTOCOL = 974;
+    /**
+     * MOT {@code AnimatePacket.Action.ROW_RIGHT}/{@code ROW_LEFT}. Official ViaBedrock enums
+     * stop at {@code MagicCriticalHit(5)}; 860 still uses these row ids plus a trailing
+     * {@code rowingTime} float ({@code protocol < 897}).
+     */
+    public static final int ROW_RIGHT_ACTION = 128;
+    public static final int ROW_LEFT_ACTION = 129;
+    public static final int ROWING_TIME_PROTOCOL = 897;
 
     private EntityPacketLayout() {
     }
@@ -64,6 +72,18 @@ public final class EntityPacketLayout {
 
     public static boolean usesEntityEventFireAtPosition(final boolean emulateNetEase, final int protocol) {
         return !emulateNetEase || protocol >= ENTITY_EVENT_FIRE_AT_POSITION_PROTOCOL;
+    }
+
+    public static boolean usesRowingTime() {
+        return usesRowingTime(emulateNetEase(), netEaseProtocol());
+    }
+
+    public static boolean usesRowingTime(final boolean emulateNetEase, final int protocol) {
+        return emulateNetEase && protocol > 0 && protocol < ROWING_TIME_PROTOCOL;
+    }
+
+    public static boolean isRowAction(final int action) {
+        return action == ROW_RIGHT_ACTION || action == ROW_LEFT_ACTION;
     }
 
     public static boolean readAmbient(final PacketWrapper wrapper) {
@@ -118,6 +138,23 @@ public final class EntityPacketLayout {
         }
     }
 
+    public static void skipRowingTime(final PacketWrapper wrapper, final int action) {
+        if (usesRowingTime() && isRowAction(action)) {
+            wrapper.read(BedrockTypes.FLOAT_LE);
+        }
+    }
+
+    public static void writeRowingTime(final PacketWrapper wrapper, final int action, final float rowingTime) {
+        writeRowingTime(wrapper, action, rowingTime, emulateNetEase(), netEaseProtocol());
+    }
+
+    public static void writeRowingTime(final PacketWrapper wrapper, final int action, final float rowingTime,
+                                       final boolean emulateNetEase, final int protocol) {
+        if (usesRowingTime(emulateNetEase, protocol) && isRowAction(action)) {
+            wrapper.write(BedrockTypes.FLOAT_LE, rowingTime);
+        }
+    }
+
     public static void writeAnimateTrailer(final PacketWrapper wrapper, final String swingSource) {
         if (usesSwingSource()) {
             wrapper.write(BedrockTypes.OPTIONAL_STRING, swingSource);
@@ -140,6 +177,20 @@ public final class EntityPacketLayout {
     public static void skipSwingSource(final ByteBuf buffer, final boolean emulateNetEase, final int protocol) {
         if (usesSwingSource(emulateNetEase, protocol)) {
             BedrockTypes.OPTIONAL_STRING.read(buffer);
+        }
+    }
+
+    public static void skipRowingTime(final ByteBuf buffer, final int action,
+                                      final boolean emulateNetEase, final int protocol) {
+        if (usesRowingTime(emulateNetEase, protocol) && isRowAction(action)) {
+            BedrockTypes.FLOAT_LE.read(buffer);
+        }
+    }
+
+    public static void writeRowingTime(final ByteBuf buffer, final int action, final float rowingTime,
+                                       final boolean emulateNetEase, final int protocol) {
+        if (usesRowingTime(emulateNetEase, protocol) && isRowAction(action)) {
+            BedrockTypes.FLOAT_LE.write(buffer, rowingTime);
         }
     }
 

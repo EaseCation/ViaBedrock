@@ -796,6 +796,16 @@ public class EntityMetadataRewriter {
                 }
             }
             case AGENT, BALLOON_ANCHOR -> {} // Education edition only, ignore
+            case ROW_TIME_LEFT, ROW_TIME_RIGHT -> {
+                if (!entity.javaType().isOrHasParent(EntityTypes1_21_11.ABSTRACT_BOAT)) {
+                    return false;
+                }
+                // MOT EntityBoat DATA 13/14 (ROW_TIME_*) maps to Java ABSTRACT_BOAT PADDLE_LEFT/RIGHT.
+                // Java stores a boolean "is paddling"; MOT stores a float animation clock.
+                final boolean paddling = readNumber(entityData).floatValue() != 0F;
+                final String field = id == ActorDataIDs.ROW_TIME_LEFT ? EntityDataFields.PADDLE_LEFT : EntityDataFields.PADDLE_RIGHT;
+                upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(field), VersionedTypes.V26_1.entityDataTypes().booleanType, paddling));
+            }
             default -> {
                 return false;
             }

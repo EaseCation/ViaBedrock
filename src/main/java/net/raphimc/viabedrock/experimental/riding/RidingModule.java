@@ -39,7 +39,9 @@ import net.raphimc.viabedrock.protocol.data.enums.java.InputFlag;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.PlayerCommandAction;
 import net.raphimc.viabedrock.protocol.model.EntityLink;
 import net.raphimc.viabedrock.protocol.model.Position3f;
+import net.raphimc.viabedrock.protocol.packet.EntityPacketLayout;
 import net.raphimc.viabedrock.protocol.packet.InteractPacketLayout;
+import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.util.EnumSet;
@@ -96,6 +98,15 @@ public class RidingModule implements FeatureModule {
             inputFlags.remove(InputFlag.SHIFT);
             tracker.setLastInputFlags(inputFlags);
             wrapper.cancel();
+        });
+
+        // Java PADDLE_BOAT is auto-cancelled. MOT 860 Player.handle(AnimatePacket)
+        // only updates boat paddle metadata from ROW_LEFT/ROW_RIGHT + rowingTime.
+        ProtocolUtil.prependServerbound(protocol, ServerboundPackets26_1.PADDLE_BOAT, wrapper -> {
+            wrapper.cancel();
+            final boolean leftPaddle = wrapper.read(Types.BOOLEAN);
+            final boolean rightPaddle = wrapper.read(Types.BOOLEAN);
+            sendBoatPaddleAnimate(wrapper.user(), leftPaddle, rightPaddle);
         });
 
         ProtocolUtil.prependServerbound(protocol, ServerboundPackets26_1.PLAYER_COMMAND, wrapper -> {
@@ -200,6 +211,31 @@ public class RidingModule implements FeatureModule {
             }
         }
         return inputFlags;
+    }
+
+    static void sendBoatPaddleAnimate(final UserConnection user, final boolean leftPaddle, final boolean rightPaddle) {
+        final EntityTracker entityTracker = user.get(EntityTracker.class);
+        final ClientPlayerEntity clientPlayer = entityTracker != null ? entityTracker.getClientPlayer() : null;
+        if (clientPlayer == null) {
+            return;
+        }
+        if (leftPaddle) {
+            sendRowAnimate(user, clientPlayer.runtimeId(), EntityPacketLayout.ROW_LEFT_ACTION);
+        }
+        if (rightPaddle) {
+            sendRowAnimate(user, clientPlayer.runtimeId(), EntityPacketLayout.ROW_RIGHT_ACTION);
+        }
+    }
+
+    private static void sendRowAnimate(final UserConnection user, final long runtimeId, final int action) {
+        final PacketWrapper animate = PacketWrapper.create(ServerboundBedrockPackets.ANIMATE, user);
+        EntityPacketLayout.writeAnimateAction(animate, action);
+        animate.write(BedrockTypes.UNSIGNED_VAR_LONG, runtimeId);
+        animate.write(BedrockTypes.FLOAT_LE, 0F);
+        // MOT 860 onPaddle() only copies a non-zero rowingTime into ROW_TIME_LEFT/RIGHT.
+        EntityPacketLayout.writeRowingTime(animate, action, 1F);
+        EntityPacketLayout.writeAnimateTrailer(animate, null);
+        animate.sendToServer(BedrockProtocol.class);
     }
 
     private static void sendInteract(final UserConnection user, final long targetRuntimeId, final InteractPacket_Action action) {

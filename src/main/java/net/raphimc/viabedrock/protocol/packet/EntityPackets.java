@@ -632,9 +632,12 @@ public class EntityPackets {
             }
         });
         protocol.registerClientbound(ClientboundBedrockPackets.ANIMATE, ClientboundPackets26_1.ANIMATE, wrapper -> {
-            final AnimatePacketPayload_Action action = AnimatePacketPayload_Action.getByValue(EntityPacketLayout.readAnimateAction(wrapper), AnimatePacketPayload_Action.NoAction); // action
+            final int rawAction = EntityPacketLayout.readAnimateAction(wrapper); // action
+            final AnimatePacketPayload_Action action = AnimatePacketPayload_Action.getByValue(rawAction, AnimatePacketPayload_Action.NoAction);
             final long entityRuntimeId = wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // entity runtime id
             wrapper.read(BedrockTypes.FLOAT_LE); // data
+            // MOT 860 AnimatePacket.decode(): protocol < 897 && ROW_LEFT/ROW_RIGHT always carry rowingTime.
+            EntityPacketLayout.skipRowingTime(wrapper, rawAction);
             EntityPacketLayout.skipSwingSource(wrapper);
 
             final JavaAnimate javaAnimate = resolveJavaAnimate(action, entityRuntimeId, wrapper.user().get(EntityTracker.class)::getEntityByRid);

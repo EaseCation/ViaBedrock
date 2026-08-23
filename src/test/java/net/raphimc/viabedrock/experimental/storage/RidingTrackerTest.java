@@ -12,11 +12,15 @@ package net.raphimc.viabedrock.experimental.storage;
 import com.viaversion.viaversion.api.minecraft.entities.EntityTypes1_21_11;
 import org.junit.jupiter.api.Test;
 
+import net.raphimc.viabedrock.protocol.packet.EntityPacketLayout;
+
 import static net.raphimc.viabedrock.experimental.storage.RidingTracker.LocalRidingMode.BOAT_PREDICTED;
 import static net.raphimc.viabedrock.experimental.storage.RidingTracker.LocalRidingMode.PASSENGER_ONLY;
 import static net.raphimc.viabedrock.experimental.storage.RidingTracker.LocalRidingMode.VIRTUAL_INPUT_ONLY;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RidingTrackerTest {
 
@@ -36,6 +40,17 @@ class RidingTrackerTest {
     @Test
     void doesNotForwardInputFromNonControllingPassengers() {
         assertEquals(PASSENGER_ONLY, RidingTracker.localRidingMode(EntityTypes1_21_11.MINECART, false));
+    }
+
+    @Test
+    void mapsJavaPaddleBooleansToMotRowActions() {
+        assertAll(
+                () -> assertTrue(EntityPacketLayout.isRowAction(EntityPacketLayout.ROW_LEFT_ACTION)),
+                () -> assertTrue(EntityPacketLayout.isRowAction(EntityPacketLayout.ROW_RIGHT_ACTION)),
+                () -> assertFalse(EntityPacketLayout.isRowAction(1)),
+                () -> assertEquals(129, EntityPacketLayout.ROW_LEFT_ACTION),
+                () -> assertEquals(128, EntityPacketLayout.ROW_RIGHT_ACTION)
+        );
     }
 
     @Test
