@@ -465,7 +465,11 @@ public class RidingTracker extends StoredObject {
         if (usesBoatRiding(type)) {
             return LocalRidingMode.BOAT_PREDICTED;
         }
-        if (type.isOrHasParent(EntityTypes1_21_11.ABSTRACT_MINECART) || !usesVanillaRiding(type)) {
+        if (type.isOrHasParent(EntityTypes1_21_11.ABSTRACT_MINECART)
+                || type.isOrHasParent(EntityTypes1_21_11.ABSTRACT_HORSE)
+                || type == EntityTypes1_21_11.PIG
+                || type == EntityTypes1_21_11.STRIDER
+                || !usesVanillaRiding(type)) {
             return LocalRidingMode.VIRTUAL_INPUT_ONLY;
         }
         return LocalRidingMode.PASSENGER_ONLY;

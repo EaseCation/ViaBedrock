@@ -37,6 +37,61 @@ import java.util.Map;
 
 public class UnhandledPackets {
 
+    /**
+     * Clientbound types that exist in {@link ClientboundBedrockPackets} but have no
+     * Java mapping. ViaVersion passthrough would leak Bedrock bytes as Java packets.
+     */
+    static final ClientboundBedrockPackets[] NETEASE_UNMAPPED_CLIENTBOUND = {
+            ClientboundBedrockPackets.SERVER_PLAYER_POST_MOVE_POSITION,
+            ClientboundBedrockPackets.HURT_ARMOR,
+            ClientboundBedrockPackets.SIMPLE_EVENT,
+            ClientboundBedrockPackets.LEGACY_TELEMETRY_EVENT,
+            ClientboundBedrockPackets.SPAWN_EXPERIENCE_ORB,
+            ClientboundBedrockPackets.SHOW_CREDITS,
+            ClientboundBedrockPackets.UPDATE_EQUIP,
+            ClientboundBedrockPackets.ADD_BEHAVIOR_TREE,
+            ClientboundBedrockPackets.SHOW_STORE_OFFER,
+            ClientboundBedrockPackets.AUTOMATION_CLIENT_CONNECT,
+            ClientboundBedrockPackets.SET_LAST_HURT_BY,
+            ClientboundBedrockPackets.SERVER_SETTINGS_RESPONSE,
+            ClientboundBedrockPackets.ON_SCREEN_TEXTURE_ANIMATION,
+            ClientboundBedrockPackets.STRUCTURE_TEMPLATE_DATA_RESPONSE,
+            ClientboundBedrockPackets.MULTIPLAYER_SETTINGS,
+            ClientboundBedrockPackets.POSITION_TRACKING_DB_SERVER_BROADCAST,
+            ClientboundBedrockPackets.DEBUG_INFO,
+            ClientboundBedrockPackets.MOTION_PREDICTION_HINTS,
+            ClientboundBedrockPackets.DEBUG_RENDERER,
+            ClientboundBedrockPackets.ADD_VOLUME_ENTITY,
+            ClientboundBedrockPackets.REMOVE_VOLUME_ENTITY,
+            ClientboundBedrockPackets.SIMULATION_TYPE,
+            ClientboundBedrockPackets.TICKING_AREAS_LOAD_STATUS,
+            ClientboundBedrockPackets.AGENT_ACTION_EVENT,
+            ClientboundBedrockPackets.CHANGE_MOB_PROPERTY,
+            ClientboundBedrockPackets.EDITOR_NETWORK,
+            ClientboundBedrockPackets.FEATURE_REGISTRY,
+            ClientboundBedrockPackets.SERVER_STATS,
+            ClientboundBedrockPackets.GAME_TEST_RESULTS,
+            ClientboundBedrockPackets.UNLOCKED_RECIPES,
+            ClientboundBedrockPackets.AGENT_ANIMATION,
+            ClientboundBedrockPackets.AWARD_ACHIEVEMENT,
+            ClientboundBedrockPackets.JIGSAW_STRUCTURE_DATA,
+            ClientboundBedrockPackets.MOVEMENT_EFFECT,
+            ClientboundBedrockPackets.PLAYER_UPDATE_ENTITY_OVERRIDES,
+            ClientboundBedrockPackets.PLAYER_LOCATION,
+            ClientboundBedrockPackets.CONTROL_SCHEME_SET,
+            ClientboundBedrockPackets.PRIMITIVE_SHAPES,
+            ClientboundBedrockPackets.DATA_STORE,
+            ClientboundBedrockPackets.DATA_DRIVEN_UI_SHOW_SCREEN,
+            ClientboundBedrockPackets.DATA_DRIVEN_UI_CLOSE_SCREEN,
+            ClientboundBedrockPackets.DATA_DRIVEN_UI_RELOAD,
+            ClientboundBedrockPackets.VOXEL_SHAPES,
+            ClientboundBedrockPackets.LOCATOR_BAR,
+            ClientboundBedrockPackets.SYNC_WORLD_CLOCKS,
+            ClientboundBedrockPackets.ATTRIBUTE_LAYER_SYNC,
+            ClientboundBedrockPackets.SERVER_STORE_INFO,
+            ClientboundBedrockPackets.SERVER_PRESENCE_INFO
+    };
+
     public static void register(final BedrockProtocol protocol) {
         // MOT Player.kill() + doImmediateRespawn writes SetHealthPacket(maxHealth)
         // while the player is still dead. Vanilla Bedrock ignores this packet.
@@ -117,6 +172,12 @@ public class UnhandledPackets {
         // MOT 860 has SetPlayerInventoryOptions (307) but Java has no inventory-layout
         // packet. Cancel so leftover bytes cannot abort a join/inventory batch.
         protocol.cancelClientbound(ClientboundBedrockPackets.SET_PLAYER_INVENTORY_OPTIONS);
+        // Unmapped clientbound IDs would otherwise passthrough as Java packets and
+        // kick 1.21.11 ("Received unknown packet" / leftover bytes abort the batch).
+        // JE-only drop: Bedrock clients do not use ViaBedrock.
+        for (final ClientboundBedrockPackets leftover : NETEASE_UNMAPPED_CLIENTBOUND) {
+            protocol.cancelClientbound(leftover);
+        }
 
         protocol.registerServerboundTransition(ServerboundConfigurationPackets1_21_9.KEEP_ALIVE, null, UnhandledPackets::handleJavaKeepAlive);
         protocol.cancelServerbound(ServerboundPackets26_1.CHAT_ACK);
