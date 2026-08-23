@@ -690,7 +690,8 @@ public class ClientPlayerPackets {
             if (clientPlayer.inputFlags().contains(InputFlag.JUMP)) {
                 clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.JumpDown, PlayerAuthInputPacket_InputData.Jumping, PlayerAuthInputPacket_InputData.WantUp, PlayerAuthInputPacket_InputData.JumpCurrentRaw);
             }
-            if (clientPlayer.inputFlags().contains(InputFlag.SHIFT)) {
+            if (clientPlayer.inputFlags().contains(InputFlag.SHIFT)
+                    || (clientPlayer.isUsingItem() && clientPlayer.isShieldSneakEmulated())) {
                 clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.SneakDown, PlayerAuthInputPacket_InputData.Sneaking, PlayerAuthInputPacket_InputData.WantDown, PlayerAuthInputPacket_InputData.SneakCurrentRaw);
             }
             if (clientPlayer.inputFlags().contains(InputFlag.SPRINT)

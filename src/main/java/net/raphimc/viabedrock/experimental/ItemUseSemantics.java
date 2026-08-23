@@ -61,10 +61,18 @@ public final class ItemUseSemantics {
      * PERFORM_ITEM_INTERACTION. NetEase 860 Nukkit-MOT parses that payload but never
      * handles it, so consumables need a standalone USE_ITEM transaction there.
      * Bows/crossbows already send that standalone packet on both paths.
+     * MOT 860 also starts tridents from CLICK_AIR ({@code ItemTrident.onClickAir});
+     * AuthInput START_USING_ITEM is parsed and ignored, so NetEase must send the
+     * same standalone packet. Shields must not: MOT blocking is sneak, not use.
      */
     static boolean needsStandaloneUseTransaction(final boolean emulateNetEase, final boolean consumable,
+                                                 final boolean bow, final boolean crossbow, final boolean trident) {
+        return bow || crossbow || (emulateNetEase && (trident || consumable));
+    }
+
+    static boolean needsStandaloneUseTransaction(final boolean emulateNetEase, final boolean consumable,
                                                  final boolean bow, final boolean crossbow) {
-        return bow || crossbow || (emulateNetEase && consumable);
+        return needsStandaloneUseTransaction(emulateNetEase, consumable, bow, crossbow, false);
     }
 
     /**
@@ -89,18 +97,144 @@ public final class ItemUseSemantics {
      * Official 975 starts food from AuthInput START_USING_ITEM + PERFORM_ITEM_INTERACTION.
      * NetEase 860 Nukkit parses that payload but never handles it. A second CLICK_AIR
      * while already using is treated as a finish attempt, so NetEase must not attach
-     * the same ItemUseTransaction to AuthInput for food or bows.
+     * the same ItemUseTransaction to AuthInput for any hold-to-use item
+     * (food, bow, crossbow, trident, shield, spyglass, brush).
      */
     static boolean attachAuthInputItemInteraction(final boolean emulateNetEase, final boolean consumable,
-                                                  final boolean bow) {
+                                                  final boolean bow, final boolean holdToUseWeapon) {
         if (!emulateNetEase) {
             return true;
         }
-        return !consumable && !bow;
+        return !consumable && !bow && !holdToUseWeapon;
+    }
+
+    static boolean attachAuthInputItemInteraction(final boolean emulateNetEase, final boolean consumable,
+                                                  final boolean bow) {
+        return attachAuthInputItemInteraction(emulateNetEase, consumable, bow, false);
     }
 
     static boolean attachAuthInputItemInteraction(final boolean emulateNetEase, final boolean consumable) {
-        return attachAuthInputItemInteraction(emulateNetEase, consumable, false);
+        return attachAuthInputItemInteraction(emulateNetEase, consumable, false, false);
+    }
+
+    /**
+     * MOT CLICK_AIR compares the held stack with {@code equalsFast} (id+data only).
+     * A later INVENTORY_SLOT rewrite that only changes NBT/netId/blockRuntimeId must
+     * not cancel an in-progress eat/draw on NetEase.
+     */
+    public static boolean matchesUseItem(final boolean emulateNetEase, final int snapshotId, final short snapshotData,
+                                  final int snapshotBlockRuntimeId, final Object snapshotTag,
+                                  final Integer currentId, final Short currentData, final Integer currentBlockRuntimeId,
+                                  final Object currentTag) {
+        if (currentId == null || currentData == null) {
+            return false;
+        }
+        if (emulateNetEase) {
+            return snapshotId == currentId && snapshotData == currentData;
+        }
+        return snapshotId == currentId
+                && snapshotData == currentData
+                && snapshotBlockRuntimeId == (currentBlockRuntimeId == null ? 0 : currentBlockRuntimeId)
+                && java.util.Objects.equals(snapshotTag, currentTag);
+    }
+
+    /**
+     * MOT {@code ItemEdible.onClickAir} is {@code player.canEat(true)} except for
+     * golden apples, chorus fruit and honey bottles, which always return true.
+     * Potions/milk/ominous bottles are not ItemEdible and also start regardless of hunger.
+     */
+    static boolean alwaysEatsWhenFull(final String identifier) {
+        return "minecraft:golden_apple".equals(identifier)
+                || "minecraft:enchanted_golden_apple".equals(identifier)
+                || "minecraft:chorus_fruit".equals(identifier)
+                || "minecraft:honey_bottle".equals(identifier)
+                || CONSUME_ON_RELEASE_ITEMS.contains(identifier);
+    }
+
+    static boolean canStartConsumable(final boolean emulateNetEase, final String identifier, final boolean consumable,
+                                      final boolean creative, final boolean hungry) {
+        if (!emulateNetEase || !consumable) {
+            return true;
+        }
+        return creative || hungry || alwaysEatsWhenFull(identifier);
+    }
+
+    /**
+     * MOT {@code ItemBow.getArrow} only accepts id 262 ({@code minecraft:arrow}), not
+     * spectral/tipped. Survival with no such arrow must not start a local draw.
+     */
+    static boolean canStartBow(final boolean emulateNetEase, final boolean bow, final boolean creative,
+                               final boolean hasRegularArrow) {
+        if (!emulateNetEase || !bow) {
+            return true;
+        }
+        return creative || hasRegularArrow;
+    }
+
+    static boolean isRegularArrow(final String identifier) {
+        return "minecraft:arrow".equals(identifier);
+    }
+
+    static boolean isShield(final String identifier) {
+        return "minecraft:shield".equals(identifier);
+    }
+
+    /**
+     * MOT {@code ItemShield} has no onClickAir. Blocking is sneak-or-riding + shield
+     * in either hand. NetEase must not send a use transaction for a shield.
+     */
+    static boolean emulateShieldAsSneak(final boolean emulateNetEase, final boolean shield) {
+        return emulateNetEase && shield;
+    }
+
+    /**
+     * MOT {@code ItemCrossbow.launchArrow} requires {@code serverTick - loadTick > 10}.
+     * Firing on the same tick charge completes starts a new charge instead of shooting.
+     */
+    static boolean crossbowFireReady(final boolean emulateNetEase, final boolean charged, final int ticksSinceCharge) {
+        if (!emulateNetEase || !charged) {
+            return true;
+        }
+        return ticksSinceCharge > 10;
+    }
+
+    static boolean chargedCrossbowUsesMotTag(final boolean emulateNetEase, final boolean hasChargedItem,
+                                             final boolean hasJavaChargedProjectiles) {
+        return emulateNetEase ? hasChargedItem : (hasChargedItem || hasJavaChargedProjectiles);
+    }
+
+    /**
+     * Java may emit USE_ITEM_ON then USE_ITEM for one click. Pearl {@code onActivate}
+     * and rod {@code onClickAir} would then double-throw / cast-then-reel.
+     */
+    static boolean dropDuplicateAirClickAfterUseOn(final boolean emulateNetEase, final String identifier,
+                                                   final boolean sameTickUseOn) {
+        if (!emulateNetEase || !sameTickUseOn || identifier == null) {
+            return false;
+        }
+        return "minecraft:ender_pearl".equals(identifier)
+                || "minecraft:fishing_rod".equals(identifier);
+    }
+
+    static boolean isFilledPlaceBucket(final String identifier) {
+        return "minecraft:water_bucket".equals(identifier)
+                || "minecraft:lava_bucket".equals(identifier)
+                || "minecraft:powder_snow_bucket".equals(identifier)
+                || "minecraft:cod_bucket".equals(identifier)
+                || "minecraft:salmon_bucket".equals(identifier)
+                || "minecraft:tropical_fish_bucket".equals(identifier)
+                || "minecraft:pufferfish_bucket".equals(identifier)
+                || "minecraft:axolotl_bucket".equals(identifier)
+                || "minecraft:tadpole_bucket".equals(identifier);
+    }
+
+    /**
+     * MOT CLICK_AIR {@code equipItem} rejects {@code hotbarSlot < 0}. Java offhand
+     * must not be sent as slot -1. A later SAI swap can promote the stack; until then
+     * reject the use so Java does not chew locally.
+     */
+    static boolean rejectNetEaseOffhandUse(final boolean emulateNetEase, final boolean offhand, final boolean shield) {
+        return emulateNetEase && offhand && !shield;
     }
 
     /**

@@ -68,6 +68,19 @@ class ItemUseSnapshotTest {
         assertFalse(snapshot.matches(InteractionHand.MAIN_HAND, (byte) 0, 3, 3, null));
     }
 
+    @Test
+    void netEaseMatchesIgnoresNbtAndBlockRuntimeId() {
+        final ItemUseSnapshot snapshot = new ItemUseSnapshot(
+                InteractionHand.MAIN_HAND,
+                (byte) 0,
+                3,
+                3,
+                item(100, (short) 2, (byte) 8, 200, "heal")
+        );
+        assertTrue(snapshot.matches(InteractionHand.MAIN_HAND, (byte) 0, 3, 3, item(100, (short) 2, (byte) 8, 201, "speed"), true));
+        assertFalse(snapshot.matches(InteractionHand.MAIN_HAND, (byte) 0, 3, 3, item(100, (short) 2, (byte) 8, 201, "speed"), false));
+    }
+
     private static BedrockItem item(final int id, final short data, final byte amount, final int blockRuntimeId, final String effect) {
         final CompoundTag tag = new CompoundTag();
         tag.putString("effect", effect);

@@ -112,6 +112,9 @@ public class ClientPlayerEntity extends PlayerEntity {
     private ItemUseSnapshot itemUseSnapshot;
     private boolean crossbowChargeFinishSent;
     private boolean consumableFinishSent;
+    private boolean shieldSneakEmulated;
+    private int lastUseOnAge = -1;
+    private int crossbowChargeFinishAge = -1;
 
     // The UUID the Bedrock server assigned to the local player in the player list. It differs from
     // javaUuid (see HudPackets PLAYER_LIST remap), and is the UUID the server uses to address the
@@ -579,6 +582,7 @@ public class ClientPlayerEntity extends PlayerEntity {
         this.itemUseSnapshot = null;
         this.crossbowChargeFinishSent = false;
         this.consumableFinishSent = false;
+        this.shieldSneakEmulated = false;
     }
 
     public void startUsingItem(final InteractionHand hand, final byte containerId, final int containerSlot, final int transactionHotbarSlot, final BedrockItem item) {
@@ -587,6 +591,7 @@ public class ClientPlayerEntity extends PlayerEntity {
         this.itemUseSnapshot = new ItemUseSnapshot(hand, containerId, containerSlot, transactionHotbarSlot, item);
         this.crossbowChargeFinishSent = false;
         this.consumableFinishSent = false;
+        this.shieldSneakEmulated = false;
     }
 
     public InteractionHand usingItemHand() {
@@ -607,6 +612,30 @@ public class ClientPlayerEntity extends PlayerEntity {
 
     public void setCrossbowChargeFinishSent(final boolean crossbowChargeFinishSent) {
         this.crossbowChargeFinishSent = crossbowChargeFinishSent;
+    }
+
+    public boolean isShieldSneakEmulated() {
+        return this.shieldSneakEmulated;
+    }
+
+    public void setShieldSneakEmulated(final boolean shieldSneakEmulated) {
+        this.shieldSneakEmulated = shieldSneakEmulated;
+    }
+
+    public int lastUseOnAge() {
+        return this.lastUseOnAge;
+    }
+
+    public void markUseOnThisTick() {
+        this.lastUseOnAge = this.age;
+    }
+
+    public int ticksSinceCrossbowChargeFinish() {
+        return this.crossbowChargeFinishAge < 0 ? Integer.MAX_VALUE : this.age - this.crossbowChargeFinishAge;
+    }
+
+    public void markCrossbowChargeFinished() {
+        this.crossbowChargeFinishAge = this.age;
     }
 
     public boolean isConsumableFinishSent() {
@@ -826,11 +855,30 @@ public class ClientPlayerEntity extends PlayerEntity {
         }
 
         public boolean matches(final InteractionHand hand, final byte containerId, final int containerSlot, final int transactionHotbarSlot, final BedrockItem item) {
-            return this.hand == hand
-                    && this.containerId == containerId
-                    && this.containerSlot == containerSlot
-                    && this.transactionHotbarSlot == transactionHotbarSlot
-                    && !this.item.isDifferent(item);
+            return matches(hand, containerId, containerSlot, transactionHotbarSlot, item, false);
+        }
+
+        public boolean matches(final InteractionHand hand, final byte containerId, final int containerSlot, final int transactionHotbarSlot, final BedrockItem item, final boolean emulateNetEase) {
+            if (this.hand != hand
+                    || this.containerId != containerId
+                    || this.containerSlot != containerSlot
+                    || this.transactionHotbarSlot != transactionHotbarSlot) {
+                return false;
+            }
+            if (item == null) {
+                return false;
+            }
+            return net.raphimc.viabedrock.experimental.ItemUseSemantics.matchesUseItem(
+                    emulateNetEase,
+                    this.item.identifier(),
+                    this.item.data(),
+                    this.item.blockRuntimeId(),
+                    this.item.tag(),
+                    item.identifier(),
+                    item.data(),
+                    item.blockRuntimeId(),
+                    item.tag()
+            );
         }
 
     }

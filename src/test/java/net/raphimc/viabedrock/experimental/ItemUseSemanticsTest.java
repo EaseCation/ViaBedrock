@@ -145,8 +145,30 @@ class ItemUseSemanticsTest {
         assertTrue(ItemUseSemantics.attachAuthInputItemInteraction(true, false));
         assertFalse(ItemUseSemantics.attachAuthInputItemInteraction(true, false, true));
         assertTrue(ItemUseSemantics.attachAuthInputItemInteraction(false, false, true));
+        assertFalse(ItemUseSemantics.attachAuthInputItemInteraction(true, false, false, true));
+        assertTrue(ItemUseSemantics.attachAuthInputItemInteraction(false, false, false, true));
         assertFalse(ItemUseSemantics.sendStartItemUseOnForBow(true));
         assertTrue(ItemUseSemantics.sendStartItemUseOnForBow(false));
+        assertTrue(ItemUseSemantics.needsStandaloneUseTransaction(true, false, false, false, true));
+        assertFalse(ItemUseSemantics.needsStandaloneUseTransaction(false, false, false, false, true));
+        assertFalse(ItemUseSemantics.needsStandaloneUseTransaction(true, false, false, false, false));
+        assertTrue(ItemUseSemantics.emulateShieldAsSneak(true, true));
+        assertFalse(ItemUseSemantics.emulateShieldAsSneak(false, true));
+        assertTrue(ItemUseSemantics.rejectNetEaseOffhandUse(true, true, false));
+        assertFalse(ItemUseSemantics.rejectNetEaseOffhandUse(true, true, true));
+        assertFalse(ItemUseSemantics.canStartBow(true, true, false, false));
+        assertTrue(ItemUseSemantics.canStartBow(true, true, true, false));
+        assertFalse(ItemUseSemantics.canStartConsumable(true, "minecraft:apple", true, false, false));
+        assertTrue(ItemUseSemantics.canStartConsumable(true, "minecraft:golden_apple", true, false, false));
+        assertFalse(ItemUseSemantics.crossbowFireReady(true, true, 10));
+        assertTrue(ItemUseSemantics.crossbowFireReady(true, true, 11));
+        assertTrue(ItemUseSemantics.dropDuplicateAirClickAfterUseOn(true, "minecraft:ender_pearl", true));
+        assertFalse(ItemUseSemantics.dropDuplicateAirClickAfterUseOn(true, "minecraft:bow", true));
+        assertTrue(ItemUseSemantics.chargedCrossbowUsesMotTag(true, true, false));
+        assertFalse(ItemUseSemantics.chargedCrossbowUsesMotTag(true, false, true));
+        assertTrue(ItemUseSemantics.chargedCrossbowUsesMotTag(false, false, true));
+        assertTrue(ItemUseSemantics.matchesUseItem(true, 1, (short) 0, 9, "a", 1, (short) 0, 8, "b"));
+        assertFalse(ItemUseSemantics.matchesUseItem(false, 1, (short) 0, 9, "a", 1, (short) 0, 8, "b"));
     }
 
 }
