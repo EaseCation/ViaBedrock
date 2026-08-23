@@ -171,6 +171,35 @@ class ItemStackRequestLayoutTest {
     }
 
     @Test
+    void netease860CraftRepairAndDisenchantWritesByteTypeUnsignedNetIdTimesAndRepairCost() {
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            ItemStackRequestLayout.writeCraftRepairAndDisenchant(buffer, 0, 1, 0, true, 860);
+            assertEquals(ItemStackRequestActionType.CraftRepairAndDisenchant.getValue(), buffer.readUnsignedByte());
+            assertEquals(0, (int) net.raphimc.viabedrock.protocol.types.BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+            assertEquals(1, buffer.readUnsignedByte());
+            assertEquals(0, (int) net.raphimc.viabedrock.protocol.types.BedrockTypes.VAR_INT.read(buffer));
+            assertFalse(buffer.isReadable());
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
+    void netease860CraftLoomWritesByteTypePatternIdAndTimesCrafted() {
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            ItemStackRequestLayout.writeCraftLoom(buffer, "bricks", 1, true, 860);
+            assertEquals(ItemStackRequestActionType.CraftLoom.getValue(), buffer.readUnsignedByte());
+            assertEquals("bricks", net.raphimc.viabedrock.protocol.types.BedrockTypes.STRING.read(buffer));
+            assertEquals(1, buffer.readUnsignedByte());
+            assertFalse(buffer.isReadable());
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
     void neteaseShiftMovesCursorPastRecipeItemsHole() {
         final ByteBuf buffer = Unpooled.buffer();
         try {

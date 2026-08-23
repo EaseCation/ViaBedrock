@@ -22,6 +22,8 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
 import net.raphimc.viabedrock.api.model.container.AnvilContainer;
+import net.raphimc.viabedrock.api.model.container.GenericContainer;
+import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
 import net.raphimc.viabedrock.experimental.model.inventory.InventoryActionData;
 import net.raphimc.viabedrock.experimental.model.inventory.InventorySource;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
@@ -337,6 +339,115 @@ class ItemStackRequestEncoderTest {
                 final ItemStackRequestLayout.DecodedRequestTrailer trailer = ItemStackRequestLayout.readRequestTrailer(buffer, true, 860);
                 assertEquals(0, trailer.filterStringCount());
                 assertEquals(TextProcessingEventOrigin.AnvilText.getValue(), trailer.textOrigin());
+                assertFalse(buffer.isReadable());
+            } finally {
+                buffer.release();
+            }
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void netease860CartographyApplyWritesCraftRecipeOptionalConsumeAndCreatedOutputTake() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final StubUserConnection user = new StubUserConnection(channel);
+            final InventoryTracker tracker = new InventoryTracker(user);
+            user.put(tracker);
+            final GenericContainer cartography = new GenericContainer(user, (byte) 1, ContainerType.CARTOGRAPHY, null, new BlockPosition(0, 64, 0), 3);
+            cartography.setItemSilent(0, item(12, 1, 7));
+            cartography.setItemSilent(1, item(13, 1, 8));
+            tracker.setCurrentContainer(cartography);
+
+            final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encodeCartographyApply(
+                    tracker, 1, 1, 1, true, 860);
+            assertFalse(encoded.unsupported());
+            final ByteBuf buffer = Unpooled.wrappedBuffer(encoded.payload());
+            try {
+                assertEquals(1, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                BedrockTypes.VAR_INT.read(buffer);
+                assertEquals(4, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                assertEquals(ItemStackRequestActionType.CraftRecipeOptional.getValue(), buffer.readUnsignedByte());
+                assertEquals(0, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                assertEquals(-1, buffer.readIntLE());
+                assertEquals(ItemStackRequestActionType.Consume.getValue(), buffer.readUnsignedByte());
+                assertEquals(1, buffer.readUnsignedByte());
+                final ItemStackRequestLayout.DecodedSlotInfo input = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ContainerEnumName.CartographyInputContainer, input.container());
+                assertEquals(12, input.slot());
+                assertEquals(7, input.stackNetworkId());
+                assertEquals(ItemStackRequestActionType.Consume.getValue(), buffer.readUnsignedByte());
+                assertEquals(1, buffer.readUnsignedByte());
+                final ItemStackRequestLayout.DecodedSlotInfo additional = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ContainerEnumName.CartographyAdditionalContainer, additional.container());
+                assertEquals(13, additional.slot());
+                assertEquals(8, additional.stackNetworkId());
+                assertEquals(ItemStackRequestActionType.Take.getValue(), buffer.readUnsignedByte());
+                assertEquals(1, buffer.readUnsignedByte());
+                final ItemStackRequestLayout.DecodedSlotInfo source = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ContainerEnumName.CreatedOutputContainer, source.container());
+                assertEquals(50, source.slot());
+                final ItemStackRequestLayout.DecodedSlotInfo destination = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ContainerEnumName.CursorContainer, destination.container());
+                assertEquals(0, destination.slot());
+                final ItemStackRequestLayout.DecodedRequestTrailer trailer = ItemStackRequestLayout.readRequestTrailer(buffer, true, 860);
+                assertEquals(0, trailer.filterStringCount());
+                assertEquals(TextProcessingEventOrigin.CartographyText.getValue(), trailer.textOrigin());
+                assertFalse(buffer.isReadable());
+            } finally {
+                buffer.release();
+            }
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void netease860GrindstoneApplyWritesCraftRepairConsumeAndCreatedOutputTake() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final StubUserConnection user = new StubUserConnection(channel);
+            final InventoryTracker tracker = new InventoryTracker(user);
+            user.put(tracker);
+            final GenericContainer grindstone = new GenericContainer(user, (byte) 1, ContainerType.GRINDSTONE, null, new BlockPosition(0, 64, 0), 3);
+            grindstone.setItemSilent(0, item(12, 1, 7));
+            grindstone.setItemSilent(1, item(13, 1, 8));
+            tracker.setCurrentContainer(grindstone);
+
+            final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encodeGrindstoneApply(
+                    tracker, 1, 1, 1, true, 860);
+            assertFalse(encoded.unsupported());
+            final ByteBuf buffer = Unpooled.wrappedBuffer(encoded.payload());
+            try {
+                assertEquals(1, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                BedrockTypes.VAR_INT.read(buffer);
+                assertEquals(4, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                assertEquals(ItemStackRequestActionType.CraftRepairAndDisenchant.getValue(), buffer.readUnsignedByte());
+                assertEquals(0, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                assertEquals(1, buffer.readUnsignedByte());
+                assertEquals(0, (int) BedrockTypes.VAR_INT.read(buffer));
+                assertEquals(ItemStackRequestActionType.Consume.getValue(), buffer.readUnsignedByte());
+                assertEquals(1, buffer.readUnsignedByte());
+                final ItemStackRequestLayout.DecodedSlotInfo input = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ContainerEnumName.GrindstoneInputContainer, input.container());
+                assertEquals(16, input.slot());
+                assertEquals(7, input.stackNetworkId());
+                assertEquals(ItemStackRequestActionType.Consume.getValue(), buffer.readUnsignedByte());
+                assertEquals(1, buffer.readUnsignedByte());
+                final ItemStackRequestLayout.DecodedSlotInfo additional = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ContainerEnumName.GrindstoneAdditionalContainer, additional.container());
+                assertEquals(17, additional.slot());
+                assertEquals(8, additional.stackNetworkId());
+                assertEquals(ItemStackRequestActionType.Take.getValue(), buffer.readUnsignedByte());
+                assertEquals(1, buffer.readUnsignedByte());
+                final ItemStackRequestLayout.DecodedSlotInfo source = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ContainerEnumName.CreatedOutputContainer, source.container());
+                assertEquals(50, source.slot());
+                final ItemStackRequestLayout.DecodedSlotInfo destination = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ContainerEnumName.CursorContainer, destination.container());
+                assertEquals(0, destination.slot());
+                ItemStackRequestLayout.readRequestTrailer(buffer, true, 860);
                 assertFalse(buffer.isReadable());
             } finally {
                 buffer.release();

@@ -37,6 +37,7 @@ import net.raphimc.viabedrock.api.model.scoreboard.ScoreboardEntry;
 import net.raphimc.viabedrock.api.model.scoreboard.ScoreboardObjective;
 import net.raphimc.viabedrock.api.util.*;
 import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
+import net.raphimc.viabedrock.experimental.tablist.PlayerIdentity;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
@@ -130,6 +131,7 @@ public class HudPackets {
                         ));
 
                         if (localPlayer) {
+                            playerListStorage.putIdentity(uuids[i], PlayerIdentity.javaEdition(PlayerIdentity.javaVersionName(wrapper.user())));
                             if (latency != PacketSyncStorage.UNKNOWN_LATENCY) {
                                 packetSyncStorage.markLatencyPublished(System.nanoTime());
                             }
@@ -338,8 +340,15 @@ public class HudPackets {
                 final ScoreboardObjective objective = scoreboardTracker.getObjective(objectiveName);
                 final Pair<ScoreboardObjective, ScoreboardEntry> existingEntry = scoreboardTracker.getEntry(scoreboardId);
                 if (existingEntry != null) {
-                    existingEntry.key().removeEntry(wrapper.user(), scoreboardId);
-                    if (entry != null && objective != null) {
+                    if (entry == null || objective == null) {
+                        existingEntry.key().removeEntry(wrapper.user(), scoreboardId);
+                    } else if (existingEntry.key() == objective) {
+                        // Same Java owner: overwrite in place. RESET+SET leaves a one-frame
+                        // hole that ModUIClient renders as a scoreboard flash.
+                        existingEntry.value().setScore(entry.score());
+                        objective.updateEntryInPlace(wrapper.user(), existingEntry.value());
+                    } else {
+                        existingEntry.key().removeEntry(wrapper.user(), scoreboardId);
                         existingEntry.value().setScore(entry.score());
                         objective.addEntry(wrapper.user(), scoreboardId, existingEntry.value());
                     }

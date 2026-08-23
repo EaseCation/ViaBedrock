@@ -21,12 +21,14 @@ import com.viaversion.nbt.tag.Tag;
 import com.viaversion.viaversion.api.minecraft.GameProfile;
 import com.viaversion.viaversion.api.connection.StorableObject;
 import com.viaversion.viaversion.util.Pair;
+import net.raphimc.viabedrock.experimental.tablist.PlayerIdentity;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode;
 
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 public class PlayerListStorage implements StorableObject {
@@ -35,6 +37,7 @@ public class PlayerListStorage implements StorableObject {
     private final Map<UUID, JavaProfile> javaProfiles = new LinkedHashMap<>();
     private final Map<UUID, Integer> serverLatencies = new HashMap<>();
     private final Map<UUID, Integer> publishedLatencies = new HashMap<>();
+    private final Map<UUID, PlayerIdentity> identities = new HashMap<>();
     private boolean invalidLatencyPayloadLogged;
 
     public Pair<Long, String> addPlayer(final UUID uuid, final long entityUniqueId, final String name) {
@@ -44,6 +47,7 @@ public class PlayerListStorage implements StorableObject {
     public Pair<Long, String> removePlayer(final UUID uuid) {
         this.publishedLatencies.remove(uuid);
         this.javaProfiles.remove(uuid);
+        this.identities.remove(uuid);
         return this.playerList.remove(uuid);
     }
 
@@ -120,6 +124,34 @@ public class PlayerListStorage implements StorableObject {
 
     public void markLatenciesPublished(final Map<UUID, Integer> latencies) {
         this.publishedLatencies.putAll(latencies);
+    }
+
+    public void putIdentity(final UUID uuid, final PlayerIdentity identity) {
+        if (uuid == null || identity == null) {
+            return;
+        }
+        this.identities.put(uuid, identity);
+    }
+
+    public PlayerIdentity identity(final UUID uuid) {
+        return this.identities.get(uuid);
+    }
+
+    public Map<UUID, PlayerIdentity> replaceIdentities(final Map<UUID, PlayerIdentity> snapshot) {
+        final Map<UUID, PlayerIdentity> previous = new HashMap<>(this.identities);
+        this.identities.clear();
+        if (snapshot != null) {
+            this.identities.putAll(snapshot);
+        }
+
+        final Map<UUID, PlayerIdentity> updates = new LinkedHashMap<>();
+        for (UUID uuid : this.playerList.keySet()) {
+            final PlayerIdentity next = this.identities.get(uuid);
+            if (!Objects.equals(previous.get(uuid), next)) {
+                updates.put(uuid, next);
+            }
+        }
+        return updates;
     }
 
     public boolean markInvalidLatencyPayloadLogged() {

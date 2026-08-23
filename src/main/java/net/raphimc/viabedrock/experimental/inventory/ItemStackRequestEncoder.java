@@ -164,6 +164,70 @@ public final class ItemStackRequestEncoder {
         return encodeActions(stackActions, tracker, emulateNetEase, protocol, filterStrings, TextProcessingEventOrigin.AnvilText);
     }
 
+    public static EncodedRequest encodeCartographyApply(final InventoryTracker tracker, final int inputCount,
+                                                        final int additionalCount, final int takeCount) {
+        return encodeCartographyApply(tracker, inputCount, additionalCount, takeCount, emulateNetEase(), encodeProtocol());
+    }
+
+    public static EncodedRequest encodeCartographyApply(final InventoryTracker tracker, final int inputCount,
+                                                        final int additionalCount, final int takeCount,
+                                                        final boolean emulateNetEase, final int protocol) {
+        if (inputCount <= 0 || takeCount <= 0) {
+            return EncodedRequest.notSupported();
+        }
+        final List<Action> stackActions = new ArrayList<>();
+        final ItemStackRequestLayout.SlotInfo input = slotWithNetId(tracker, 0);
+        if (input == null) {
+            return EncodedRequest.notSupported();
+        }
+        stackActions.add(Action.craftOptional(0, -1));
+        stackActions.add(Action.consume(inputCount, input));
+        if (additionalCount > 0) {
+            final ItemStackRequestLayout.SlotInfo additional = slotWithNetId(tracker, 1);
+            if (additional == null) {
+                return EncodedRequest.notSupported();
+            }
+            stackActions.add(Action.consume(additionalCount, additional));
+        }
+        stackActions.add(Action.transfer(
+                ItemStackRequestActionType.Take, takeCount,
+                new ItemStackRequestLayout.SlotInfo(ContainerEnumName.CreatedOutputContainer, 50, 0),
+                new ItemStackRequestLayout.SlotInfo(ContainerEnumName.CursorContainer, 0, 0)));
+        return encodeActions(stackActions, tracker, emulateNetEase, protocol, new String[0], TextProcessingEventOrigin.CartographyText);
+    }
+
+    public static EncodedRequest encodeGrindstoneApply(final InventoryTracker tracker, final int inputCount,
+                                                       final int additionalCount, final int takeCount) {
+        return encodeGrindstoneApply(tracker, inputCount, additionalCount, takeCount, emulateNetEase(), encodeProtocol());
+    }
+
+    public static EncodedRequest encodeGrindstoneApply(final InventoryTracker tracker, final int inputCount,
+                                                       final int additionalCount, final int takeCount,
+                                                       final boolean emulateNetEase, final int protocol) {
+        if (inputCount <= 0 || takeCount <= 0) {
+            return EncodedRequest.notSupported();
+        }
+        final List<Action> stackActions = new ArrayList<>();
+        final ItemStackRequestLayout.SlotInfo input = slotWithNetId(tracker, 0);
+        if (input == null) {
+            return EncodedRequest.notSupported();
+        }
+        stackActions.add(Action.craftRepairAndDisenchant(0, 1, 0));
+        stackActions.add(Action.consume(inputCount, input));
+        if (additionalCount > 0) {
+            final ItemStackRequestLayout.SlotInfo additional = slotWithNetId(tracker, 1);
+            if (additional == null) {
+                return EncodedRequest.notSupported();
+            }
+            stackActions.add(Action.consume(additionalCount, additional));
+        }
+        stackActions.add(Action.transfer(
+                ItemStackRequestActionType.Take, takeCount,
+                new ItemStackRequestLayout.SlotInfo(ContainerEnumName.CreatedOutputContainer, 50, 0),
+                new ItemStackRequestLayout.SlotInfo(ContainerEnumName.CursorContainer, 0, 0)));
+        return encodeActions(stackActions, tracker, emulateNetEase, protocol);
+    }
+
     private static void writeAction(final ByteBuf buffer, final Action action,
                                     final boolean emulateNetEase, final int protocol) {
         switch (action.type) {
@@ -176,6 +240,10 @@ public final class ItemStackRequestEncoder {
             case CraftCreative -> ItemStackRequestLayout.writeCraftCreative(buffer, action.count, 1, emulateNetEase, protocol);
             case CraftRecipeOptional -> ItemStackRequestLayout.writeCraftRecipeOptional(
                     buffer, action.count, action.filterIndex, emulateNetEase, protocol);
+            case CraftRepairAndDisenchant -> ItemStackRequestLayout.writeCraftRepairAndDisenchant(
+                    buffer, action.count, action.timesCrafted, action.filterIndex, emulateNetEase, protocol);
+            case CraftLoom -> ItemStackRequestLayout.writeCraftLoom(
+                    buffer, action.patternId, action.timesCrafted, emulateNetEase, protocol);
             case Destroy -> ItemStackRequestLayout.writeDestroy(buffer, action.count, action.source, emulateNetEase, protocol);
             default -> throw new IllegalStateException("Unsupported item-stack action: " + action.type);
         }
@@ -677,39 +745,47 @@ public final class ItemStackRequestEncoder {
         return ProtocolConstants.BEDROCK_PROTOCOL_VERSION;
     }
 
-    private record Action(ItemStackRequestActionType type, int count, int filterIndex,
-                          ItemStackRequestLayout.SlotInfo source, ItemStackRequestLayout.SlotInfo destination) {
+    private record Action(ItemStackRequestActionType type, int count, int filterIndex, int timesCrafted,
+                          String patternId, ItemStackRequestLayout.SlotInfo source, ItemStackRequestLayout.SlotInfo destination) {
         static Action transfer(final ItemStackRequestActionType type, final int count,
                                final ItemStackRequestLayout.SlotInfo source, final ItemStackRequestLayout.SlotInfo destination) {
-            return new Action(type, count, 0, source, destination);
+            return new Action(type, count, 0, 0, null, source, destination);
         }
 
         static Action swap(final ItemStackRequestLayout.SlotInfo source, final ItemStackRequestLayout.SlotInfo destination) {
-            return new Action(ItemStackRequestActionType.Swap, 0, 0, source, destination);
+            return new Action(ItemStackRequestActionType.Swap, 0, 0, 0, null, source, destination);
         }
 
         static Action drop(final int count, final ItemStackRequestLayout.SlotInfo source) {
-            return new Action(ItemStackRequestActionType.Drop, count, 0, source, null);
+            return new Action(ItemStackRequestActionType.Drop, count, 0, 0, null, source, null);
         }
 
         static Action consume(final int count, final ItemStackRequestLayout.SlotInfo source) {
-            return new Action(ItemStackRequestActionType.Consume, count, 0, source, null);
+            return new Action(ItemStackRequestActionType.Consume, count, 0, 0, null, source, null);
         }
 
         static Action craft(final int recipeNetworkId) {
-            return new Action(ItemStackRequestActionType.CraftRecipe, recipeNetworkId, 0, null, null);
+            return new Action(ItemStackRequestActionType.CraftRecipe, recipeNetworkId, 0, 0, null, null, null);
         }
 
         static Action craftOptional(final int recipeNetworkId, final int filteredStringIndex) {
-            return new Action(ItemStackRequestActionType.CraftRecipeOptional, recipeNetworkId, filteredStringIndex, null, null);
+            return new Action(ItemStackRequestActionType.CraftRecipeOptional, recipeNetworkId, filteredStringIndex, 0, null, null, null);
+        }
+
+        static Action craftRepairAndDisenchant(final int recipeNetworkId, final int timesCrafted, final int repairCost) {
+            return new Action(ItemStackRequestActionType.CraftRepairAndDisenchant, recipeNetworkId, repairCost, timesCrafted, null, null, null);
+        }
+
+        static Action craftLoom(final String patternId, final int timesCrafted) {
+            return new Action(ItemStackRequestActionType.CraftLoom, 0, 0, timesCrafted, patternId, null, null);
         }
 
         static Action creative(final int creativeNetId) {
-            return new Action(ItemStackRequestActionType.CraftCreative, creativeNetId, 0, null, null);
+            return new Action(ItemStackRequestActionType.CraftCreative, creativeNetId, 0, 0, null, null, null);
         }
 
         static Action destroy(final int count, final ItemStackRequestLayout.SlotInfo source) {
-            return new Action(ItemStackRequestActionType.Destroy, count, 0, source, null);
+            return new Action(ItemStackRequestActionType.Destroy, count, 0, 0, null, source, null);
         }
     }
 

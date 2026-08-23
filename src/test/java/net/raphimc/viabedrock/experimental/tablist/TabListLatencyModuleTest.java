@@ -47,6 +47,10 @@ class TabListLatencyModuleTest {
         assertEquals("Player \u00A77[\u00A76300ms\u00A77]", TabListLatencyModule.formatDisplayName("Player", 300));
         assertEquals("Player \u00A77[\u00A76599ms\u00A77]", TabListLatencyModule.formatDisplayName("Player", 599));
         assertEquals("Player \u00A77[\u00A7c600ms\u00A77]", TabListLatencyModule.formatDisplayName("Player", 600));
+        assertEquals("Player \u00A78[\u00A7bJE 1.21.11\u00A78] \u00A77[\u00A7a12ms\u00A77]",
+                TabListLatencyModule.formatDisplayName("Player", 12, PlayerIdentity.javaEdition("1.21.11")));
+        assertEquals("Player \u00A78[\u00A7aBE 1.21.124\u00A78] \u00A77[\u00A7a12ms\u00A77]",
+                TabListLatencyModule.formatDisplayName("Player", 12, PlayerIdentity.bedrock("1.21.124")));
     }
 
     @Test

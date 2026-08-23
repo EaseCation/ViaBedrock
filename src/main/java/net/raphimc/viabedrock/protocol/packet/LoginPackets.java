@@ -44,6 +44,7 @@ import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.AuthenticationType;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketCompressionAlgorithm;
 import net.raphimc.viabedrock.protocol.model.JavaSkinData;
+import net.raphimc.viabedrock.experimental.tablist.PlayerIdentity;
 import net.raphimc.viabedrock.protocol.provider.NettyPipelineProvider;
 import net.raphimc.viabedrock.protocol.provider.SkinProvider;
 import net.raphimc.viabedrock.protocol.storage.AuthData;
@@ -213,7 +214,7 @@ public class LoginPackets {
                 extraData.put("identity", identity);
                 if (ViaBedrock.getConfig().shouldEmulateNetEaseClient()) {
                     extraData.putAll(createNetEaseExtraData(javaUsername, javaUuid, xuid,
-                            handshakeStorage != null ? handshakeStorage.device() : JavaClientDevice.JAVA_EDITION));
+                            handshakeStorage != null ? handshakeStorage.device() : JavaClientDevice.JAVA_EDITION, user));
                 }
 
                 final String identityJwt = Jwts.builder()
@@ -290,16 +291,22 @@ public class LoginPackets {
     }
 
     static java.util.Map<String, Object> createNetEaseExtraData(final String javaUsername, final UUID javaUuid, final String xuid) {
-        return createNetEaseExtraData(javaUsername, javaUuid, xuid, JavaClientDevice.JAVA_EDITION);
+        return createNetEaseExtraData(javaUsername, javaUuid, xuid, JavaClientDevice.JAVA_EDITION, null);
     }
 
     static java.util.Map<String, Object> createNetEaseExtraData(final String javaUsername, final UUID javaUuid, final String xuid,
                                                                 final JavaClientDevice device) {
+        return createNetEaseExtraData(javaUsername, javaUuid, xuid, device, null);
+    }
+
+    static java.util.Map<String, Object> createNetEaseExtraData(final String javaUsername, final UUID javaUuid, final String xuid,
+                                                                final JavaClientDevice device, final UserConnection user) {
         final java.util.Map<String, Object> extraData = new java.util.HashMap<>();
         final long uid = javaUuid != null ? Math.abs(javaUuid.getMostSignificantBits()) : Math.abs(FNV1.fnv1_64(javaUsername.getBytes(StandardCharsets.UTF_8)));
         extraData.put("uid", uid);
         extraData.put("netease_sid", "je-" + (javaUuid != null ? javaUuid.toString().replace("-", "") : xuid));
         extraData.put("platform", "pc_java");
+        extraData.put("java_version", PlayerIdentity.javaVersionName(user));
         extraData.put("os_name", device != null ? device.osName() : "windows");
         extraData.put("env", "release");
         extraData.put("engineVersion", ViaBedrock.getConfig().getNetEaseGameVersion());

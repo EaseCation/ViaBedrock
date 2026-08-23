@@ -204,6 +204,29 @@ public final class ItemStackRequestLayout {
         }
     }
 
+    public static void writeCraftRepairAndDisenchant(final ByteBuf buffer, final int recipeNetworkId, final int timesCrafted,
+                                                     final int repairCost, final boolean emulateNetEase, final int protocol) {
+        writeActionType(buffer, ItemStackRequestActionType.CraftRepairAndDisenchant, emulateNetEase, protocol);
+        if (protocol >= UNSIGNED_ACTION_TYPE_PROTOCOL) {
+            buffer.writeIntLE(recipeNetworkId);
+        } else {
+            BedrockTypes.UNSIGNED_VAR_INT.write(buffer, recipeNetworkId);
+        }
+        if (!emulateNetEase || protocol >= 712) {
+            buffer.writeByte(timesCrafted);
+        }
+        BedrockTypes.VAR_INT.write(buffer, repairCost);
+    }
+
+    public static void writeCraftLoom(final ByteBuf buffer, final String patternId, final int timesCrafted,
+                                      final boolean emulateNetEase, final int protocol) {
+        writeActionType(buffer, ItemStackRequestActionType.CraftLoom, emulateNetEase, protocol);
+        BedrockTypes.STRING.write(buffer, patternId != null ? patternId : "");
+        if (!emulateNetEase || protocol >= 712) {
+            buffer.writeByte(timesCrafted);
+        }
+    }
+
     public static DecodedRequestTrailer readRequestTrailer(final ByteBuf buffer, final boolean emulateNetEase, final int protocol) {
         final String[] filterStrings;
         if (!emulateNetEase || protocol >= FILTER_STRINGS_PROTOCOL) {

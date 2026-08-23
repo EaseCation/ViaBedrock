@@ -93,6 +93,12 @@ public class ClickSimulator {
             // placement and is left unsupported so the screen resyncs instead of desyncing.
             return action == ContainerInput.PICKUP ? AnvilSimulator.simulateTakeResult(tracker) : null;
         }
+        if (javaSlot == 2 && javaContainerId != 0 && CartographySimulator.isCartography(tracker.getCurrentContainer())) {
+            return action == ContainerInput.PICKUP ? CartographySimulator.simulateTakeResult(tracker) : null;
+        }
+        if (javaSlot == 2 && javaContainerId != 0 && GrindstoneSimulator.isGrindstone(tracker.getCurrentContainer())) {
+            return action == ContainerInput.PICKUP ? GrindstoneSimulator.simulateTakeResult(tracker) : null;
+        }
 
         return switch (action) {
             case PICKUP -> simulatePickup(javaContainerId, javaSlot, button, tracker, stackLimits);

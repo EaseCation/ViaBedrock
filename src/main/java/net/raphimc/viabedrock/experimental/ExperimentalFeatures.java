@@ -64,12 +64,14 @@ import net.raphimc.viabedrock.experimental.rewriter.InventoryTransactionRewriter
 import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
 import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
 import net.raphimc.viabedrock.experimental.riding.RidingModule;
+import net.raphimc.viabedrock.experimental.tablist.PlayerIdentity;
 import net.raphimc.viabedrock.experimental.tablist.TabListLatencyModule;
 import net.raphimc.viabedrock.experimental.storage.BlockPlacementAckTracker;
 import net.raphimc.viabedrock.experimental.storage.MapTracker;
 import net.raphimc.viabedrock.experimental.storage.MultilineNametagTracker;
 import net.raphimc.viabedrock.experimental.storage.ScriptDebugTextTracker;
 import net.raphimc.viabedrock.experimental.task.BlockBreakingProgressTickTask;
+import net.raphimc.viabedrock.experimental.task.MapInfoRequestTickTask;
 import net.raphimc.viabedrock.experimental.task.MultilineNametagTickTask;
 import net.raphimc.viabedrock.experimental.task.ScriptDebugTextTickTask;
 import net.raphimc.viabedrock.experimental.util.JavaMapPaletteUtil;
@@ -248,6 +250,16 @@ public class ExperimentalFeatures {
                 module.onPlayerLatenciesUpdated(user, latencies);
             } catch (final Throwable e) {
                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error in module onPlayerLatenciesUpdated", e);
+            }
+        }
+    }
+
+    public static void dispatchPlayerIdentitiesUpdated(final UserConnection user, final Map<UUID, PlayerIdentity> identities) {
+        for (final FeatureModule module : MODULES) {
+            try {
+                module.onPlayerIdentitiesUpdated(user, identities);
+            } catch (final Throwable e) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error in module onPlayerIdentitiesUpdated", e);
             }
         }
     }
@@ -1503,6 +1515,7 @@ public class ExperimentalFeatures {
         Via.getPlatform().runRepeatingSync(new ScriptDebugTextTickTask(), 1L);
         Via.getPlatform().runRepeatingSync(new BlockBreakingProgressTickTask(), 1L);
         Via.getPlatform().runRepeatingSync(new MultilineNametagTickTask(), 1L);
+        Via.getPlatform().runRepeatingSync(new MapInfoRequestTickTask(), 20L);
     }
 
     // Maps a Bedrock MapDecoration_Type value (index) to a Java minecraft:map_decoration_type registry id.

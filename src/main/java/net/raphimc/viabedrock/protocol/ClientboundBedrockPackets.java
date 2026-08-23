@@ -205,6 +205,13 @@ public enum ClientboundBedrockPackets implements ClientboundPacketType {
     ATTRIBUTE_LAYER_SYNC(MinecraftPacketIds.ClientboundAttributeLayerSyncPacket.getValue()),
     SERVER_STORE_INFO(MinecraftPacketIds.ServerStoreInfo.getValue()),
     SERVER_PRESENCE_INFO(MinecraftPacketIds.ServerPresenceInfo.getValue()),
+    // MOT packet-pool IDs that generated MinecraftPacketIds omit (ends at 347).
+    // Clientbound 342 is PartyChanged; 348-350 are sound/party cookies. Without
+    // a registered type they surface as "Received unknown packet" and abort the batch.
+    PARTY_CHANGED(342),
+    UPDATE_SOUND_DATA(348),
+    SEND_PARTY_DESTINATION_COOKIE(349),
+    PARTY_DESTINATION_COOKIE_RESPONSE(350),
     PY_RPC(0xC8),
     // NetEase title-specific packets. MOT packetPoolCurrentNetEase registers these on
     // top of the international pool: PY_RPC=200, NETEASE_JSON=203, CONFIRM_SKIN=228, SYNC_SKIN=236.

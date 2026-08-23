@@ -30,6 +30,8 @@ import net.raphimc.viabedrock.protocol.data.enums.Dimension;
 import net.raphimc.viabedrock.protocol.model.EntityLink;
 import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
 
+import net.raphimc.viabedrock.experimental.tablist.PlayerIdentity;
+
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -121,6 +123,12 @@ public interface FeatureModule {
      * Called after latency values for existing Java player list entries are published.
      */
     default void onPlayerLatenciesUpdated(UserConnection user, Map<UUID, Integer> latencies) {
+    }
+
+    /**
+     * Called after JE/BE identity labels for existing Java player list entries change.
+     */
+    default void onPlayerIdentitiesUpdated(UserConnection user, Map<UUID, PlayerIdentity> identities) {
     }
 
     /**

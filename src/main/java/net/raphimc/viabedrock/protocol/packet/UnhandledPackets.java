@@ -66,6 +66,10 @@ public class UnhandledPackets {
         protocol.cancelClientbound(ClientboundBedrockPackets.CLIENT_CHEAT_ABILITY);
         protocol.cancelClientbound(ClientboundBedrockPackets.COMPRESSED_BIOME_DEFINITION_LIST);
         protocol.cancelClientbound(ClientboundBedrockPackets.SET_MOVEMENT_AUTHORITY);
+        protocol.cancelClientbound(ClientboundBedrockPackets.PARTY_CHANGED);
+        protocol.cancelClientbound(ClientboundBedrockPackets.UPDATE_SOUND_DATA);
+        protocol.cancelClientbound(ClientboundBedrockPackets.SEND_PARTY_DESTINATION_COOKIE);
+        protocol.cancelClientbound(ClientboundBedrockPackets.PARTY_DESTINATION_COOKIE_RESPONSE);
 
         protocol.registerServerboundTransition(ServerboundConfigurationPackets1_21_9.KEEP_ALIVE, null, UnhandledPackets::handleJavaKeepAlive);
         protocol.cancelServerbound(ServerboundPackets26_1.CHAT_ACK);

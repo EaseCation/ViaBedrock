@@ -211,7 +211,9 @@ public class ClientAuthInventoryModule implements FeatureModule {
             // MOT computes the anvil result server-side. Leave the Java anvil/cursor
             // prediction in place and wait for INVENTORY_SLOT/CONTENT instead of
             // stuffing the input item onto the HUD cursor.
-            if (AnvilSimulator.isTakeResult(actions)) {
+            if (AnvilSimulator.isTakeResult(actions)
+                    || CartographySimulator.isTakeResult(actions)
+                    || GrindstoneSimulator.isTakeResult(actions)) {
                 return;
             }
 
@@ -415,6 +417,14 @@ public class ClientAuthInventoryModule implements FeatureModule {
         if (AnvilSimulator.isTakeResult(actions)) {
             return session != null && session.isInventoryServerAuthoritative()
                     && AnvilSimulator.sendTakeResult(user, user.get(InventoryTracker.class));
+        }
+        if (CartographySimulator.isTakeResult(actions)) {
+            return session != null && session.isInventoryServerAuthoritative()
+                    && CartographySimulator.sendTakeResult(user, user.get(InventoryTracker.class));
+        }
+        if (GrindstoneSimulator.isTakeResult(actions)) {
+            return session != null && session.isInventoryServerAuthoritative()
+                    && GrindstoneSimulator.sendTakeResult(user, user.get(InventoryTracker.class));
         }
         if (session != null && session.isInventoryServerAuthoritative()) {
             final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encode(actions, user.get(InventoryTracker.class));

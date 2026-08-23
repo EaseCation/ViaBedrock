@@ -38,8 +38,8 @@ import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.JavaRegistries;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.Enchant_Type;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
+import net.raphimc.viabedrock.protocol.packet.MapInfoRequestLayout;
 import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
-import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.util.Set;
 import java.util.logging.Level;
@@ -66,7 +66,7 @@ public class ExperimentalItemRewriter {
             new Consumable1_21_2.ConsumeEffect[0]
     );
 
-    private static final long MAP_INFO_REQUEST_THROTTLE_MS = 1000L;
+    static final long MAP_INFO_REQUEST_THROTTLE_MS = 1000L;
 
     // BedrockTag can be null
     public static void handleItem(final UserConnection user, final BedrockItem bedrockItem, final CompoundTag bedrockTag, final Item javaItem) {
@@ -99,13 +99,7 @@ public class ExperimentalItemRewriter {
 
                 // Bedrock servers (e.g. Nukkit) only send MAP_ITEM_DATA in response to a MapInfoRequest.
                 // Request the texture if we don't have it yet, throttled to avoid spamming the server.
-                if (!map.hasTexture()) {
-                    final long now = System.currentTimeMillis();
-                    if (now - map.getLastRequestedMs() > MAP_INFO_REQUEST_THROTTLE_MS) {
-                        map.setLastRequestedMs(now);
-                        requestMapInfo(user, uuid);
-                    }
-                }
+                requestMapInfoIfNeeded(user, map);
             }
 
             if (bedrockTag.get("ench") instanceof ListTag<?> enchantments) {
@@ -184,10 +178,24 @@ public class ExperimentalItemRewriter {
         return MathUtil.clamp(bedrockLevel, 0, 255);
     }
 
-    private static void requestMapInfo(final UserConnection user, final long bedrockMapId) {
+    public static void requestMapInfoIfNeeded(final UserConnection user, final MapObject map) {
+        if (user == null || map == null || map.hasTexture()) {
+            return;
+        }
+        final long now = System.currentTimeMillis();
+        if (now - map.getLastRequestedMs() <= MAP_INFO_REQUEST_THROTTLE_MS) {
+            return;
+        }
+        map.setLastRequestedMs(now);
+        requestMapInfo(user, map.getId());
+    }
+
+    public static void requestMapInfo(final UserConnection user, final long bedrockMapId) {
+        if (user == null) {
+            return;
+        }
         final PacketWrapper mapInfoRequest = PacketWrapper.create(ServerboundBedrockPackets.MAP_INFO_REQUEST, user);
-        mapInfoRequest.write(BedrockTypes.VAR_LONG, bedrockMapId); // map id
-        mapInfoRequest.write(BedrockTypes.UNSIGNED_INT_LE, 0L); // client pixels (uint32 length-prefixed, empty)
+        MapInfoRequestLayout.write(mapInfoRequest, bedrockMapId);
         mapInfoRequest.sendToServer(BedrockProtocol.class);
     }
 

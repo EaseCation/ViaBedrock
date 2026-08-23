@@ -58,6 +58,14 @@ class NeteasePacketLayoutTest {
         assertEquals(ClientboundBedrockPackets.COMPRESSED_BIOME_DEFINITION_LIST, ClientboundBedrockPackets.getPacket(301));
         assertEquals(ClientboundBedrockPackets.SET_MOVEMENT_AUTHORITY, ClientboundBedrockPackets.getPacket(319));
         assertEquals(ServerboundBedrockPackets.FILTER_TEXT, ServerboundBedrockPackets.getPacket(163));
+        assertEquals(342, ClientboundBedrockPackets.PARTY_CHANGED.getId());
+        assertEquals(348, ClientboundBedrockPackets.UPDATE_SOUND_DATA.getId());
+        assertEquals(349, ClientboundBedrockPackets.SEND_PARTY_DESTINATION_COOKIE.getId());
+        assertEquals(350, ClientboundBedrockPackets.PARTY_DESTINATION_COOKIE_RESPONSE.getId());
+        assertEquals(ClientboundBedrockPackets.PARTY_CHANGED, ClientboundBedrockPackets.getPacket(342));
+        assertEquals(ClientboundBedrockPackets.UPDATE_SOUND_DATA, ClientboundBedrockPackets.getPacket(348));
+        assertEquals(ClientboundBedrockPackets.SEND_PARTY_DESTINATION_COOKIE, ClientboundBedrockPackets.getPacket(349));
+        assertEquals(ClientboundBedrockPackets.PARTY_DESTINATION_COOKIE_RESPONSE, ClientboundBedrockPackets.getPacket(350));
     }
 
     @Test
