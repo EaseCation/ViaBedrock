@@ -555,7 +555,12 @@ public class JoinPackets {
             }
         });
         protocol.registerClientboundTransition(ClientboundBedrockPackets.AVAILABLE_ENTITY_IDENTIFIERS,
-                State.CONFIGURATION, (PacketHandler) PacketWrapper::cancel, // Bedrock client ignores entity identifiers before start game
+                State.CONFIGURATION, (PacketHandler) wrapper -> {
+                    // MOT 860 sends identifiers immediately after START_GAME, while Java is still
+                    // in CONFIGURATION. Cancelling here left custom ids unregistered before the
+                    // deferred ADD_ENTITY replay. The pre-play guard already queues this packet.
+                    wrapper.cancel();
+                },
                 State.PLAY, (PacketHandler) wrapper -> {
                     wrapper.cancel();
                     final GameSessionStorage gameSession = wrapper.user().get(GameSessionStorage.class);

@@ -101,12 +101,20 @@ public class MultiStatePackets {
         final long timestamp = wrapper.read(BedrockTypes.LONG_LE); // timestamp
         final boolean fromServer = wrapper.read(Types.BOOLEAN); // from server
         if (ViaBedrock.getConfig().shouldEmulateNetEaseClient()) {
-            // MOT 860 zero-fills NETWORK_STACK_LATENCY (timestamp=0, fromServer=false).
-            // GanAC also sends its own pings with timestamp=id and expects the client
-            // echo as id * 1_000_000. Echoing on the proxy made compensation 0ms and
-            // never matched those ids (Timed out! after max-latency-wait).
-            // Treat every NetEase ping as a server ping and wait for Java PONG.
-            // PONG_HANDLER already writes response.timestamp() * 1_000_000.
+            // MOT 860 keepalive is new NetworkStackLatencyPacket() (timestamp=0,
+            // fromServer=false). Mapping that onto Java PING lets GanAC queue id 0
+            // and releaseThrough(0) drain every in-flight GanAC ping.
+            // Real GanAC ids are 1..999_999_999 and must still round-trip Java PING
+            // so compensation is not 0ms. Echo MOT 0 locally; wait for Java PONG
+            // only when timestamp != 0. PONG_HANDLER writes timestamp * 1_000_000.
+            if (PacketSyncStorage.isMotKeepaliveTimestamp(timestamp)) {
+                wrapper.cancel();
+                final PacketWrapper echo = PacketWrapper.create(ServerboundBedrockPackets.NETWORK_STACK_LATENCY, wrapper.user());
+                echo.write(BedrockTypes.LONG_LE, 0L);
+                echo.write(Types.BOOLEAN, true);
+                echo.sendToServer(BedrockProtocol.class);
+                return;
+            }
             final int id = wrapper.user().get(PacketSyncStorage.class).addNetworkStackLatencyResponse(timestamp);
             wrapper.write(Types.INT, id); // parameter
             return;

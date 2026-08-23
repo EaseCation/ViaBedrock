@@ -83,6 +83,16 @@ public class PacketSyncStorage extends StoredObject {
     }
 
     /**
+     * MOT 860 keepalive is {@code new NetworkStackLatencyPacket()} (timestamp 0).
+     * Mapping that onto Java PING lets GanAC queue id 0 and {@code releaseThrough(0)}
+     * drain every in-flight GanAC ping. Echo it locally instead.
+     * Ref: MOT Player.java age % 200.
+     */
+    public static boolean isMotKeepaliveTimestamp(final long timestamp) {
+        return timestamp == 0L;
+    }
+
+    /**
      * Measures Java-client RTT without touching Bedrock {@code NETWORK_STACK_LATENCY}.
      * Server NSL on the NetEase path already round-trips through Java PING/PONG;
      * this probe only fills HUD samples between those pings.

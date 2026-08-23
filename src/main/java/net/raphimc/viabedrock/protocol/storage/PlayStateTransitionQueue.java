@@ -57,6 +57,15 @@ public class PlayStateTransitionQueue extends StoredObject {
             ClientboundBedrockPackets.ADD_ENTITY,
             ClientboundBedrockPackets.REMOVE_ENTITY,
             ClientboundBedrockPackets.ADD_ITEM_ENTITY,
+            ClientboundBedrockPackets.ADD_PLAYER,
+            ClientboundBedrockPackets.ADD_PAINTING,
+            ClientboundBedrockPackets.SET_ENTITY_LINK,
+            ClientboundBedrockPackets.SET_ENTITY_MOTION,
+            ClientboundBedrockPackets.MOVE_ENTITY_ABSOLUTE,
+            ClientboundBedrockPackets.MOVE_ENTITY_DELTA,
+            ClientboundBedrockPackets.MOVE_PLAYER,
+            ClientboundBedrockPackets.AVAILABLE_ENTITY_IDENTIFIERS,
+            ClientboundBedrockPackets.NETWORK_CHUNK_PUBLISHER_UPDATE,
             ClientboundBedrockPackets.UPDATE_ATTRIBUTES,
             ClientboundBedrockPackets.MOB_EFFECT,
             ClientboundBedrockPackets.SET_DISPLAY_OBJECTIVE,
@@ -70,6 +79,9 @@ public class PlayStateTransitionQueue extends StoredObject {
             ClientboundBedrockPackets.PLAYER_LIST,
             ClientboundBedrockPackets.SET_TIME,
             ClientboundBedrockPackets.SET_DIFFICULTY,
+            ClientboundBedrockPackets.SET_SPAWN_POSITION,
+            ClientboundBedrockPackets.GAME_RULES_CHANGED,
+            ClientboundBedrockPackets.SET_COMMANDS_ENABLED,
             ClientboundBedrockPackets.CONFIRM_SKIN,
             ClientboundBedrockPackets.SYNC_SKIN,
             ClientboundBedrockPackets.NETEASE_JSON
@@ -90,9 +102,13 @@ public class PlayStateTransitionQueue extends StoredObject {
         super(user);
     }
 
+    public static boolean shouldDefer(final ClientboundBedrockPackets packet) {
+        return DEFERRED_PACKETS.contains(packet);
+    }
+
     public static boolean deferIfNeeded(final UserConnection user, final ClientboundBedrockPackets packet, final PacketWrapper wrapper) {
         final PlayStateTransitionQueue transitionQueue = user.get(PlayStateTransitionQueue.class);
-        if (transitionQueue == null || !DEFERRED_PACKETS.contains(packet)) {
+        if (transitionQueue == null || !shouldDefer(packet)) {
             return false;
         }
         return transitionQueue.defer(packet, wrapper);

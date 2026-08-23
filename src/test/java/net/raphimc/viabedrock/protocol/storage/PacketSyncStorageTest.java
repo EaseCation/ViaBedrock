@@ -85,6 +85,13 @@ class PacketSyncStorageTest {
     }
 
     @Test
+    void motKeepaliveTimestampZeroMustNotBecomeAJavaPingId() {
+        assertTrue(PacketSyncStorage.isMotKeepaliveTimestamp(0L));
+        assertFalse(PacketSyncStorage.isMotKeepaliveTimestamp(1L));
+        assertFalse(PacketSyncStorage.isMotKeepaliveTimestamp(42L));
+    }
+
+    @Test
     void javaOnlyLatencyProbeIsNotForwardedToBedrock() {
         final int id = this.storage.addNetworkStackLatencyResponse(PacketSyncStorage.JAVA_ONLY_LATENCY_PROBE, 1L);
         final PacketSyncStorage.NetworkStackLatencyResponse response = this.storage.getNetworkStackLatencyResponse(id);
