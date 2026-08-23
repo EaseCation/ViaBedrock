@@ -23,8 +23,10 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.CommandOrigi
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.CommandOutputType;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.CommandPermissionLevel;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.CurrentCmdVersion;
+import net.raphimc.viabedrock.protocol.model.CommandData;
 import net.raphimc.viabedrock.protocol.model.CommandOriginData;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+import net.raphimc.viabedrock.protocol.types.model.CommandDataArrayType;
 import org.junit.jupiter.api.Test;
 
 import java.util.UUID;
@@ -110,5 +112,68 @@ class CommandPacketLayoutTest {
         } finally {
             buffer.release();
         }
+    }
+
+    @Test
+    void netease860SkipsThreeByteEnumConstraintTrailerAfterEmptyCount() {
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            writeEmptyMotAvailableCommands(buffer);
+            buffer.writeByte(0x01);
+            buffer.writeByte(0x02);
+            buffer.writeByte(0x03);
+
+            final CommandData[] commands = CommandDataArrayType.readClassic(buffer, true);
+            assertEquals(0, commands.length);
+            assertFalse(buffer.isReadable(), "NetEase leftover after MOT empty constraint count must be consumed");
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
+    void netease860SkipsThreeByteTrailerEvenWhenItLooksLikeANonZeroCount() {
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            writeEmptyMotAvailableCommandsWithoutConstraints(buffer);
+            buffer.writeByte(0x01);
+            buffer.writeByte(0x02);
+            buffer.writeByte(0x03);
+
+            final CommandData[] commands = CommandDataArrayType.readClassic(buffer, true);
+            assertEquals(0, commands.length);
+            assertFalse(buffer.isReadable());
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
+    void treatingNetease860ConstraintTrailerAsOfficialIntRecordsFails() {
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            writeEmptyMotAvailableCommandsWithoutConstraints(buffer);
+            buffer.writeByte(0x01);
+            buffer.writeByte(0x02);
+            buffer.writeByte(0x03);
+            assertThrows(IndexOutOfBoundsException.class, () -> CommandDataArrayType.readClassic(buffer, false));
+        } finally {
+            buffer.release();
+        }
+    }
+
+    private static void writeEmptyMotAvailableCommands(final ByteBuf buffer) {
+        writeEmptyMotAvailableCommandsWithoutConstraints(buffer);
+        BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 0); // MOT empty constraint count
+    }
+
+    private static void writeEmptyMotAvailableCommandsWithoutConstraints(final ByteBuf buffer) {
+        BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 0); // enum literals
+        BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 0); // sub command literals
+        BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 0); // postfixes
+        BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 0); // enums
+        BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 0); // chained subcommands
+        BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 0); // commands
+        BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 0); // soft enums
     }
 }

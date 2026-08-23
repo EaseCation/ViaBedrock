@@ -63,7 +63,7 @@ public class CommandDataArrayType extends Type<CommandData[]> {
         }
     }
 
-    private static CommandData[] readClassic(ByteBuf buffer, final boolean netEaseLegacy) {
+    public static CommandData[] readClassic(ByteBuf buffer, final boolean netEaseLegacy) {
         final String[] enumLiterals = BedrockTypes.STRING_ARRAY.read(buffer); // enum literals
         final String[] subCommandLiterals = BedrockTypes.STRING_ARRAY.read(buffer); // sub command literals
         final String[] postFixLiterals = BedrockTypes.STRING_ARRAY.read(buffer); // post fix literals
@@ -214,11 +214,26 @@ public class CommandDataArrayType extends Type<CommandData[]> {
         }
         softEnumResolvers.forEach(c -> c.accept(softEnumPalette));
 
+        if (!buffer.isReadable()) {
+            return commands;
+        }
         final int enumFlagsCount = BedrockTypes.UNSIGNED_VAR_INT.read(buffer); // enum flags count
+        if (netEaseLegacy) {
+            // MOT always writes count 0 and never emits constraint records. Live NetEase
+            // 860 still appends 3 leftover bytes after that empty count. Those bytes are
+            // not a full official {int32, int32, byte[]} record; reading them as one is
+            // the historical 55592-of-55595 IndexOutOfBoundsException that dropped the
+            // command tree. Skip the trailer instead of inventing a 3-byte field.
+            CommandPacketLayout.skipNetEaseEnumConstraintTrailer(buffer);
+            return commands;
+        }
         for (int i = 0; i < enumFlagsCount; i++) {
             final int valueIndex = buffer.readIntLE(); // value index
             final int enumIndex = buffer.readIntLE(); // enum index
             final byte[] constraints = BedrockTypes.BYTE_ARRAY.read(buffer); // constraints
+            if (valueIndex < 0 || valueIndex >= enumLiterals.length || enumIndex < 0 || enumIndex >= enumPalette.length) {
+                continue;
+            }
             final String valueKey = enumLiterals[valueIndex];
             final CommandData.EnumData enumData = enumPalette[enumIndex];
             final Set<Byte> constraintsSet = enumData.values().get(valueKey);

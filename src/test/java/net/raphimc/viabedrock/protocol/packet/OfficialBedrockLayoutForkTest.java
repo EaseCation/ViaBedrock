@@ -49,5 +49,8 @@ class OfficialBedrockLayoutForkTest {
         assertTrue(InventoryContentLayout.usesRequiredContainerFields(true, 860));
         assertTrue(InventorySlotLayout.usesRequiredContainerFields(true, 860));
         assertFalse(InventorySlotLayout.usesRequiredContainerFields(false, 975));
+        assertTrue(PlayerListLayout.usesNetEaseAddTrailer(true, 860));
+        assertFalse(PlayerListLayout.usesNetEaseAddTrailer(false, 975));
+        assertFalse(PlayerListLayout.usesNetEaseAddTrailer(true, 648));
     }
 }

@@ -143,9 +143,10 @@ public class HudPackets {
                         }
                     } catch (InformativeException ignored) { // Bedrock client silently ignores read errors
                     }
-                    // NetEase appends ~8 unknown bytes after the trusted skin flags. If they are left in the
-                    // input buffer, ViaVersion appends them to the rewritten packet and the Java client
-                    // rejects PLAYER_INFO_UPDATE for having extra bytes.
+                    try {
+                        PlayerListLayout.skipNetEaseAddTrailer(wrapper, length);
+                    } catch (RuntimeException ignored) { // MOT bloom trailer is optional on some builds
+                    }
                     PacketLeftoverLayout.discardUnreadInput(wrapper);
 
                     final List<UUID> toRemoveUUIDs = new ArrayList<>();

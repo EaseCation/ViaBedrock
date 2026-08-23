@@ -274,6 +274,19 @@ public final class CommandPacketLayout {
         }
     }
 
+    /**
+     * MOT {@code AvailableCommandsPacket.encode()} always ends with
+     * {@code putUnsignedVarInt(0)} and never writes constraint records.
+     * Live NetEase 860 still appends 3 leftover bytes after that empty count.
+     * Reading them as official {@code {int32, int32, byte[]}} is the historical
+     * {@code 55592 of 55595 bytes} parse failure that dropped the command tree.
+     */
+    public static void skipNetEaseEnumConstraintTrailer(final ByteBuf buffer) {
+        if (buffer.isReadable()) {
+            buffer.skipBytes(buffer.readableBytes());
+        }
+    }
+
     public static int readSubCommandOffset(final ByteBuf buffer, final boolean stringLayout) {
         return stringLayout ? buffer.readIntLE() : buffer.readUnsignedShortLE();
     }
