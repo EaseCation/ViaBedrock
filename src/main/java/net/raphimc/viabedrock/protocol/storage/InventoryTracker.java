@@ -26,6 +26,7 @@ import com.viaversion.viaversion.libs.fastutil.ints.IntObjectPair;
 import net.lenni0451.mcstructs_bedrock.forms.Form;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.model.container.Container;
+import net.raphimc.viabedrock.api.model.container.HorseContainer;
 import net.raphimc.viabedrock.api.model.container.dynamic.BundleContainer;
 import net.raphimc.viabedrock.api.model.container.player.ArmorContainer;
 import net.raphimc.viabedrock.api.model.container.player.HudContainer;
@@ -271,6 +272,15 @@ public class InventoryTracker extends StoredObject {
     public void tick() {
         if (this.currentContainer != null && this.currentContainer.position() != null) {
             if (this.currentContainer.type() == ContainerType.INVENTORY) return;
+            // MOT HorseInventory is bound to a moving entity, not a world block.
+            // CONTAINER_OPEN still carries the horse floor XYZ at open time; using
+            // that snapshot for the 6-block world check rubber-bands the JE GUI
+            // closed as soon as the mount walks. Keep the mount screen until the
+            // server CONTAINER_CLOSE / SET_ENTITY_LINK unlink.
+            // Ref: MOT HorseInventory / ContainerInventory.onOpen entityId.
+            if (this.currentContainer instanceof HorseContainer) {
+                return;
+            }
 
             final ChunkTracker chunkTracker = this.user().get(ChunkTracker.class);
             final BlockStateRewriter blockStateRewriter = this.user().get(BlockStateRewriter.class);

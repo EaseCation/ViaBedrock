@@ -42,4 +42,11 @@ class HorseContainerTest {
         assertEquals(1L, horse.entityUniqueId());
         assertEquals(2, horse.javaEntityId());
     }
+
+    @Test
+    void movingHorseFloorIsStillNotWorldBacked() {
+        final HorseContainer horse = new HorseContainer(null, (byte) 12, null, new BlockPosition(80, 64, -12), 17, 9L, 4);
+        assertFalse(horse.isWorldBacked());
+        assertEquals(5, horse.javaColumns());
+    }
 }
