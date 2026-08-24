@@ -47,7 +47,9 @@ public class JoinGate extends StoredObject {
     private static final EnumSet<ClientboundPackets26_1> PASS_CLIENTBOUND_BEFORE_LOGIN = EnumSet.of(
             ClientboundPackets26_1.LOGIN,
             ClientboundPackets26_1.DISCONNECT,
-            ClientboundPackets26_1.START_CONFIGURATION
+            ClientboundPackets26_1.START_CONFIGURATION,
+            ClientboundPackets26_1.SET_CHUNK_CACHE_CENTER,
+            ClientboundPackets26_1.SET_CHUNK_CACHE_RADIUS
     );
     private static final EnumSet<ClientboundPackets26_1> DROP_CLIENTBOUND_BEFORE_LOGIN = EnumSet.of(
             ClientboundPackets26_1.BLOCK_CHANGED_ACK,
@@ -57,9 +59,7 @@ public class JoinGate extends StoredObject {
             ClientboundPackets26_1.KEEP_ALIVE,
             ClientboundPackets26_1.LEVEL_CHUNK_WITH_LIGHT,
             ClientboundPackets26_1.LIGHT_UPDATE,
-            ClientboundPackets26_1.PING,
-            ClientboundPackets26_1.SET_CHUNK_CACHE_CENTER,
-            ClientboundPackets26_1.SET_CHUNK_CACHE_RADIUS
+            ClientboundPackets26_1.PING
     );
     private static final EnumSet<ClientboundPackets26_1> PASS_CLIENTBOUND_BEFORE_OPEN = EnumSet.of(
             ClientboundPackets26_1.LOGIN,
@@ -184,6 +184,8 @@ public class JoinGate extends StoredObject {
 
         final ChunkTracker chunkTracker = this.user().get(ChunkTracker.class);
         if (chunkTracker != null) {
+            chunkTracker.alignCenterToClientPlayer();
+            chunkTracker.sendCurrentCacheSettingsToJava();
             chunkTracker.sendChunk(this.playerChunkX, this.playerChunkZ);
         }
     }
@@ -229,6 +231,14 @@ public class JoinGate extends StoredObject {
         }
 
         return this.queueClientbound(packet, wrapper);
+    }
+
+    static boolean dropsClientboundBeforeLogin(final ClientboundPackets26_1 packet) {
+        return DROP_CLIENTBOUND_BEFORE_LOGIN.contains(packet);
+    }
+
+    static boolean passesClientboundBeforeLogin(final ClientboundPackets26_1 packet) {
+        return PASS_CLIENTBOUND_BEFORE_LOGIN.contains(packet);
     }
 
     public boolean interceptUnknownClientbound(final PacketWrapper wrapper) {

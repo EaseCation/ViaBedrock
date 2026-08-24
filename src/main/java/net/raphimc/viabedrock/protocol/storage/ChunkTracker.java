@@ -124,14 +124,13 @@ public class ChunkTracker extends StoredObject {
         this.worldHeight = dimensionTag.getNumberTag("height").asInt();
         this.biomePaletteBits = MathUtil.ceilLog2(biomeRegistry.size());
 
+        final ClientSettingsStorage settings = user.get(ClientSettingsStorage.class);
+        final int viewDistance = settings != null ? Math.max(1, settings.viewDistance()) : 8;
         final ChunkTracker oldChunkTracker = user.get(ChunkTracker.class);
-        if (oldChunkTracker != null) {
+        this.radius = oldChunkTracker != null ? Math.max(viewDistance, oldChunkTracker.radius) : viewDistance;
+        if (!this.seedCenterFromClientPlayer() && oldChunkTracker != null) {
             this.centerX = oldChunkTracker.centerX;
             this.centerZ = oldChunkTracker.centerZ;
-            this.radius = oldChunkTracker.radius;
-        } else {
-            this.radius = user.get(ClientSettingsStorage.class).viewDistance();
-            this.seedCenterFromClientPlayer();
         }
 
         this.lightProvider = new AsyncLightEngine(this);
@@ -141,25 +140,68 @@ public class ChunkTracker extends StoredObject {
      * MOT 860 spawn is often far from (0, 0) (Lobby [13,13] in the live log).
      * Java 1.21.11 rejects LEVEL_CHUNK_WITH_LIGHT outside SET_CHUNK_CACHE_CENTER,
      * so the tracker must start on the START_GAME spawn column instead of (0, 0).
+     *
+     * @return true when the client player position was available
      */
-    private void seedCenterFromClientPlayer() {
+    private boolean seedCenterFromClientPlayer() {
         final EntityTracker entityTracker = this.user().get(EntityTracker.class);
         if (entityTracker == null || entityTracker.getClientPlayer() == null) {
-            return;
+            return false;
         }
         final Position3f playerPosition = entityTracker.getClientPlayer().position();
         this.centerX = javaChunkCoord(playerPosition.x());
         this.centerZ = javaChunkCoord(playerPosition.z());
+        return true;
     }
 
-    static int javaChunkCoord(final double blockCoordinate) {
+    public static int javaChunkCoord(final double blockCoordinate) {
         return (int) Math.floor(blockCoordinate) >> 4;
+    }
+
+    /**
+     * Java unloads every column outside SET_CHUNK_CACHE_CENTER +/- radius.
+     * A MOT publisher at (0,0) after Lobby spawn, or a copied previous-dimension
+     * center, would drop the player's column when view distance is 8-12.
+     * Keep the player column inside the Chebyshev window; never shrink below
+     * viewDistance or apply radius 0.
+     * Ref: MOT Player.orderChunks NETWORK_CHUNK_PUBLISHER_UPDATE; Java ClientChunkCache.
+     */
+    static int chebyshevChunkDistance(final int chunkX1, final int chunkZ1, final int chunkX2, final int chunkZ2) {
+        return Math.max(Math.abs(chunkX1 - chunkX2), Math.abs(chunkZ1 - chunkZ2));
+    }
+
+    static boolean isPlayerColumnInsideJavaCache(final int centerX, final int centerZ,
+                                                 final int playerChunkX, final int playerChunkZ,
+                                                 final int radius) {
+        return chebyshevChunkDistance(centerX, centerZ, playerChunkX, playerChunkZ) <= Math.max(0, radius);
+    }
+
+    public static int[] resolveJavaCacheCenter(final int publisherChunkX, final int publisherChunkZ,
+                                        final int playerChunkX, final int playerChunkZ, final int radius) {
+        if (isPlayerColumnInsideJavaCache(publisherChunkX, publisherChunkZ, playerChunkX, playerChunkZ, radius)) {
+            return new int[]{publisherChunkX, publisherChunkZ};
+        }
+        return new int[]{playerChunkX, playerChunkZ};
+    }
+
+    public static int resolveJavaCacheRadius(final int publisherRadius, final int currentRadius, final int viewDistance) {
+        final int floor = Math.max(1, viewDistance);
+        final int incoming = publisherRadius > 0 ? publisherRadius : currentRadius;
+        return Math.max(floor, incoming);
+    }
+
+    public static boolean shouldSnapJavaCacheCenterToPlayerColumn(final int centerX, final int centerZ,
+                                                           final int playerChunkX, final int playerChunkZ,
+                                                           final int radius) {
+        return !isPlayerColumnInsideJavaCache(centerX, centerZ, playerChunkX, playerChunkZ, radius);
     }
 
     public void alignCenterToClientPlayer() {
         final int previousCenterX = this.centerX;
         final int previousCenterZ = this.centerZ;
-        this.seedCenterFromClientPlayer();
+        if (!this.seedCenterFromClientPlayer()) {
+            return;
+        }
         if (previousCenterX == this.centerX && previousCenterZ == this.centerZ) {
             return;
         }
@@ -167,16 +209,41 @@ public class ChunkTracker extends StoredObject {
         this.markLoadedUnsentChunksDirty();
     }
 
+    /**
+     * Apply MOT NETWORK_CHUNK_PUBLISHER_UPDATE without yanking Java off the
+     * player column. Returns whether the Java center packet must be sent.
+     */
+    public boolean applyPublisher(final int publisherChunkX, final int publisherChunkZ, final int publisherRadius) {
+        final int viewDistance = this.viewDistanceOrDefault();
+        final ChunkPosition playerChunk = this.playerChunk();
+        final int newRadius = resolveJavaCacheRadius(publisherRadius, this.radius, viewDistance);
+        final int[] newCenter = resolveJavaCacheCenter(publisherChunkX, publisherChunkZ, playerChunk.chunkX(), playerChunk.chunkZ(), newRadius);
+        final boolean centerChanged = this.centerX != newCenter[0] || this.centerZ != newCenter[1];
+        this.radius = newRadius;
+        this.centerX = newCenter[0];
+        this.centerZ = newCenter[1];
+        this.removeOutOfLoadDistanceChunks();
+        this.markLoadedUnsentChunksDirty();
+        return centerChanged;
+    }
+
     public void setCenter(final int x, final int z) {
-        this.centerX = x;
-        this.centerZ = z;
+        final ChunkPosition playerChunk = this.playerChunk();
+        final int[] newCenter = resolveJavaCacheCenter(x, z, playerChunk.chunkX(), playerChunk.chunkZ(), this.radius);
+        this.centerX = newCenter[0];
+        this.centerZ = newCenter[1];
         this.removeOutOfLoadDistanceChunks();
         this.markLoadedUnsentChunksDirty();
     }
 
     public void setRadius(final int radius) {
-        this.radius = radius;
+        this.radius = resolveJavaCacheRadius(radius, this.radius, this.viewDistanceOrDefault());
         this.removeOutOfLoadDistanceChunks();
+    }
+
+    private int viewDistanceOrDefault() {
+        final ClientSettingsStorage settings = this.user().get(ClientSettingsStorage.class);
+        return settings != null ? Math.max(1, settings.viewDistance()) : Math.max(1, this.radius);
     }
 
     public int centerX() {
@@ -256,7 +323,13 @@ public class ChunkTracker extends StoredObject {
                 return null;
             }
         }
-        if (!this.isInRenderDistance(chunkX, chunkZ)) {
+        if (this.isPlayerChunk(chunkX, chunkZ)
+                && shouldSnapJavaCacheCenterToPlayerColumn(this.centerX, this.centerZ, chunkX, chunkZ, this.radius)) {
+            this.alignCenterToClientPlayer();
+            if (!this.suppressJavaRuntimePacketBeforeLogin(ClientboundPackets26_1.SET_CHUNK_CACHE_CENTER)) {
+                this.sendCurrentCacheSettingsToJava();
+            }
+        } else if (!this.isInRenderDistance(chunkX, chunkZ)) {
             ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received chunk outside of render distance, but within load distance: " + chunkX + ", " + chunkZ);
             this.alignCenterToClientPlayer();
             if (!this.suppressJavaRuntimePacketBeforeLogin(ClientboundPackets26_1.SET_CHUNK_CACHE_CENTER)) {
@@ -801,6 +874,12 @@ public class ChunkTracker extends StoredObject {
             final int playerChunkX = (int) Math.floor(playerPosition.x()) >> 4;
             final int playerChunkZ = (int) Math.floor(playerPosition.z()) >> 4;
             playerChunk = remappedChunk.getX() == playerChunkX && remappedChunk.getZ() == playerChunkZ;
+            if (playerChunk && shouldSnapJavaCacheCenterToPlayerColumn(this.centerX, this.centerZ, playerChunkX, playerChunkZ, this.radius)) {
+                this.alignCenterToClientPlayer();
+                if (!this.suppressJavaRuntimePacketBeforeLogin(ClientboundPackets26_1.SET_CHUNK_CACHE_CENTER)) {
+                    this.sendCurrentCacheSettingsToJava();
+                }
+            }
             if (playerChunk && !this.levelChunksLoadStartSent
                     && !this.suppressJavaRuntimePacketBeforeLogin(ClientboundPackets26_1.GAME_EVENT)) {
                 this.levelChunksLoadStartSent = true;

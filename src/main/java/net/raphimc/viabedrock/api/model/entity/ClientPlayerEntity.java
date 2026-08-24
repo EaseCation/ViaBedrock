@@ -229,6 +229,7 @@ public class ClientPlayerEntity extends PlayerEntity {
         this.position = newPosition;
         this.onGround = newOnGround;
         this.horizontalCollision = (flags & MovePlayerFlag.HORIZONTAL_COLLISION.getBit()) != 0;
+        this.snapJavaChunkCacheIfPlayerLeftWindow();
     }
 
     public void updatePlayerPosition(final double x, final double y, final double z, final float yaw, final float pitch, final short flags) {
@@ -247,6 +248,7 @@ public class ClientPlayerEntity extends PlayerEntity {
         this.rotation = newRotation;
         this.onGround = newOnGround;
         this.horizontalCollision = (flags & MovePlayerFlag.HORIZONTAL_COLLISION.getBit()) != 0;
+        this.snapJavaChunkCacheIfPlayerLeftWindow();
     }
 
     public void updatePlayerPosition(final float yaw, final float pitch, final short flags) {
@@ -360,6 +362,28 @@ public class ClientPlayerEntity extends PlayerEntity {
     public void setPosition(final Position3f position) {
         super.setPosition(position);
         this.prevPosition = position;
+        this.snapJavaChunkCacheIfPlayerLeftWindow();
+    }
+
+    /**
+     * Java 1.21.11 unloads columns outside SET_CHUNK_CACHE_CENTER +/- radius.
+     * If the player walks off a stale MOT publisher window, snap the Java
+     * cache onto the current column before the next LEVEL_CHUNK_WITH_LIGHT.
+     * Ref: MOT Player.orderChunks; ChunkTracker.applyPublisher.
+     */
+    private void snapJavaChunkCacheIfPlayerLeftWindow() {
+        final ChunkTracker chunkTracker = this.user.get(ChunkTracker.class);
+        if (chunkTracker == null) {
+            return;
+        }
+        final int playerChunkX = ChunkTracker.javaChunkCoord(this.position.x());
+        final int playerChunkZ = ChunkTracker.javaChunkCoord(this.position.z());
+        if (!ChunkTracker.shouldSnapJavaCacheCenterToPlayerColumn(
+                chunkTracker.centerX(), chunkTracker.centerZ(), playerChunkX, playerChunkZ, chunkTracker.radius())) {
+            return;
+        }
+        chunkTracker.alignCenterToClientPlayer();
+        chunkTracker.sendCurrentCacheSettingsToJava();
     }
 
     @Override

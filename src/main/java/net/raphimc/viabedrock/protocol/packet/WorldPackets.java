@@ -642,18 +642,17 @@ public class WorldPackets {
         protocol.registerClientbound(ClientboundBedrockPackets.NETWORK_CHUNK_PUBLISHER_UPDATE, ClientboundPackets26_1.SET_CHUNK_CACHE_RADIUS, wrapper -> {
             final BlockPosition position = wrapper.read(BedrockTypes.SIGNED_BLOCK_POSITION); // signed center position
             final int radius = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT) >> 4; // radius
-            wrapper.write(Types.VAR_INT, radius); // radius
-
-            final int centerX = position.x() >> 4;
-            final int centerZ = position.z() >> 4;
+            final int publisherChunkX = position.x() >> 4;
+            final int publisherChunkZ = position.z() >> 4;
             final ChunkTracker chunkTracker = wrapper.user().get(ChunkTracker.class);
-            final int previousCenterX = chunkTracker.centerX();
-            final int previousCenterZ = chunkTracker.centerZ();
             final int previousRadius = chunkTracker.radius();
-            final boolean centerChanged = previousCenterX != centerX || previousCenterZ != centerZ;
-            final boolean radiusChanged = previousRadius != radius;
-            chunkTracker.setRadius(radius);
-            chunkTracker.setCenter(centerX, centerZ);
+            // MOT orderChunks() can publish (0,0) or a stale last-order column while
+            // START_GAME spawn is Lobby [13,13]. Java 1.21.11 unloads everything
+            // outside SET_CHUNK_CACHE_CENTER +/- radius, so keep the player column
+            // inside the window and never shrink below viewDistance.
+            // Ref: MOT Player.orderChunks; ChunkTracker.resolveJavaCacheCenter.
+            final boolean centerChanged = chunkTracker.applyPublisher(publisherChunkX, publisherChunkZ, radius);
+            wrapper.write(Types.VAR_INT, chunkTracker.radius()); // radius
 
             final int count = wrapper.read(BedrockTypes.INT_LE); // server built chunks count
             for (int i = 0; i < count; i++) {
@@ -663,11 +662,11 @@ public class WorldPackets {
 
             if (centerChanged) {
                 final PacketWrapper updateViewPosition = wrapper.create(ClientboundPackets26_1.SET_CHUNK_CACHE_CENTER);
-                updateViewPosition.write(Types.VAR_INT, centerX); // chunk x
-                updateViewPosition.write(Types.VAR_INT, centerZ); // chunk z
+                updateViewPosition.write(Types.VAR_INT, chunkTracker.centerX()); // chunk x
+                updateViewPosition.write(Types.VAR_INT, chunkTracker.centerZ()); // chunk z
                 updateViewPosition.send(BedrockProtocol.class);
             }
-            if (!radiusChanged) {
+            if (previousRadius == chunkTracker.radius()) {
                 wrapper.cancel();
             }
         });
@@ -678,9 +677,10 @@ public class WorldPackets {
                 handler(wrapper -> {
                     final ChunkTracker chunkTracker = wrapper.user().get(ChunkTracker.class);
                     final int radius = wrapper.get(Types.VAR_INT, 0);
-                    final boolean radiusChanged = chunkTracker.radius() != radius;
+                    final int previousRadius = chunkTracker.radius();
                     chunkTracker.setRadius(radius);
-                    if (!radiusChanged) {
+                    wrapper.set(Types.VAR_INT, 0, chunkTracker.radius());
+                    if (previousRadius == chunkTracker.radius()) {
                         wrapper.cancel();
                     }
                 });

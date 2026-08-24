@@ -182,8 +182,13 @@ public class OtherPlayerPackets {
             final boolean previousOnGround = entity.isOnGround();
             final boolean duplicatePosition = previousPosition.equals(position) && previousRotation.equals(rotation) && previousOnGround == onGround;
 
-            if ((mode == PlayerPositionModeComponent_PositionMode.Teleport || mode == PlayerPositionModeComponent_PositionMode.Respawn) && entity instanceof ClientPlayerEntity clientPlayer) {
-                if (mode == PlayerPositionModeComponent_PositionMode.Teleport && duplicatePosition) {
+            // MOT sendPosition(..., targets==null) uses MODE_NORMAL=0 as a local
+            // rubber-band. Java 1.21.11 has no self ENTITY_POSITION_SYNC, so every
+            // local MOVE_PLAYER must become PLAYER_POSITION. Only Respawn/RESET
+            // uses a fake teleport id so AuthInput does not emit HandledTeleport.
+            // Ref: MOT Player.sendPosition; OtherPlayerPacketsMovePlayerTest.
+            if (entity instanceof ClientPlayerEntity clientPlayer && shouldRewriteLocalMovePlayerToJavaPosition(mode)) {
+                if (shouldCancelDuplicateLocalTeleport(mode, duplicatePosition)) {
                     wrapper.cancel();
                     return;
                 }
@@ -192,7 +197,7 @@ public class OtherPlayerPackets {
                 entity.setOnGround(onGround);
                 ExperimentalFeatures.dispatchEntityMoved(wrapper.user(), entity);
                 wrapper.setPacketType(ClientboundPackets26_1.PLAYER_POSITION);
-                clientPlayer.writePlayerPositionPacketToClient(wrapper, Relative.NONE, mode == PlayerPositionModeComponent_PositionMode.Respawn);
+                clientPlayer.writePlayerPositionPacketToClient(wrapper, Relative.NONE, isFakeJavaTeleportForMovePlayer(mode));
                 return;
             }
 
@@ -244,6 +249,20 @@ public class OtherPlayerPackets {
                 wrapper.cancel();
             }
         });
+    }
+
+    static boolean shouldRewriteLocalMovePlayerToJavaPosition(final PlayerPositionModeComponent_PositionMode mode) {
+        return mode == PlayerPositionModeComponent_PositionMode.Normal
+                || mode == PlayerPositionModeComponent_PositionMode.Respawn
+                || mode == PlayerPositionModeComponent_PositionMode.Teleport;
+    }
+
+    static boolean shouldCancelDuplicateLocalTeleport(final PlayerPositionModeComponent_PositionMode mode, final boolean duplicatePosition) {
+        return mode == PlayerPositionModeComponent_PositionMode.Teleport && duplicatePosition;
+    }
+
+    static boolean isFakeJavaTeleportForMovePlayer(final PlayerPositionModeComponent_PositionMode mode) {
+        return mode == PlayerPositionModeComponent_PositionMode.Respawn;
     }
 
 }

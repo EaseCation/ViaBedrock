@@ -43,4 +43,33 @@ class ChunkTrackerNeighborhoodGateTest {
         assertTrue(Math.abs(13 - 0) > 8);
         assertFalse(Math.abs(13 - 13) > 8);
     }
+
+    @Test
+    void publisherAtOriginDoesNotYankLobbyPlayerColumnOutsideJavaRadius() {
+        assertEquals(13, ChunkTracker.resolveJavaCacheCenter(0, 0, 13, 13, 8)[0]);
+        assertEquals(13, ChunkTracker.resolveJavaCacheCenter(0, 0, 13, 13, 8)[1]);
+        assertEquals(13, ChunkTracker.resolveJavaCacheCenter(0, 0, 13, 13, 12)[0]);
+        assertEquals(0, ChunkTracker.resolveJavaCacheCenter(0, 0, 13, 13, 16)[0]);
+        assertEquals(0, ChunkTracker.resolveJavaCacheCenter(0, 0, 13, 13, 16)[1]);
+        assertEquals(13, ChunkTracker.resolveJavaCacheCenter(13, 13, 13, 13, 8)[0]);
+        assertEquals(-4, ChunkTracker.resolveJavaCacheCenter(0, 0, -4, 0, 3)[0]);
+        assertEquals(1, ChunkTracker.resolveJavaCacheCenter(1, 1, 5, 5, 8)[0]);
+        assertEquals(1, ChunkTracker.resolveJavaCacheCenter(1, 1, 5, 5, 8)[1]);
+    }
+
+    @Test
+    void publisherRadiusZeroOrBelowViewDistanceKeepsJavaFloor() {
+        assertEquals(8, ChunkTracker.resolveJavaCacheRadius(0, 8, 8));
+        assertEquals(12, ChunkTracker.resolveJavaCacheRadius(4, 8, 12));
+        assertEquals(16, ChunkTracker.resolveJavaCacheRadius(16, 8, 8));
+        assertEquals(8, ChunkTracker.resolveJavaCacheRadius(-1, 8, 8));
+    }
+
+    @Test
+    void playerColumnArrivalSnapsStaleOriginCenter() {
+        assertTrue(ChunkTracker.shouldSnapJavaCacheCenterToPlayerColumn(0, 0, 13, 13, 8));
+        assertFalse(ChunkTracker.shouldSnapJavaCacheCenterToPlayerColumn(13, 13, 13, 13, 8));
+        assertFalse(ChunkTracker.shouldSnapJavaCacheCenterToPlayerColumn(0, 0, 8, 0, 8));
+        assertTrue(ChunkTracker.shouldSnapJavaCacheCenterToPlayerColumn(0, 0, 9, 0, 8));
+    }
 }
