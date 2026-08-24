@@ -17,7 +17,25 @@
  */
 package net.raphimc.viabedrock.protocol.rewriter;
 
+import com.viaversion.nbt.tag.CompoundTag;
+import com.viaversion.nbt.tag.NumberTag;
 import com.viaversion.viaversion.libs.fastutil.ints.IntSortedSet;
+import net.raphimc.viabedrock.api.model.BedrockBlockState;
+import net.raphimc.viabedrock.experimental.custommapping.RuntimeProjectionBuilder;
+import net.raphimc.viabedrock.protocol.BedrockProtocol;
+import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemVersion;
+import net.raphimc.viabedrock.protocol.model.BlockProperties;
+import net.raphimc.viabedrock.protocol.model.ItemEntry;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Safe lookup helpers for Bedrock block-item → Java item mapping.
@@ -58,4 +76,66 @@ public final class BlockItemMappingLayout {
         }
         return validBlockStates.firstInt();
     }
+
+    /**
+     * MOT custom block items use {@code itemId = 255 - nukkitId} and never appear
+     * in ITEM_REGISTRY. Inventory slots still carry that negative varint.
+     */
+    public static int customBlockItemId(final int nukkitBlockId) {
+        return 255 - nukkitBlockId;
+    }
+
+    public static Integer customBlockItemId(final CompoundTag blockProperties) {
+        if (!(blockProperties != null && blockProperties.get("vanilla_block_data") instanceof CompoundTag vanillaBlockData)) {
+            return null;
+        }
+        if (!(vanillaBlockData.get("block_id") instanceof NumberTag blockIdTag)) {
+            return null;
+        }
+        return customBlockItemId(blockIdTag.asInt());
+    }
+
+    public static ItemEntry[] mergeCustomBlockItems(final ItemEntry[] itemEntries, final BlockProperties[] blockProperties) {
+        if (blockProperties == null || blockProperties.length == 0) {
+            return itemEntries != null ? itemEntries : new ItemEntry[0];
+        }
+        final Set<String> vanillaIdentifiers = BedrockProtocol.MAPPINGS.getBedrockBlockStates().stream()
+                .map(BedrockBlockState::namespacedIdentifier)
+                .collect(Collectors.toSet());
+        return mergeCustomBlockItems(itemEntries, RuntimeProjectionBuilder.collectEffectiveCustomBlockProperties(blockProperties, vanillaIdentifiers));
+    }
+
+    public static ItemEntry[] mergeCustomBlockItems(final ItemEntry[] itemEntries, final Map<String, CompoundTag> customBlockProperties) {
+        if (customBlockProperties == null || customBlockProperties.isEmpty()) {
+            return itemEntries != null ? itemEntries : new ItemEntry[0];
+        }
+
+        final List<ItemEntry> merged = new ArrayList<>();
+        if (itemEntries != null) {
+            merged.addAll(Arrays.asList(itemEntries));
+        }
+
+        final Set<String> knownIdentifiers = merged.stream()
+                .map(entry -> entry.identifier().toLowerCase(Locale.ROOT))
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        final Set<Integer> knownIds = merged.stream()
+                .map(ItemEntry::id)
+                .collect(Collectors.toCollection(HashSet::new));
+
+        for (Map.Entry<String, CompoundTag> customBlock : customBlockProperties.entrySet()) {
+            final String identifier = customBlock.getKey();
+            if (knownIdentifiers.contains(identifier)) {
+                continue;
+            }
+            final Integer itemId = customBlockItemId(customBlock.getValue());
+            if (itemId == null || knownIds.contains(itemId)) {
+                continue;
+            }
+            knownIdentifiers.add(identifier);
+            knownIds.add(itemId);
+            merged.add(new ItemEntry(identifier, itemId, false, ItemVersion.None, null));
+        }
+        return merged.toArray(ItemEntry[]::new);
+    }
+
 }

@@ -28,6 +28,8 @@ import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.data.JavaRegistries;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ChatRestrictionLevel;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.GameType;
+import net.raphimc.viabedrock.protocol.model.BlockProperties;
+import net.raphimc.viabedrock.protocol.model.ItemEntry;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -51,6 +53,8 @@ public class GameSessionStorage extends StoredObject {
     private boolean inventoryServerAuthoritative;
     private boolean blockBreakingServerAuthoritative;
     private String serverBrand;
+    private BlockProperties[] startGameBlockProperties = new BlockProperties[0];
+    private ItemEntry[] itemRegistryEntries = new ItemEntry[0];
 
     private boolean immutableWorld;
     private TextComponent deathMessage;
@@ -181,6 +185,22 @@ public class GameSessionStorage extends StoredObject {
 
     public void setServerBrand(final String serverBrand) {
         this.serverBrand = serverBrand;
+    }
+
+    public BlockProperties[] getStartGameBlockProperties() {
+        return this.startGameBlockProperties;
+    }
+
+    public void setStartGameBlockProperties(final BlockProperties[] startGameBlockProperties) {
+        this.startGameBlockProperties = startGameBlockProperties != null ? startGameBlockProperties : new BlockProperties[0];
+    }
+
+    public ItemEntry[] getItemRegistryEntries() {
+        return this.itemRegistryEntries;
+    }
+
+    public void setItemRegistryEntries(final ItemEntry[] itemRegistryEntries) {
+        this.itemRegistryEntries = itemRegistryEntries != null ? itemRegistryEntries : new ItemEntry[0];
     }
 
     public boolean isImmutableWorld() {

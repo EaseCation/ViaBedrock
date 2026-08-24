@@ -137,7 +137,7 @@ public class InventoryTracker extends StoredObject {
         if ((byte) containerId == this.hudContainer.containerId()) return this.hudContainer;
         if ((byte) containerId == ContainerID.CONTAINER_ID_REGISTRY.getValue() && containerName != null
                 && containerName.name() == ContainerEnumName.DynamicContainer) {
-            final String itemTag = BedrockProtocol.MAPPINGS.getBedrockCustomItemTags().get(this.user().get(ItemRewriter.class).getItems().inverse().get(storageItem.identifier()));
+            final String itemTag = BedrockProtocol.MAPPINGS.getBedrockCustomItemTags().get(this.user().get(ItemRewriter.class).bedrockIdentifier(storageItem));
             if (!storageItem.isEmpty() && CustomItemTags.BUNDLE.equals(itemTag)) {
                 return this.dynamicContainerRegistry.computeIfAbsent(containerName, cn -> new BundleContainer(this.user(), cn));
             } else {

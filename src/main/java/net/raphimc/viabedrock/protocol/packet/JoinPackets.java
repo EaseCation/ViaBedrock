@@ -63,6 +63,7 @@ import net.raphimc.viabedrock.protocol.data.enums.java.Relative;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.PlayerInfoUpdateAction;
 import net.raphimc.viabedrock.protocol.data.generated.java.Attributes;
 import net.raphimc.viabedrock.protocol.model.*;
+import net.raphimc.viabedrock.protocol.rewriter.BlockItemMappingLayout;
 import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 import net.raphimc.viabedrock.protocol.storage.*;
@@ -468,6 +469,7 @@ public class JoinPackets {
                     gameSession.setCommandsEnabled(commandsEnabled);
                     gameSession.setInventoryServerAuthoritative(inventoryServerAuthoritative);
                     gameSession.setBlockBreakingServerAuthoritative(blockBreakingServerAuthoritative);
+                    gameSession.setStartGameBlockProperties(blockProperties);
 
                     final PlayerAbilities playerAbilities = new PlayerAbilities(entityUniqueId, (byte) playerPermission, (byte) CommandPermissionLevel.Any.getValue());
                     final ClientPlayerEntity clientPlayer = new ClientPlayerEntity(wrapper.user(), entityRuntimeId, wrapper.user().getProtocolInfo().getUuid(), playerAbilities);
@@ -530,13 +532,15 @@ public class JoinPackets {
         );
         protocol.registerClientbound(ClientboundBedrockPackets.ITEM_REGISTRY, null, wrapper -> {
             wrapper.cancel();
-            if (wrapper.user().has(ItemRewriter.class) && !wrapper.user().get(ItemRewriter.class).getItems().isEmpty()) {
-                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received ITEM_REGISTRY after item rewriter was already initialized");
-                return;
-            }
-
             final ItemEntry[] itemEntries = wrapper.read(BedrockTypes.ITEM_ENTRY_ARRAY); // items
-            final ItemRewriter itemRewriter = new ItemRewriter(wrapper.user(), itemEntries);
+            final GameSessionStorage itemGameSession = wrapper.user().get(GameSessionStorage.class);
+            if (itemGameSession != null) {
+                itemGameSession.setItemRegistryEntries(itemEntries);
+            }
+            // Always rebuild. finishCustomMappingStartGame used to install an empty rewriter,
+            // and MOT custom block items only exist after this merge.
+            final ItemRewriter itemRewriter = new ItemRewriter(wrapper.user(), BlockItemMappingLayout.mergeCustomBlockItems(
+                    itemEntries, itemGameSession != null ? itemGameSession.getStartGameBlockProperties() : null));
             wrapper.user().put(itemRewriter);
             final ItemDefinitions itemDefinitions = wrapper.user().get(ResourcePackStorage.class).getItems();
 
@@ -778,7 +782,10 @@ public class JoinPackets {
         user.put(new JoinGameStorage(pending.levelName(), pending.difficulty(), pending.rainLevel(), pending.lightningLevel(), pending.currentTime(), pending.chunkTickRange()));
         user.put(new GameRulesStorage(user, pending.gameRules()));
         user.put(new BlockStateRewriter(user, pending.blockProperties(), pending.hashedRuntimeBlockIds()));
-        user.put(new ItemRewriter(user, new ItemEntry[0]));
+        // Rebuild against the new BlockStateRewriter. Do not wipe a later ITEM_REGISTRY
+        // merge with an empty table; MOT custom block items are synthesized here too.
+        user.put(new ItemRewriter(user, BlockItemMappingLayout.mergeCustomBlockItems(
+                gameSession.getItemRegistryEntries(), pending.blockProperties())));
         final EntityTracker entityTracker = new EntityTracker(user);
         entityTracker.addEntity(pending.clientPlayer(), false);
         user.put(entityTracker);

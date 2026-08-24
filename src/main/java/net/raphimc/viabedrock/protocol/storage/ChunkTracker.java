@@ -433,6 +433,14 @@ public class ChunkTracker extends StoredObject {
         if (customAccess.shouldFailClosed(layer0Resolution)) {
             return layer0Resolution;
         }
+        final CustomBlockDisplayTracker displayTracker = this.user().get(CustomBlockDisplayTracker.class);
+        if (displayTracker != null) {
+            final int overlayState = displayTracker.overlayJavaBlockState(blockState0, remappedBlockState);
+            if (overlayState != remappedBlockState) {
+                remappedBlockState = overlayState;
+                layer0Resolution = new CustomMappingAccess.JavaBlockStateResolution(overlayState, layer0Resolution.reason());
+            }
+        }
 
         if (blockState0 != this.bedrockAirId() && blockPalettes.size() > 1) {
             final int blockState1 = blockPalettes.get(1).idAt(sectionX, sectionY, sectionZ);
@@ -1374,8 +1382,11 @@ public class ChunkTracker extends StoredObject {
                             final int paletteIndex = remappedBlockPalette.paletteIndexAt(remappedBlockPalette.index(x, y, z));
                             final String tag = paletteIndexBlockStateTags[paletteIndex];
                             final int bedrockRuntimeId = layer0.idAt(x, y, z);
-                            if (displayTracker != null && displayTracker.shouldOverlay(bedrockRuntimeId, false)) {
-                                remappedBlockPalette.setIdAt(x, y, z, displayTracker.placeholderJavaBlockState());
+                            if (displayTracker != null) {
+                                final int overlayState = displayTracker.overlayJavaBlockState(bedrockRuntimeId, remappedBlockPalette.idAt(x, y, z));
+                                if (overlayState != remappedBlockPalette.idAt(x, y, z)) {
+                                    remappedBlockPalette.setIdAt(x, y, z, overlayState);
+                                }
                             }
                             if (tag != null) {
                                 final int absY = this.minY + (idx << 4) + y;

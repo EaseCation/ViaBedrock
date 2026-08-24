@@ -35,6 +35,7 @@ import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
 import net.raphimc.viabedrock.experimental.custommapping.RuntimeProjection;
 import net.raphimc.viabedrock.experimental.custommapping.RuntimeProjectionBuilder;
+import net.raphimc.viabedrock.experimental.block.CustomBlockDisplayTracker;
 import net.raphimc.viabedrock.protocol.model.BlockProperties;
 
 import java.util.*;
@@ -134,9 +135,10 @@ public class BlockStateRewriter implements StorableObject {
                         final String diagnostics = properties != null ? RuntimeProjectionBuilder.describeBlockProperties(properties) : "<missing START_GAME block properties>";
                         ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing custom mapping START_GAME block properties for " + identifier + ": " + diagnostics);
                     }
-                    // Unsupported custom block (no projection mapping): render as info_update placeholder, like a
-                    // vanilla-missing block, so javaId() never returns -1 and chunk lookups don't spam "Missing block state".
-                    final int javaId = javaBlockStates.get(bedrockToJavaBlockStates.get(BedrockBlockState.INFO_UPDATE));
+                    // Overlay path uses glass, not info_update. A stored black cube leaks through
+                    // UPDATE_BLOCK / neighbor rewrite / ack even when the chunk send swapped to glass.
+                    final Integer glassId = javaBlockStates.get(CustomBlockDisplayTracker.PLACEHOLDER_JAVA_BLOCK_STATE);
+                    final int javaId = glassId != null ? glassId : javaBlockStates.get(bedrockToJavaBlockStates.get(BedrockBlockState.INFO_UPDATE));
                     this.blockStateIdMappings.put(bedrockId, javaId);
                 } else {
                     final String identifier = bedrockBlockState.namespacedIdentifier();

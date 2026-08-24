@@ -69,7 +69,7 @@ public class CustomBlockDisplayTracker extends StoredObject {
     // Glass keeps a full cube collision box, stays see-through for the overlay
     // model, and unlike barrier can be mined in survival so USE_ITEM_ON /
     // PLAYER_ACTION actually fire.
-    private static final BlockState GLASS = new BlockState("glass", java.util.Collections.emptyMap());
+    public static final BlockState PLACEHOLDER_JAVA_BLOCK_STATE = new BlockState("glass", java.util.Collections.emptyMap());
 
     private final Object2IntMap<BlockPosition> displays = new Object2IntOpenHashMap<>();
     private final Int2ObjectMap<String> identifiersById = new Int2ObjectOpenHashMap<>();
@@ -80,9 +80,16 @@ public class CustomBlockDisplayTracker extends StoredObject {
         this.displays.defaultReturnValue(-1);
     }
 
-    public int placeholderJavaBlockState() {
-        final Integer id = BedrockProtocol.MAPPINGS.getJavaBlockStates().get(GLASS);
+    public static int placeholderJavaBlockStateId() {
+        if (BedrockProtocol.MAPPINGS == null || BedrockProtocol.MAPPINGS.getJavaBlockStates() == null) {
+            return -1;
+        }
+        final Integer id = BedrockProtocol.MAPPINGS.getJavaBlockStates().get(PLACEHOLDER_JAVA_BLOCK_STATE);
         return id != null ? id : -1;
+    }
+
+    public int placeholderJavaBlockState() {
+        return placeholderJavaBlockStateId();
     }
 
     public boolean shouldOverlay(final int bedrockRuntimeId) {
@@ -113,7 +120,24 @@ public class CustomBlockDisplayTracker extends StoredObject {
     }
 
     public int overlayJavaBlockState(final int bedrockRuntimeId, final int mappedJavaBlockState) {
-        return this.shouldOverlay(bedrockRuntimeId, false) ? this.placeholderJavaBlockState() : mappedJavaBlockState;
+        if (this.shouldOverlay(bedrockRuntimeId, false) || this.isUnmappedCustomBlock(bedrockRuntimeId)) {
+            final int placeholder = this.placeholderJavaBlockState();
+            return placeholder != -1 ? placeholder : mappedJavaBlockState;
+        }
+        return mappedJavaBlockState;
+    }
+
+    private boolean isUnmappedCustomBlock(final int bedrockRuntimeId) {
+        final BlockStateRewriter rewriter = this.user().get(BlockStateRewriter.class);
+        if (rewriter == null) {
+            return false;
+        }
+        final BlockState bedrockState = rewriter.blockState(bedrockRuntimeId);
+        if (bedrockState == null || bedrockState.namespacedIdentifier().startsWith("minecraft:")) {
+            return false;
+        }
+        final CustomMappingSyncStorage customMapping = this.user().get(CustomMappingSyncStorage.class);
+        return customMapping == null || !customMapping.access().isAllowedBedrockRuntimeId(bedrockRuntimeId);
     }
 
     public void syncChunk(final net.raphimc.viabedrock.api.chunk.BedrockChunk chunk, final int minY) {

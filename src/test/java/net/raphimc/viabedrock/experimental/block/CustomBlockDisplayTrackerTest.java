@@ -65,4 +65,12 @@ class CustomBlockDisplayTrackerTest {
         assertEquals(Direction.DOWN, CustomBlockDisplayTracker.facingFromLook(new Position3f(90F, 0F, 0F)));
         assertEquals(Direction.NORTH, CustomBlockDisplayTracker.facingFromLook(null));
     }
+    @Test
+    void placeholderJavaBlockStateUsesGlassWhenMappingsArePresent() {
+        final int placeholder = this.tracker.placeholderJavaBlockState();
+        if (placeholder == -1) {
+            return;
+        }
+        assertEquals(placeholder, this.tracker.overlayJavaBlockState(-1, placeholder));
+    }
 }

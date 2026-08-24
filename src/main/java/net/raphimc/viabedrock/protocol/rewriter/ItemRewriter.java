@@ -103,21 +103,43 @@ public class ItemRewriter extends StoredObject {
                 this.componentItems.add(itemEntry.identifier());
             }
         }
+        final BlockStateRewriter blockStateRewriter = this.user().get(BlockStateRewriter.class);
         final Set<String> blockItems = new HashSet<>(BedrockProtocol.MAPPINGS.getBedrockBlockItems());
+        if (blockStateRewriter != null) {
+            for (String identifier : this.items.keySet()) {
+                if (blockStateRewriter.validBlockStates(identifier) != null) {
+                    blockItems.add(identifier);
+                    continue;
+                }
+                final String[] components = identifier.split(":", 2);
+                if (components.length == 2 && components[1].startsWith("item.")
+                        && blockStateRewriter.validBlockStates(components[0] + ":" + components[1].substring(5)) != null) {
+                    blockItems.add(identifier);
+                }
+            }
+        }
         blockItems.removeIf(identifier -> !this.items.containsKey(identifier));
 
         this.blockItemValidBlockStates = new Int2ObjectOpenHashMap<>(blockItems.size());
-        final BlockStateRewriter blockStateRewriter = this.user().get(BlockStateRewriter.class);
         for (String identifier : blockItems) {
-            IntSortedSet validBlockStates = blockStateRewriter.validBlockStates(identifier);
-            if (validBlockStates == null) {
-                final String[] components = identifier.split(":", 2);
-                if (components[1].startsWith("item.")) {
-                    validBlockStates = blockStateRewriter.validBlockStates(components[0] + ':' + components[1].substring(5));
+            IntSortedSet validBlockStates = null;
+            if (blockStateRewriter != null) {
+                validBlockStates = blockStateRewriter.validBlockStates(identifier);
+                if (validBlockStates == null) {
+                    final String[] components = identifier.split(":", 2);
+                    if (components.length == 2 && components[1].startsWith("item.")) {
+                        validBlockStates = blockStateRewriter.validBlockStates(components[0] + ':' + components[1].substring(5));
+                    }
                 }
             }
             if (validBlockStates != null) {
-                this.blockItemValidBlockStates.put(this.items.get(identifier).intValue(), validBlockStates);
+                final int itemId = this.items.get(identifier).intValue();
+                this.blockItemValidBlockStates.put(itemId, validBlockStates);
+                if (itemId < 0) {
+                    this.blockItemValidBlockStates.put(itemId + 65536, validBlockStates);
+                } else if (itemId > 32767) {
+                    this.blockItemValidBlockStates.put(itemId - 65536, validBlockStates);
+                }
             } else {
                 Via.getPlatform().getLogger().log(Level.WARNING, "Missing block for block item: " + identifier);
             }
@@ -151,7 +173,7 @@ public class ItemRewriter extends StoredObject {
     private Item javaItem0(final BedrockItem bedrockItem) {
         if (bedrockItem == null || bedrockItem.isEmpty()) return StructuredItem.empty();
 
-        final String identifier = this.items.inverse().get(bedrockItem.identifier());
+        final String identifier = this.bedrockIdentifier(bedrockItem.identifier());
         if (identifier == null) {
             ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing item identifier for id: " + bedrockItem.identifier());
             return StructuredItem.empty();
@@ -417,7 +439,23 @@ public class ItemRewriter extends StoredObject {
         if (item == null || item.isEmpty()) {
             return null;
         }
-        return this.items.inverse().get(item.identifier());
+        return this.bedrockIdentifier(item.identifier());
+    }
+
+    public String bedrockIdentifier(final int itemId) {
+        final String identifier = this.items.inverse().get(itemId);
+        if (identifier != null) {
+            return identifier;
+        }
+        // BedrockItem.setIdentifier() stores id % 65536. MOT custom block items
+        // are negative (255 - nukkitId); look up both signed and unsigned forms.
+        if (itemId > 32767) {
+            return this.items.inverse().get(itemId - 65536);
+        }
+        if (itemId < 0) {
+            return this.items.inverse().get(itemId + 65536);
+        }
+        return null;
     }
 
     public ItemDefinitions.ItemUseDefinition itemUseDefinition(final BedrockItem item) {
