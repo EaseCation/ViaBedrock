@@ -2,6 +2,13 @@
 
 Protocol truth: `decompiled/nukkit-mot` encode/decode, then `decompiled/nukkitmaster` for PyRpc / ModUI. Do not treat international Bedrock wiki or Geyser palettes as MOT 860.
 
+## 2026-08-24 — Consume leftover CAMERA_INSTRUCTION after fade
+
+- **Goal:** MOT 860 `CameraInstructionPacket.decode()` still reads target (712), FOV (827) and spline/attach (859) after fade. ViaBedrock stopped at fade, so leftover bytes could abort the join batch.
+- **Change:** `CameraInterface.skipLeftoverCameraInstruction` consumes those optional fields. Java `becamera:data` still only forwards set/clear/fade; spline roll is dropped because BECamera `CameraPathManager` ignores it.
+- **Refs:** `decompiled/nukkit-mot/cn/nukkit/network/protocol/CameraInstructionPacket.java`.
+- **Risk:** Spline/FOV/target still have no JE payload. This only prevents leftover-byte disconnects.
+
 ## 2026-08-24 — Retry ClientLoadAddonsFinishedFromGac until sent
 
 - **Goal:** `scheduleClientLoadAddonsFinished` stored a one-shot flag even when the Netty channel was inactive, so later PLAY retries never emitted the Master HUD gate.

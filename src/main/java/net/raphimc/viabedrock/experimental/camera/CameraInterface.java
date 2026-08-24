@@ -227,6 +227,12 @@ public class CameraInterface {
                 }
             }
 
+            // MOT CameraInstructionPacket.decode() keeps reading after fade on
+            // protocol >= 712/827/859. Java BECamera payload still only carries
+            // set/clear/fade, so consume leftover bytes instead of aborting the
+            // join batch (Ref: CameraInstructionPacket).
+            skipLeftoverCameraInstruction(wrapper, emulateNetEase(), cameraProtocol());
+
             final CameraAudioTracker cameraAudio = wrapper.user().get(CameraAudioTracker.class);
             if (cameraAudio != null) {
                 cameraAudio.applyInstruction(hasSet, presetRuntimeId, setPos, hasClear);
@@ -414,6 +420,53 @@ public class CameraInterface {
             wrapper.read(BedrockTypes.FLOAT_LE);
             wrapper.read(BedrockTypes.FLOAT_LE);
             wrapper.read(BedrockTypes.FLOAT_LE);
+        }
+    }
+
+    /**
+     * Consume MOT leftover after fade: target (712), FOV (827), spline/attach (859).
+     * Spline rotation keyframes are Vector3f (pitch/yaw/roll) + time; Java still
+     * drops roll because BECamera {@code CameraPathManager} ignores it.
+     */
+    static void skipLeftoverCameraInstruction(final PacketWrapper wrapper, final boolean emulateNetEase, final int protocol) {
+        if (CameraPacketLayout.usesCameraTarget(emulateNetEase, protocol)) {
+            if (wrapper.read(Types.BOOLEAN)) {
+                skipOptionalVec3f(wrapper); // target_center_offset
+                wrapper.read(BedrockTypes.LONG_LE); // unique_entity_id
+            }
+            skipOptionalBoolean(wrapper); // remove_target
+        }
+        if (CameraPacketLayout.usesCameraFov(emulateNetEase, protocol)) {
+            if (wrapper.read(Types.BOOLEAN)) {
+                wrapper.read(BedrockTypes.FLOAT_LE); // fov
+                wrapper.read(BedrockTypes.FLOAT_LE); // ease_time
+                wrapper.read(Types.BYTE); // ease_type
+                wrapper.read(Types.BOOLEAN); // clear
+            }
+        }
+        if (CameraPacketLayout.usesCameraSpline(emulateNetEase, protocol)) {
+            if (wrapper.read(Types.BOOLEAN)) {
+                wrapper.read(BedrockTypes.FLOAT_LE); // total_time
+                wrapper.read(Types.BYTE); // spline_type
+                final int curveCount = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
+                for (int i = 0; i < curveCount; i++) {
+                    wrapper.read(BedrockTypes.POSITION_3F);
+                }
+                final int progressCount = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
+                for (int i = 0; i < progressCount; i++) {
+                    wrapper.read(BedrockTypes.FLOAT_LE); // value
+                    wrapper.read(BedrockTypes.FLOAT_LE); // time
+                }
+                final int rotationCount = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
+                for (int i = 0; i < rotationCount; i++) {
+                    wrapper.read(BedrockTypes.POSITION_3F); // pitch/yaw/roll
+                    wrapper.read(BedrockTypes.FLOAT_LE); // time
+                }
+            }
+            if (wrapper.read(Types.BOOLEAN)) {
+                wrapper.read(BedrockTypes.LONG_LE); // attach unique_entity_id
+            }
+            skipOptionalBoolean(wrapper); // detach_from_entity
         }
     }
 

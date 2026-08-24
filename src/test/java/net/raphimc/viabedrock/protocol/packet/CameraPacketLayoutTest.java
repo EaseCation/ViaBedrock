@@ -21,6 +21,9 @@ class CameraPacketLayoutTest {
         assertTrue(CameraPacketLayout.usesControlScheme(true, 860));
         assertFalse(CameraPacketLayout.usesAlignTargetAndCameraForward(true, 860));
         assertTrue(CameraPacketLayout.usesRemoveIgnoreStartingValues(true, 860));
+        assertTrue(CameraPacketLayout.usesCameraTarget(true, 860));
+        assertTrue(CameraPacketLayout.usesCameraFov(true, 860));
+        assertTrue(CameraPacketLayout.usesCameraSpline(true, 860));
     }
 
     @Test
