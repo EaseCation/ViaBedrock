@@ -779,10 +779,10 @@ public class JoinPackets {
         user.put(new GameRulesStorage(user, pending.gameRules()));
         user.put(new BlockStateRewriter(user, pending.blockProperties(), pending.hashedRuntimeBlockIds()));
         user.put(new ItemRewriter(user, new ItemEntry[0]));
-        user.put(new ChunkTracker(user, pending.dimension()));
         final EntityTracker entityTracker = new EntityTracker(user);
         entityTracker.addEntity(pending.clientPlayer(), false);
         user.put(entityTracker);
+        user.put(new ChunkTracker(user, pending.dimension()));
 
         sendJavaConfigurationOutputs(user, pending.enabledFeatures(), () -> {
             final PacketWrapper requestChunkRadius = PacketWrapper.create(ServerboundBedrockPackets.REQUEST_CHUNK_RADIUS, user);
@@ -797,6 +797,31 @@ public class JoinPackets {
         return "Bedrock" + (!serverEngine.isEmpty() ? " @" + serverEngine : "") + " v: " + vanillaVersion;
     }
 
+    /**
+     * GanAC inbound NSL is {@code timestamp / 1_000_000}. A raw {@code currentTimeMillis}
+     * (~1.77e12) scales to ~1.77e6, which sits inside GanAC's process-wide ping counter
+     * {@code 1..999_999_999} and {@code releaseThrough} would drain earlier real pings.
+     * Vanilla Bedrock echoes {@code id * 1_000_000}; writing millis at that magnitude
+     * makes the scaled id {@code currentTimeMillis} (~1.77e12), outside GanAC's range.
+     * Do not use {@code 0} (MOT keepalive / GanAC ignore). Do not reuse GanAC's small
+     * counter. HUD still uses {@code JAVA_ONLY_LATENCY_PROBE}, never this packet.
+     * Ref: GanAC NetworkLatencyPackets.resolveModernResponseId; NukkitLatencyAdapter.
+     */
+    static long neteaseHeartbeatTimestamp(final long currentTimeMillis) {
+        return Math.multiplyExact(currentTimeMillis, 1_000_000L);
+    }
+
+    /**
+     * True when GanAC would treat {@code wireTimestamp / 1_000_000} as a pending ping id.
+     */
+    static boolean ganacPingIdCollision(final long wireTimestamp) {
+        if (wireTimestamp == 0L) {
+            return false;
+        }
+        final long scaledId = wireTimestamp / 1_000_000L;
+        return scaledId >= 1L && scaledId <= 999_999_999L;
+    }
+
     private static void startNetEaseLatencyHeartbeat(final UserConnection user) {
         if (!ViaBedrock.getConfig().shouldEmulateNetEaseClient()) return;
         final Channel channel = user.getChannel();
@@ -807,7 +832,7 @@ public class JoinPackets {
             if (!channel.isActive() || user.getProtocolInfo().getServerState() != State.PLAY) return;
             try {
                 final PacketWrapper ping = PacketWrapper.create(ServerboundBedrockPackets.NETWORK_STACK_LATENCY, user);
-                ping.write(BedrockTypes.LONG_LE, System.currentTimeMillis()); // timestamp
+                ping.write(BedrockTypes.LONG_LE, neteaseHeartbeatTimestamp(System.currentTimeMillis())); // timestamp
                 ping.write(Types.BOOLEAN, false); // from server
                 ping.scheduleSendToServer(BedrockProtocol.class);
                 // Extra HUD sample. Server NETWORK_STACK_LATENCY already

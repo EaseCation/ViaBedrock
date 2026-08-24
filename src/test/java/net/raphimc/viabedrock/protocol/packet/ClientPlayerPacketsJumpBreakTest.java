@@ -57,4 +57,9 @@ class ClientPlayerPacketsJumpBreakTest {
         assertEquals(Direction.NORTH.ordinal(), ClientPlayerPackets.abortDestroyFacing(null, info));
         assertEquals(Direction.DOWN.ordinal(), ClientPlayerPackets.abortDestroyFacing(null, null));
     }
+
+    @Test
+    void discardPendingAuthInputClearsNullSafe() {
+        ClientPlayerPackets.discardPendingAuthInput(null);
+    }
 }

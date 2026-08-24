@@ -944,26 +944,11 @@ public class ExperimentalFeatures {
         // This is the main packet that the bedrock client use to interact with block.
         final PacketWrapper transactionPacket = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, user);
 
-        BedrockItem predictedToItem = handContext.item().copy();
-        // This is not entirely correct, but at least it's more accurate than not sending actions or sending the original item data.
-        if (predictedToItem.blockRuntimeId() != 0 && clientPlayer.javaGameMode() != GameMode.CREATIVE) {
-            predictedToItem.setAmount(predictedToItem.amount() - 1);
-        }
-        if (predictedToItem.amount() <= 0) {
-            predictedToItem = BedrockItem.empty();
-        }
-
+        final List<InventoryActionData> clickBlockActions = predictedClickBlockActions(handContext, clientPlayer);
         final BedrockInventoryTransaction inventoryTransaction = new BedrockInventoryTransaction(
                 0, // legacy request id
                 null,
-                List.of(
-                        new InventoryActionData(
-                                new InventorySource(InventorySourceType.ContainerInventory, handContext.containerId(), InventorySource_InventorySourceFlags.NoFlag),
-                                handContext.containerSlot(),
-                                handContext.item(),
-                                predictedToItem
-                        )
-                ),
+                clickBlockActions,
                 ComplexInventoryTransaction_Type.ItemUseTransaction,
                 new InventoryTransactionData.UseItemTransactionData(
                         ItemUseInventoryTransaction_ActionType.Place,
@@ -997,6 +982,38 @@ public class ExperimentalFeatures {
 
     private static void sendReleaseItemTransaction(final UserConnection user, final InventoryTransactionRewriter inventoryTransactionRewriter, final ItemUseHandContext handContext, final ClientPlayerEntity clientPlayer, final ItemReleaseInventoryTransaction_ActionType actionType) {
         sendReleaseItemTransaction(user, inventoryTransactionRewriter, createReleaseItemSnapshot(handContext, clientPlayer), actionType);
+    }
+
+    static List<InventoryActionData> predictedClickBlockActions(final ItemUseHandContext handContext, final ClientPlayerEntity clientPlayer) {
+        return predictedClickBlockActions(handContext, clientPlayer, ViaBedrock.getConfig().shouldEmulateNetEaseClient());
+    }
+
+    /**
+     * Official 975 still sends a predicted SOURCE_CONTAINER decrement with CLICK_BLOCK.
+     * NetEase 860 native clients leave {@code actions[]} empty and let MOT apply the
+     * decrement after {@code Level.useItemOn}.
+     */
+    static List<InventoryActionData> predictedClickBlockActions(final ItemUseHandContext handContext,
+                                                                final ClientPlayerEntity clientPlayer,
+                                                                final boolean emulateNetEase) {
+        if (!ItemUseSemantics.sendPredictedClickBlockSlotDelta(emulateNetEase) || handContext == null) {
+            return null;
+        }
+        BedrockItem predictedToItem = handContext.item().copy();
+        if (predictedToItem.blockRuntimeId() != 0 && (clientPlayer == null || clientPlayer.javaGameMode() != GameMode.CREATIVE)) {
+            predictedToItem.setAmount(predictedToItem.amount() - 1);
+        }
+        if (predictedToItem.amount() <= 0) {
+            predictedToItem = BedrockItem.empty();
+        }
+        return List.of(
+                new InventoryActionData(
+                        new InventorySource(InventorySourceType.ContainerInventory, handContext.containerId(), InventorySource_InventorySourceFlags.NoFlag),
+                        handContext.containerSlot(),
+                        handContext.item(),
+                        predictedToItem
+                )
+        );
     }
 
     private static ReleaseItemSnapshot createReleaseItemSnapshot(final ItemUseHandContext handContext, final ClientPlayerEntity clientPlayer) {

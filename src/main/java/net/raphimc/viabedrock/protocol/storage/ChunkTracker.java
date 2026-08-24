@@ -131,9 +131,40 @@ public class ChunkTracker extends StoredObject {
             this.radius = oldChunkTracker.radius;
         } else {
             this.radius = user.get(ClientSettingsStorage.class).viewDistance();
+            this.seedCenterFromClientPlayer();
         }
 
         this.lightProvider = new AsyncLightEngine(this);
+    }
+
+    /**
+     * MOT 860 spawn is often far from (0, 0) (Lobby [13,13] in the live log).
+     * Java 1.21.11 rejects LEVEL_CHUNK_WITH_LIGHT outside SET_CHUNK_CACHE_CENTER,
+     * so the tracker must start on the START_GAME spawn column instead of (0, 0).
+     */
+    private void seedCenterFromClientPlayer() {
+        final EntityTracker entityTracker = this.user().get(EntityTracker.class);
+        if (entityTracker == null || entityTracker.getClientPlayer() == null) {
+            return;
+        }
+        final Position3f playerPosition = entityTracker.getClientPlayer().position();
+        this.centerX = javaChunkCoord(playerPosition.x());
+        this.centerZ = javaChunkCoord(playerPosition.z());
+    }
+
+    static int javaChunkCoord(final double blockCoordinate) {
+        return (int) Math.floor(blockCoordinate) >> 4;
+    }
+
+    public void alignCenterToClientPlayer() {
+        final int previousCenterX = this.centerX;
+        final int previousCenterZ = this.centerZ;
+        this.seedCenterFromClientPlayer();
+        if (previousCenterX == this.centerX && previousCenterZ == this.centerZ) {
+            return;
+        }
+        this.removeOutOfLoadDistanceChunks();
+        this.markLoadedUnsentChunksDirty();
     }
 
     public void setCenter(final int x, final int z) {
@@ -216,15 +247,20 @@ public class ChunkTracker extends StoredObject {
     }
 
     public BedrockChunk createChunk(final int chunkX, final int chunkZ, final int nonNullSectionCount) {
-        if (!this.isInLoadDistance(chunkX, chunkZ)) return null;
+        if (!this.isInLoadDistance(chunkX, chunkZ)) {
+            // MOT can publish spawn columns before NETWORK_CHUNK_PUBLISHER_UPDATE.
+            // Recenter onto the START_GAME player so Lobby [13,13] is not dropped
+            // while Java cache center is still (0, 0).
+            this.alignCenterToClientPlayer();
+            if (!this.isInLoadDistance(chunkX, chunkZ)) {
+                return null;
+            }
+        }
         if (!this.isInRenderDistance(chunkX, chunkZ)) {
             ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received chunk outside of render distance, but within load distance: " + chunkX + ", " + chunkZ);
-            final EntityTracker entityTracker = this.user().get(EntityTracker.class);
+            this.alignCenterToClientPlayer();
             if (!this.suppressJavaRuntimePacketBeforeLogin(ClientboundPackets26_1.SET_CHUNK_CACHE_CENTER)) {
-                final PacketWrapper setChunkCacheCenter = PacketWrapper.create(ClientboundPackets26_1.SET_CHUNK_CACHE_CENTER, this.user());
-                setChunkCacheCenter.write(Types.VAR_INT, (int) Math.floor(entityTracker.getClientPlayer().position().x()) >> 4); // chunk x
-                setChunkCacheCenter.write(Types.VAR_INT, (int) Math.floor(entityTracker.getClientPlayer().position().z()) >> 4); // chunk z
-                setChunkCacheCenter.send(BedrockProtocol.class);
+                this.sendCurrentCacheSettingsToJava();
             }
         }
 
@@ -765,12 +801,14 @@ public class ChunkTracker extends StoredObject {
             final int playerChunkX = (int) Math.floor(playerPosition.x()) >> 4;
             final int playerChunkZ = (int) Math.floor(playerPosition.z()) >> 4;
             playerChunk = remappedChunk.getX() == playerChunkX && remappedChunk.getZ() == playerChunkZ;
-            if (playerChunk && !this.levelChunksLoadStartSent) {
+            if (playerChunk && !this.levelChunksLoadStartSent
+                    && !this.suppressJavaRuntimePacketBeforeLogin(ClientboundPackets26_1.GAME_EVENT)) {
                 this.levelChunksLoadStartSent = true;
                 PacketFactory.sendJavaGameEvent(this.user(), GameEventType.LEVEL_CHUNKS_LOAD_START, 0F);
             }
         }
         if (this.suppressJavaRuntimePacketBeforeLogin(ClientboundPackets26_1.LEVEL_CHUNK_WITH_LIGHT)) {
+            this.dirtyChunks.add(ChunkPosition.chunkKey(remappedChunk.getX(), remappedChunk.getZ()));
             return;
         }
         this.sendChunkBatchStart(playerChunk, remappedChunk.getX(), remappedChunk.getZ());

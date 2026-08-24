@@ -403,6 +403,20 @@ public final class ItemUseSemantics {
     }
 
     /**
+     * Native MOT 860 CLICK_BLOCK typically has an empty {@code actions[]} list. MOT
+     * {@code handleInventoryTransactionPacket} parses every action before case 2
+     * ({@code TYPE_USE_ITEM}); a fabricated SOURCE_CONTAINER decrement whose window
+     * or {@code equalsExact} snapshot does not match returns immediately and never
+     * runs {@code useItemOn}. GanAC {@code validateActionSources} also treats a
+     * mismatched predicted decrement as SOURCE_ITEM_MISMATCH. Official 975 can keep
+     * the predicted slot delta.
+     * Ref: MOT Player.java 4264-4270 / case 2; NetworkInventoryAction.createInventoryAction.
+     */
+    static boolean sendPredictedClickBlockSlotDelta(final boolean emulateNetEase) {
+        return !emulateNetEase;
+    }
+
+    /**
      * MOT USE_ITEM CLICK_BLOCK ({@code actionType=0}) always calls
      * {@code setUsingItem(false)} before {@code Level.useItemOn}. Java Fabric
      * keeps sending USE_ITEM_ON at the crosshair while chewing/drawing; a

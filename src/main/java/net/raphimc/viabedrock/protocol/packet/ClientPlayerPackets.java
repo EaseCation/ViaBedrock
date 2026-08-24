@@ -66,7 +66,9 @@ import net.raphimc.viabedrock.protocol.rewriter.neighbor.TrackerNeighborView;
 import net.raphimc.viabedrock.protocol.storage.*;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
+import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
@@ -674,6 +676,7 @@ public class ClientPlayerPackets {
 
             if (!clientPlayer.isInitiallySpawned() || clientPlayer.isDead()) {
                 wrapper.cancel();
+                discardPendingAuthInput(clientPlayer);
                 return;
             }
 
@@ -770,6 +773,14 @@ public class ClientPlayerPackets {
                 authInputContext.setDelta(Position3f.ZERO);
             }
 
+            // MOT EnumMap iterates START then ABORT. Coalesce before the bitmask so
+            // an emptied action list can drop PerformBlockActions on the wire.
+            final List<ClientPlayerEntity.AuthInputBlockAction> blockActions =
+                    coalesceAuthInputBlockActions(clientPlayer.authInputBlockActions());
+            if (blockActions.isEmpty()) {
+                clientPlayer.authInputData().remove(PlayerAuthInputPacket_InputData.PerformBlockActions);
+            }
+
             // wrapDegrees(180)==-180. Write the wrapped heading so GanAC BadPacketB
             // and MOT AuthInput stay in (-180, 180]. Java yRot can be +180.
             // Ref: MOT PlayerAuthInputPacket.decode() LFloat yaw; GanAC MathUtil.wrapDegrees.
@@ -796,8 +807,8 @@ public class ClientPlayerPackets {
                 }
             }
             if (clientPlayer.authInputData().contains(PlayerAuthInputPacket_InputData.PerformBlockActions)) {
-                wrapper.write(BedrockTypes.VAR_INT, clientPlayer.authInputBlockActions().size()); // player block actions count
-                for (ClientPlayerEntity.AuthInputBlockAction blockAction : clientPlayer.authInputBlockActions()) {
+                wrapper.write(BedrockTypes.VAR_INT, blockActions.size()); // player block actions count
+                for (ClientPlayerEntity.AuthInputBlockAction blockAction : blockActions) {
                     wrapper.write(BedrockTypes.VAR_INT, blockAction.action().getValue()); // action
                     switch (blockAction.action()) {
                         // StopDestroyBlock does not have additional data even tho bedrock protocol docs claim it does
@@ -887,6 +898,61 @@ public class ClientPlayerPackets {
 
     static void removeImmobileMovementInput(final Set<PlayerAuthInputPacket_InputData> inputData) {
         inputData.removeAll(IMMOBILE_MOVEMENT_INPUTS);
+    }
+
+    /**
+     * AuthInput flags and block actions are queued across Java packets in the same tick
+     * and only cleared after a successful PLAYER_AUTH_INPUT write. Cancelling
+     * CLIENT_TICK_END (not spawned / dead) must still drop those leftovers or the next
+     * live AuthInput would replay START_JUMPING / PERFORM_BLOCK_ACTIONS.
+     */
+    static void discardPendingAuthInput(final ClientPlayerEntity clientPlayer) {
+        if (clientPlayer == null) {
+            return;
+        }
+        clientPlayer.authInputData().clear();
+        clientPlayer.authInputBlockActions().clear();
+        clientPlayer.clearAuthInputItemInteraction();
+    }
+
+    /**
+     * MOT 860 stores AuthInput block actions in {@code EnumMap<PlayerActionType,>} and
+     * iterates declaration order ({@code START, ABORT, STOP, ..., PREDICT, CONTINUE}).
+     * A same-tick Java retarget of Abort(old)+Start(new) therefore runs START then ABORT
+     * and cancels the new break. Native Bedrock does not put Abort+Start in one AuthInput;
+     * MOT already aborts the previous target when the next action's position differs.
+     * Same-tick Start+Continue+Predict is kept: MOT EnumMap order is START then
+     * PREDICT then CONTINUE, which starts then finishes the same block.
+     * Ref: MOT Player.java SAI loop; PlayerAuthInputPacket.decodeBlockActions.
+     */
+    static List<ClientPlayerEntity.AuthInputBlockAction> coalesceAuthInputBlockActions(
+            final List<ClientPlayerEntity.AuthInputBlockAction> queued) {
+        if (queued == null || queued.isEmpty()) {
+            return List.of();
+        }
+        final List<ClientPlayerEntity.AuthInputBlockAction> coalesced = new ArrayList<>(queued.size());
+        for (ClientPlayerEntity.AuthInputBlockAction action : queued) {
+            if (action == null || action.action() == null) {
+                continue;
+            }
+            coalesced.add(action);
+            if (action.action() == PlayerActionType.StartDestroyBlock) {
+                dropPriorAbortForRetarget(coalesced, action);
+            }
+        }
+        return coalesced;
+    }
+
+    private static void dropPriorAbortForRetarget(
+            final List<ClientPlayerEntity.AuthInputBlockAction> coalesced,
+            final ClientPlayerEntity.AuthInputBlockAction start) {
+        if (start.position() == null) {
+            return;
+        }
+        coalesced.removeIf(existing -> existing != start
+                && existing.action() == PlayerActionType.AbortDestroyBlock
+                && existing.position() != null
+                && !existing.position().equals(start.position()));
     }
 
     static float neteaseAuthInputGravity(final UserConnection user) {

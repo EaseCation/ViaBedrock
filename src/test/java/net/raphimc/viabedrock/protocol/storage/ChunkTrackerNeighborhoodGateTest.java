@@ -19,6 +19,7 @@ package net.raphimc.viabedrock.protocol.storage;
 
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -31,5 +32,15 @@ class ChunkTrackerNeighborhoodGateTest {
         assertFalse(ChunkTracker.shouldFallThroughNeighborhoodGate(false, true, true, true));
         assertFalse(ChunkTracker.shouldFallThroughNeighborhoodGate(false, false, false, true));
         assertFalse(ChunkTracker.shouldFallThroughNeighborhoodGate(false, false, true, false));
+    }
+
+    @Test
+    void seedsJavaCacheCenterFromMotLobbySpawnInsteadOfOrigin() {
+        assertEquals(13, ChunkTracker.javaChunkCoord(208.5D));
+        assertEquals(13, ChunkTracker.javaChunkCoord(215.9D));
+        assertEquals(0, ChunkTracker.javaChunkCoord(0D));
+        assertEquals(-1, ChunkTracker.javaChunkCoord(-1D));
+        assertTrue(Math.abs(13 - 0) > 8);
+        assertFalse(Math.abs(13 - 13) > 8);
     }
 }

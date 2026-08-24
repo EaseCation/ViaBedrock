@@ -166,6 +166,8 @@ class ItemUseSemanticsTest {
         assertTrue(ItemUseSemantics.sendStartItemUseOnForBow(false));
         assertFalse(ItemUseSemantics.sendItemUseOnPlayerActions(true));
         assertTrue(ItemUseSemantics.sendItemUseOnPlayerActions(false));
+        assertFalse(ItemUseSemantics.sendPredictedClickBlockSlotDelta(true));
+        assertTrue(ItemUseSemantics.sendPredictedClickBlockSlotDelta(false));
         assertTrue(ItemUseSemantics.skipClickBlockWhileUsing(true, true));
         assertFalse(ItemUseSemantics.skipClickBlockWhileUsing(true, false));
         assertFalse(ItemUseSemantics.skipClickBlockWhileUsing(false, true));

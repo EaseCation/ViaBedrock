@@ -70,6 +70,19 @@ class JoinPacketsTest {
     }
 
     @Test
+    void neteaseHeartbeatTimestampIsOutsideGanacPingIdRange() {
+        final long millis = 1_774_000_000_000L;
+        assertTrue(JoinPackets.ganacPingIdCollision(millis),
+                "raw currentTimeMillis still collides with GanAC ping ids");
+        final long wire = JoinPackets.neteaseHeartbeatTimestamp(millis);
+        assertEquals(millis * 1_000_000L, wire);
+        assertFalse(JoinPackets.ganacPingIdCollision(wire));
+        assertFalse(JoinPackets.ganacPingIdCollision(0L));
+        assertTrue(JoinPackets.ganacPingIdCollision(1_770_000L * 1_000_000L));
+        assertFalse(JoinPackets.ganacPingIdCollision(1_000_000_000L * 1_000_000L));
+    }
+
+    @Test
     void writesEditorProjectReasonToTheConfigurationDisconnectPacket() {
         final EmbeddedChannel channel = new EmbeddedChannel();
         final UserConnectionImpl user = new UserConnectionImpl(channel);
