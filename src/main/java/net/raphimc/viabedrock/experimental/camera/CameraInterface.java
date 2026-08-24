@@ -59,7 +59,10 @@ public class CameraInterface {
             sendCameraShake(wrapper.user(), intensity, duration, type, action);
         });
 
-        protocol.registerClientbound(ClientboundBedrockPackets.CAMERA_PRESETS, null, wrapper -> {
+        // UnhandledPackets already cancels CAMERA_PRESETS so leftover bytes cannot abort
+        // a join batch when experimental camera is off. Override that cancel when BECamera
+        // translation is registered (Ref: CameraInterface vs UnhandledPackets).
+        protocol.replaceClientbound(ClientboundBedrockPackets.CAMERA_PRESETS, wrapper -> {
             wrapper.cancel();
             final int count = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
             final boolean emulateNetEase = emulateNetEase();
