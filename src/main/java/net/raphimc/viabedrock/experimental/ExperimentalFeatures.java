@@ -1251,7 +1251,10 @@ public class ExperimentalFeatures {
                     }
                     return;
                 }
-                if (ItemUseSemantics.ignoreJavaConsumableRelease(ViaBedrock.getConfig().shouldEmulateNetEaseClient(), isConsumableUseItem(wrapper.user().get(ItemRewriter.class), selectedItem))) {
+                if (ItemUseSemantics.ignoreJavaConsumableRelease(
+                        ViaBedrock.getConfig().shouldEmulateNetEaseClient(),
+                        isConsumableUseItem(wrapper.user().get(ItemRewriter.class), selectedItem),
+                        releaseAction == ItemReleaseInventoryTransaction_ActionType.Use)) {
                     return;
                 }
                 stopUsingItem(wrapper.user(), clientPlayer);

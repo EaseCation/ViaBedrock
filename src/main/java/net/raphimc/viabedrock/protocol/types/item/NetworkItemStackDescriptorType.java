@@ -108,8 +108,8 @@ public class NetworkItemStackDescriptorType extends Type<BedrockItem> {
         } else {
             userData.writeShortLE(0);
         }
-        BedrockTypes.UTF8_STRING_ARRAY.write(userData, value.canPlace());
-        BedrockTypes.UTF8_STRING_ARRAY.write(userData, value.canBreak());
+        BedrockTypes.UTF8_STRING_ARRAY.write(userData, value.canPlace() != null ? value.canPlace() : new String[0]);
+        BedrockTypes.UTF8_STRING_ARRAY.write(userData, value.canBreak() != null ? value.canBreak() : new String[0]);
         if (value.identifier() == this.blockingId) {
             userData.writeLongLE(value.blockingTicks());
         }

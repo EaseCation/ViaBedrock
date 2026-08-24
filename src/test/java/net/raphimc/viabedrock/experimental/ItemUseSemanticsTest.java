@@ -139,6 +139,11 @@ class ItemUseSemanticsTest {
         assertTrue(ItemUseSemantics.ignoreJavaConsumableRelease(true, true));
         assertFalse(ItemUseSemantics.ignoreJavaConsumableRelease(false, true));
         assertFalse(ItemUseSemantics.ignoreJavaConsumableRelease(true, false));
+        assertFalse(ItemUseSemantics.ignoreJavaConsumableRelease(true, true, false),
+                "early Java release is an interrupt and must unlock the hotbar");
+        assertTrue(ItemUseSemantics.ignoreJavaConsumableRelease(true, true, true));
+        assertFalse(ItemUseSemantics.ignoreJavaConsumableRelease(true, false, true));
+        assertFalse(ItemUseSemantics.ignoreJavaConsumableRelease(false, true, true));
         assertTrue(ItemUseSemantics.suppressStartSprintingWhileUsingItem(true, true));
         assertFalse(ItemUseSemantics.suppressStartSprintingWhileUsingItem(false, true));
         assertFalse(ItemUseSemantics.suppressStartSprintingWhileUsingItem(true, false));

@@ -478,11 +478,19 @@ public final class ItemUseSemantics {
      * Java always sends RELEASE_USE_ITEM when the local eat animation ends. Official 975
      * still translates a too-early release into ItemRelease; Nukkit 860's ItemRelease
      * handler has a finally that always calls {@code setUsingItem(false)}, which would
-     * cancel eating before {@code processAutoCompletion()} can consume. NetEase therefore
-     * must ignore that Java release and keep waiting for auto-complete.
+     * cancel eating before {@code processAutoCompletion()} can consume.
+     * <p>
+     * Only a duration-ready Java release must be ignored. An early release is a real
+     * interrupt: swallowing it keeps proxy {@code isUsingItem} latched so SET_CARRIED_ITEM
+     * never applies and the hotbar stays locked.
      */
     static boolean ignoreJavaConsumableRelease(final boolean emulateNetEase, final boolean consumable) {
-        return emulateNetEase && consumable;
+        return ignoreJavaConsumableRelease(emulateNetEase, consumable, true);
+    }
+
+    static boolean ignoreJavaConsumableRelease(final boolean emulateNetEase, final boolean consumable,
+                                               final boolean durationReady) {
+        return emulateNetEase && consumable && durationReady;
     }
 
     static boolean consumableConsumedByServer(final int startedId, final int startedAmount,

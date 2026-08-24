@@ -77,6 +77,51 @@ class BedrockItemTypeEmptyPaletteTest {
     }
 
     @Test
+    void taglessConsumableWithNullCanPlaceWritesWithoutThrowing() {
+        final Int2ObjectOpenHashMap<IntSortedSet> palettes = new Int2ObjectOpenHashMap<>();
+        final BedrockItemType type = new BedrockItemType(0, palettes, true);
+        final BedrockItem written = new BedrockItem(260, (short) 0, (byte) 1);
+        written.setCanPlace(null);
+        written.setCanBreak(null);
+
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            assertDoesNotThrow(() -> type.write(buffer, written));
+            final BedrockItem read = type.read(buffer);
+            assertEquals(260, read.identifier());
+            assertEquals(1, read.amount());
+            assertEquals(0, read.canPlace().length);
+            assertEquals(0, read.canBreak().length);
+            assertFalse(buffer.isReadable());
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
+    void taglessPotionWithNullCanPlaceWritesNetworkDescriptorWithoutThrowing() {
+        final Int2ObjectOpenHashMap<IntSortedSet> palettes = new Int2ObjectOpenHashMap<>();
+        final NetworkItemStackDescriptorType type = new NetworkItemStackDescriptorType(0, palettes, true);
+        final BedrockItem written = new BedrockItem(426, (short) 0, (byte) 1);
+        written.setNetId(1);
+        written.setCanPlace(null);
+        written.setCanBreak(null);
+
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            assertDoesNotThrow(() -> type.write(buffer, written));
+            final BedrockItem read = type.read(buffer);
+            assertEquals(426, read.identifier());
+            assertEquals(1, read.amount());
+            assertEquals(0, read.canPlace().length);
+            assertEquals(0, read.canBreak().length);
+            assertFalse(buffer.isReadable());
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
     void populatedPaletteRemapsUnknownRuntimeDuringLegacySlotDecode() {
         final IntSortedSet valid = new IntLinkedOpenHashSet();
         valid.add(42);

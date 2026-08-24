@@ -126,19 +126,19 @@ public class BedrockItem implements Item {
     }
 
     public String[] canPlace() {
-        return this.canPlace;
+        return this.canPlace != null ? this.canPlace : new String[0];
     }
 
     public void setCanPlace(final String[] canPlace) {
-        this.canPlace = canPlace;
+        this.canPlace = canPlace != null ? canPlace : new String[0];
     }
 
     public String[] canBreak() {
-        return this.canBreak;
+        return this.canBreak != null ? this.canBreak : new String[0];
     }
 
     public void setCanBreak(final String[] canBreak) {
-        this.canBreak = canBreak;
+        this.canBreak = canBreak != null ? canBreak : new String[0];
     }
 
     public long blockingTicks() {
@@ -177,7 +177,7 @@ public class BedrockItem implements Item {
 
     @Override
     public BedrockItem copy() {
-        return new BedrockItem(this.id, this.data, this.amount, this.tag != null ? this.tag.copy() : null, this.canPlace.clone(), this.canBreak.clone(), this.blockingTicks, this.blockRuntimeId, this.netId);
+        return new BedrockItem(this.id, this.data, this.amount, this.tag != null ? this.tag.copy() : null, this.canPlace().clone(), this.canBreak().clone(), this.blockingTicks, this.blockRuntimeId, this.netId);
     }
 
     @Override
