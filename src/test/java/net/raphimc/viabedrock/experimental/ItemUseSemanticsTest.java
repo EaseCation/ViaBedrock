@@ -191,6 +191,8 @@ class ItemUseSemanticsTest {
         assertTrue(ItemUseSemantics.persistSneakWhileShieldBlocking(true, true));
         assertFalse(ItemUseSemantics.persistSneakWhileShieldBlocking(true, false));
         assertFalse(ItemUseSemantics.persistSneakWhileShieldBlocking(false, true));
+        assertFalse(ItemUseSemantics.sendStandaloneSpinAttackPlayerAction(true));
+        assertTrue(ItemUseSemantics.sendStandaloneSpinAttackPlayerAction(false));
         assertTrue(ItemUseSemantics.rejectNetEaseOffhandUse(true, true, false));
         assertFalse(ItemUseSemantics.rejectNetEaseOffhandUse(true, true, true));
         assertFalse(ItemUseSemantics.canStartBow(true, true, false, false));

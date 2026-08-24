@@ -915,6 +915,17 @@ public class ExperimentalFeatures {
             user.get(BlockPlacementAckTracker.class).addPendingAck(expectedPos, sequence);
         }
 
+        // MOT USE_ITEM CLICK_BLOCK always setUsingItem(false) (Player.java:4528).
+        // Java Fabric keeps sending USE_ITEM_ON / item-frame / overlay / empty-bucket
+        // while chewing or drawing. Skip the whole CLICK_BLOCK (and 28/29) unless
+        // shield-as-sneak still needs to place/activate.
+        if (ItemUseSemantics.skipClickBlockWhileUsing(
+                ViaBedrock.getConfig().shouldEmulateNetEaseClient(),
+                clientPlayer.isUsingItem(),
+                clientPlayer.isShieldSneakEmulated())) {
+            return;
+        }
+
         // Official Bedrock sends StartItemUseOn before CLICK_BLOCK. MOT 860 has no
         // case 28/29; the PlayerAction default calls setUsingItem(false) and would
         // cancel an in-progress eat/draw if Java also looks at a block this tick.

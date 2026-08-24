@@ -278,6 +278,16 @@ public final class ItemUseSemantics {
     }
 
     /**
+     * MOT AuthInput START/STOP_SPIN_ATTACK is the SAI path. Standalone
+     * PlayerAction 23 has no case (default setUsingItem(false) at 3874);
+     * PlayerAction 24 on SAI ≥748 also breaks into that default. Keep the
+     * AuthInput bits; skip the extra PlayerAction on NetEase.
+     */
+    public static boolean sendStandaloneSpinAttackPlayerAction(final boolean emulateNetEase) {
+        return !emulateNetEase;
+    }
+
+    /**
      * MOT {@code ItemCrossbow.launchArrow} requires {@code serverTick - loadTick > 10}.
      * Firing on the same tick charge completes starts a new charge instead of shooting.
      */

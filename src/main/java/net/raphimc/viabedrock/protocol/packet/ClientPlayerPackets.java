@@ -530,7 +530,9 @@ public class ClientPlayerPackets {
                     // the NetEase 860 64-bit mask (ordinal 56 + 2 extra flags).
                     // Ref: MOT Player.java AuthInputAction.START_SPIN_ATTACK -> onSpinAttack.
                     clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StartSpinAttack);
-                    clientPlayer.sendPlayerActionPacketToServer(PlayerActionType.StartSpinAttack);
+                    if (ItemUseSemantics.sendStandaloneSpinAttackPlayerAction(ViaBedrock.getConfig().shouldEmulateNetEaseClient())) {
+                        clientPlayer.sendPlayerActionPacketToServer(PlayerActionType.StartSpinAttack);
+                    }
                     final net.raphimc.viabedrock.protocol.model.BedrockItem held = wrapper.user().get(InventoryTracker.class).getInventoryContainer().getSelectedHotbarItem();
                     clientPlayer.beginRiptideSpin(ItemUseSemantics.riptideDurationTicks(ItemUseSemantics.riptideLevel(held != null ? held.tag() : null)));
                 }
@@ -977,7 +979,9 @@ public class ClientPlayerPackets {
             return;
         }
         clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StopSpinAttack);
-        clientPlayer.sendPlayerActionPacketToServer(PlayerActionType.StopSpinAttack);
+        if (ItemUseSemantics.sendStandaloneSpinAttackPlayerAction(ViaBedrock.getConfig().shouldEmulateNetEaseClient())) {
+            clientPlayer.sendPlayerActionPacketToServer(PlayerActionType.StopSpinAttack);
+        }
         clientPlayer.clearRiptideSpin();
     }
 
