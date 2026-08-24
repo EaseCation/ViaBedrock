@@ -36,7 +36,9 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAuthIn
 import net.raphimc.viabedrock.protocol.data.enums.java.InputFlag;
 import net.raphimc.viabedrock.protocol.model.EntityLink;
 import net.raphimc.viabedrock.protocol.model.Position3f;
+import net.raphimc.viabedrock.api.model.container.HorseContainer;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
+import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 
 import java.nio.charset.StandardCharsets;
 import java.util.EnumSet;
@@ -556,6 +558,7 @@ public class RidingTracker extends StoredObject {
     }
 
     private void clearLocalRiding() {
+        this.closeLocalHorseContainer();
         this.localVehicleUniqueId = null;
         this.ridingShiftDown = false;
         this.lastInputFlags = EnumSet.noneOf(InputFlag.class);
@@ -563,6 +566,25 @@ public class RidingTracker extends StoredObject {
         this.lastMoveVehicleInputFresh = false;
         this.lastSafeDismountPosition = null;
         this.clearPendingDismount();
+    }
+
+    /**
+     * MOT HorseInventory never sends CONTAINER_CLOSE on dismount; it only
+     * broadcasts SET_ENTITY_LINK type 0. Keep the JE mount screen until unlink.
+     * Ref: MOT Entity.dismountEntity / HorseInventory.onClose.
+     */
+    private void closeLocalHorseContainer() {
+        final InventoryTracker inventoryTracker = this.user().get(InventoryTracker.class);
+        if (inventoryTracker == null) {
+            return;
+        }
+        if (!(inventoryTracker.getCurrentContainer() instanceof HorseContainer horse)) {
+            return;
+        }
+        if (this.localVehicleUniqueId != null && horse.entityUniqueId() != this.localVehicleUniqueId) {
+            return;
+        }
+        inventoryTracker.forceCloseCurrentContainer();
     }
 
     private boolean isPendingDismount(final Entity vehicle) {

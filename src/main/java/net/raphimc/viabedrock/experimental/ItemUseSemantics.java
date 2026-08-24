@@ -266,6 +266,18 @@ public final class ItemUseSemantics {
     }
 
     /**
+     * MOT {@code updateBlockingFlag} requires sneak-or-riding + shield. Java
+     * right-click block is standing, so ViaBedrock still sends StartSneaking.
+     * MOT {@code EntityHuman.getHeight()} then short-sneaks to 1.49. PersistSneak
+     * is unused on MOT 860 AuthInput; NukkitMOTJE treats it as "shield sneak" and
+     * restores the standing AABB. Official 975 does not need this bit.
+     * Ref: MOT Player.updateBlockingFlag; EntityHuman.getHeight isShortSneaking.
+     */
+    public static boolean persistSneakWhileShieldBlocking(final boolean emulateNetEase, final boolean shieldSneakEmulated) {
+        return emulateNetEase && shieldSneakEmulated;
+    }
+
+    /**
      * MOT {@code ItemCrossbow.launchArrow} requires {@code serverTick - loadTick > 10}.
      * Firing on the same tick charge completes starts a new charge instead of shooting.
      */
@@ -367,6 +379,35 @@ public final class ItemUseSemantics {
      */
     static boolean rejectNetEaseOffhandUse(final boolean emulateNetEase, final boolean offhand, final boolean shield) {
         return emulateNetEase && offhand && !shield;
+    }
+
+    /**
+     * MOT Player.java never handles {@code StartItemUseOn} / {@code StopItemUseOn}
+     * ({@code ACTION_START_ITEM_USE_ON=28}, {@code ACTION_STOP_ITEM_USE_ON=29}).
+     * The 860 PlayerAction switch falls through to {@code setUsingItem(false)}, so a
+     * Java USE_ITEM_ON while chewing/drawing would cancel MOT auto-complete.
+     * Official 975 still expects those actions around CLICK_BLOCK.
+     */
+    static boolean sendItemUseOnPlayerActions(final boolean emulateNetEase) {
+        return !emulateNetEase;
+    }
+
+    /**
+     * MOT USE_ITEM CLICK_BLOCK ({@code actionType=0}) always calls
+     * {@code setUsingItem(false)} before {@code Level.useItemOn}. Java Fabric
+     * keeps sending USE_ITEM_ON at the crosshair while chewing/drawing; a
+     * CLICK_BLOCK would cancel MOT auto-complete even after 28/29 are skipped.
+     * Shield-block is sneak-emulated, not MOT using-item, so those clicks must
+     * still reach chests/buttons. Official 975 still places through CLICK_BLOCK.
+     * Ref: MOT Player.java case 2 / actionType 0.
+     */
+    static boolean skipClickBlockWhileUsing(final boolean emulateNetEase, final boolean usingItem) {
+        return skipClickBlockWhileUsing(emulateNetEase, usingItem, false);
+    }
+
+    static boolean skipClickBlockWhileUsing(final boolean emulateNetEase, final boolean usingItem,
+                                            final boolean shieldSneakEmulated) {
+        return emulateNetEase && usingItem && !shieldSneakEmulated;
     }
 
     /**

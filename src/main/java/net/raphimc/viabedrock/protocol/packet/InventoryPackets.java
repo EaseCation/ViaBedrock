@@ -108,10 +108,13 @@ public class InventoryPackets {
                 wrapper.cancel();
                 return;
             }
-            final BedrockBlockEntity blockEntity = chunkTracker.getBlockEntity(position);
-            final String bedrockBlockTag = blockStateRewriter.tag(chunkTracker.getBlockState(position));
+            final boolean dummyWorldPosition = InventoryTracker.isDummyWorldPosition(position);
+            final BedrockBlockEntity blockEntity = dummyWorldPosition ? null : chunkTracker.getBlockEntity(position);
             // MOT CONTAINER_OPEN has no title string. Java 1.21 keys are not "container.<bedrock_tag>"
             // (ender_chest -> container.enderchest, shulker_box -> container.shulkerBox).
+            // Dummy (0,0,0) holders must not inherit the world-origin block's tag/CustomName
+            // or a plugin chest becomes "Ender Chest" whenever spawn has an ender chest.
+            final String bedrockBlockTag = dummyWorldPosition ? null : blockStateRewriter.tag(chunkTracker.getBlockState(position));
             final String javaTitleKey = JavaContainerTitles.key(bedrockBlockTag, type);
             TextComponent title = new TranslationComponent(javaTitleKey);
             if (blockEntity != null && blockEntity.tag().get("CustomName") instanceof StringTag customNameTag) {
@@ -131,27 +134,30 @@ public class InventoryPackets {
                     return;
                 }
                 case CONTAINER -> {
-                    final String blockTag = blockStateRewriter.tag(chunkTracker.getBlockState(position));
-                    if (CustomBlockTags.ENDER_CHEST.equals(blockTag)) {
-                        container = new EnderChestContainer(wrapper.user(), containerId, title, position);
-                    } else if (CustomBlockTags.SHULKER_BOX.equals(blockTag)) {
-                        container = new ShulkerBoxContainer(wrapper.user(), containerId, title, position);
-                        javaMenuId = BedrockProtocol.MAPPINGS.getJavaShulkerBoxMenuId();
-                    } else if (entityUniqueId != -1L) {
+                    if (entityUniqueId != -1L) {
                         // Nukkit sends chest boats / minecart chests as type 0 with an entity unique id.
                         container = new GenericContainer(wrapper.user(), containerId, type, title, position, 27);
-                    } else if (InventoryTracker.isDummyWorldPosition(position)) {
-                        // MOT fake / plugin inventories send CONTAINER_OPEN at (0,0,0). There is no
-                        // world block to validate, so keep an untagged generic chest instead of a
-                        // ChestContainer that InventoryTracker.tick() would immediately close.
+                    } else if (dummyWorldPosition) {
+                        // MOT fake / plugin inventories and ender chests with no viewing block
+                        // send CONTAINER_OPEN at (0,0,0). Do not classify from the world-origin
+                        // block: spawn ender/shulker/chest would make a distant plugin GUI
+                        // world-backed and InventoryTracker.tick() would close it for distance.
                         container = new GenericContainer(wrapper.user(), containerId, type, title, position, 27);
                     } else {
-                        final boolean isDoubleChest = blockEntity != null && blockEntity.tag().get("pairx") instanceof IntTag && blockEntity.tag().get("pairz") instanceof IntTag;
-                        if (isDoubleChest) {
-                            container = new ChestContainer(wrapper.user(), containerId, title, position, 54);
-                            javaMenuId = BedrockProtocol.MAPPINGS.getJavaDoubleChestMenuId();
+                        final String blockTag = blockStateRewriter.tag(chunkTracker.getBlockState(position));
+                        if (CustomBlockTags.ENDER_CHEST.equals(blockTag)) {
+                            container = new EnderChestContainer(wrapper.user(), containerId, title, position);
+                        } else if (CustomBlockTags.SHULKER_BOX.equals(blockTag)) {
+                            container = new ShulkerBoxContainer(wrapper.user(), containerId, title, position);
+                            javaMenuId = BedrockProtocol.MAPPINGS.getJavaShulkerBoxMenuId();
                         } else {
-                            container = new ChestContainer(wrapper.user(), containerId, title, position, 27);
+                            final boolean isDoubleChest = blockEntity != null && blockEntity.tag().get("pairx") instanceof IntTag && blockEntity.tag().get("pairz") instanceof IntTag;
+                            if (isDoubleChest) {
+                                container = new ChestContainer(wrapper.user(), containerId, title, position, 54);
+                                javaMenuId = BedrockProtocol.MAPPINGS.getJavaDoubleChestMenuId();
+                            } else {
+                                container = new ChestContainer(wrapper.user(), containerId, title, position, 27);
+                            }
                         }
                     }
                 }

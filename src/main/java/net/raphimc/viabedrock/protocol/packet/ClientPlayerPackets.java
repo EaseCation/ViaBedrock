@@ -707,6 +707,13 @@ public class ClientPlayerPackets {
             if (clientPlayer.inputFlags().contains(InputFlag.SHIFT)
                     || (clientPlayer.isUsingItem() && clientPlayer.isShieldSneakEmulated())) {
                 clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.SneakDown, PlayerAuthInputPacket_InputData.Sneaking, PlayerAuthInputPacket_InputData.WantDown, PlayerAuthInputPacket_InputData.SneakCurrentRaw);
+                // MOT unused PersistSneak: NukkitMOTJE ShieldSneakListener restores
+                // standing AABB for Java shield-as-sneak without shrinking to 1.49.
+                if (ItemUseSemantics.persistSneakWhileShieldBlocking(
+                        ViaBedrock.getConfig().shouldEmulateNetEaseClient(),
+                        clientPlayer.isShieldSneakEmulated() && !clientPlayer.inputFlags().contains(InputFlag.SHIFT))) {
+                    clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.PersistSneak);
+                }
             }
             if (clientPlayer.inputFlags().contains(InputFlag.SPRINT)
                     && !ItemUseSemantics.suppressStartSprintingWhileUsingItem(ViaBedrock.getConfig().shouldEmulateNetEaseClient(), clientPlayer.isUsingItem())) {

@@ -11,14 +11,18 @@ package net.raphimc.viabedrock.protocol.storage;
 
 import com.viaversion.viaversion.api.minecraft.BlockPosition;
 import io.netty.channel.embedded.EmbeddedChannel;
+import net.raphimc.viabedrock.api.model.container.ChestContainer;
+import net.raphimc.viabedrock.api.model.container.EnderChestContainer;
 import net.raphimc.viabedrock.api.model.container.GenericContainer;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
+import net.raphimc.viabedrock.protocol.packet.JavaContainerTitles;
 import net.raphimc.viabedrock.test.StubUserConnection;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -46,7 +50,38 @@ class InventoryTrackerDummyContainerTest {
         assertTrue(fake.isValidBlockTag("air"));
         assertTrue(fake.isValidBlockTag(null));
         assertTrue(!fake.isWorldBacked());
+        this.tracker.tick();
         assertSame(fake, this.tracker.getCurrentContainer());
+        assertEquals(InventoryTracker.ContainerState.OPEN, this.tracker.getContainerState());
+    }
+
+    @Test
+    void dummyWorldOriginDoesNotInheritSpawnEnderChestTitleOrType() {
+        assertEquals("container.chest", JavaContainerTitles.key(null, ContainerType.CONTAINER));
+        assertEquals("container.chest", JavaContainerTitles.key("air", ContainerType.CONTAINER));
+        assertFalse("container.enderchest".equals(JavaContainerTitles.key(null, ContainerType.CONTAINER)));
+        assertFalse("container.shulkerBox".equals(JavaContainerTitles.key("air", ContainerType.CONTAINER)));
+    }
+
+    @Test
+    void dummyChestAtWorldOriginStaysOpenEvenIfWorldBacked() {
+        // Pre-fix path: spawn chest at (0,0,0) made plugin GUIs world-backed
+        // so tick() closed them for the 6-block distance check.
+        final ChestContainer spawnTagged = new ChestContainer(this.user, (byte) 12, null, new BlockPosition(0, 0, 0), 27);
+        this.tracker.setCurrentContainer(spawnTagged);
+        assertTrue(spawnTagged.isWorldBacked());
+        this.tracker.tick();
+        assertSame(spawnTagged, this.tracker.getCurrentContainer());
+        assertEquals(InventoryTracker.ContainerState.OPEN, this.tracker.getContainerState());
+    }
+
+    @Test
+    void dummyEnderChestAtWorldOriginStaysOpenEvenIfWorldBacked() {
+        final EnderChestContainer spawnEnder = new EnderChestContainer(this.user, (byte) 13, null, new BlockPosition(0, 0, 0));
+        this.tracker.setCurrentContainer(spawnEnder);
+        assertTrue(spawnEnder.isWorldBacked());
+        this.tracker.tick();
+        assertSame(spawnEnder, this.tracker.getCurrentContainer());
         assertEquals(InventoryTracker.ContainerState.OPEN, this.tracker.getContainerState());
     }
 }

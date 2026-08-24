@@ -164,6 +164,13 @@ class ItemUseSemanticsTest {
         assertTrue(ItemUseSemantics.attachAuthInputItemInteraction(false, false, false, true));
         assertFalse(ItemUseSemantics.sendStartItemUseOnForBow(true));
         assertTrue(ItemUseSemantics.sendStartItemUseOnForBow(false));
+        assertFalse(ItemUseSemantics.sendItemUseOnPlayerActions(true));
+        assertTrue(ItemUseSemantics.sendItemUseOnPlayerActions(false));
+        assertTrue(ItemUseSemantics.skipClickBlockWhileUsing(true, true));
+        assertFalse(ItemUseSemantics.skipClickBlockWhileUsing(true, false));
+        assertFalse(ItemUseSemantics.skipClickBlockWhileUsing(false, true));
+        assertFalse(ItemUseSemantics.skipClickBlockWhileUsing(true, true, true));
+        assertTrue(ItemUseSemantics.skipClickBlockWhileUsing(true, true, false));
         assertTrue(ItemUseSemantics.needsStandaloneUseTransaction(true, false, false, false, true));
         assertFalse(ItemUseSemantics.needsStandaloneUseTransaction(false, false, false, false, true));
         assertFalse(ItemUseSemantics.needsStandaloneUseTransaction(true, false, false, false, false));
@@ -181,6 +188,9 @@ class ItemUseSemanticsTest {
         assertTrue(ItemUseSemantics.stopSprintingOnShieldSneakStart(true, true, true));
         assertFalse(ItemUseSemantics.stopSprintingOnShieldSneakStart(true, true, false));
         assertFalse(ItemUseSemantics.stopSprintingOnShieldSneakStart(false, true, true));
+        assertTrue(ItemUseSemantics.persistSneakWhileShieldBlocking(true, true));
+        assertFalse(ItemUseSemantics.persistSneakWhileShieldBlocking(true, false));
+        assertFalse(ItemUseSemantics.persistSneakWhileShieldBlocking(false, true));
         assertTrue(ItemUseSemantics.rejectNetEaseOffhandUse(true, true, false));
         assertFalse(ItemUseSemantics.rejectNetEaseOffhandUse(true, true, true));
         assertFalse(ItemUseSemantics.canStartBow(true, true, false, false));

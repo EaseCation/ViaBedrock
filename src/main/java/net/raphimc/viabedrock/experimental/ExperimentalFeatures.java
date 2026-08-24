@@ -915,15 +915,20 @@ public class ExperimentalFeatures {
             user.get(BlockPlacementAckTracker.class).addPendingAck(expectedPos, sequence);
         }
 
-        // The bedrock client will send a start item use on action to the server first.
-        ExperimentalPacketFactory.sendBedrockPlayerAction(
-                user,
-                clientPlayer.runtimeId(),
-                PlayerActionType.StartItemUseOn,
-                position,
-                insideBlock ? position : position.getRelative(face),
-                faceInt
-        );
+        // Official Bedrock sends StartItemUseOn before CLICK_BLOCK. MOT 860 has no
+        // case 28/29; the PlayerAction default calls setUsingItem(false) and would
+        // cancel an in-progress eat/draw if Java also looks at a block this tick.
+        final boolean sendItemUseOnActions = ItemUseSemantics.sendItemUseOnPlayerActions(ViaBedrock.getConfig().shouldEmulateNetEaseClient());
+        if (sendItemUseOnActions) {
+            ExperimentalPacketFactory.sendBedrockPlayerAction(
+                    user,
+                    clientPlayer.runtimeId(),
+                    PlayerActionType.StartItemUseOn,
+                    position,
+                    insideBlock ? position : position.getRelative(face),
+                    faceInt
+            );
+        }
 
         // This is the main packet that the bedrock client use to interact with block.
         final PacketWrapper transactionPacket = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, user);
@@ -967,14 +972,16 @@ public class ExperimentalFeatures {
         transactionPacket.sendToServer(BedrockProtocol.class);
 
         // Bedrock sends a stop item use on after the transaction packet
-        ExperimentalPacketFactory.sendBedrockPlayerAction(
-                user,
-                clientPlayer.runtimeId(),
-                PlayerActionType.StopItemUseOn,
-                position,
-                new BlockPosition(0, 0, 0),
-                0
-        );
+        if (sendItemUseOnActions) {
+            ExperimentalPacketFactory.sendBedrockPlayerAction(
+                    user,
+                    clientPlayer.runtimeId(),
+                    PlayerActionType.StopItemUseOn,
+                    position,
+                    new BlockPosition(0, 0, 0),
+                    0
+            );
+        }
     }
 
     private static void sendReleaseItemTransaction(final UserConnection user, final InventoryTransactionRewriter inventoryTransactionRewriter, final ItemUseHandContext handContext, final ClientPlayerEntity clientPlayer, final ItemReleaseInventoryTransaction_ActionType actionType) {
@@ -1409,6 +1416,18 @@ public class ExperimentalFeatures {
                 // An offhand Place would therefore consume the main-hand stack.
                 PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getInventoryContainer());
                 PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getOffhandContainer());
+                if (sequence > 0) {
+                    PacketFactory.sendJavaBlockChangedAck(wrapper.user(), sequence);
+                }
+                return;
+            }
+            // MOT CLICK_BLOCK always setUsingItem(false). Keep eating/drawing from
+            // being cancelled by a later Java USE_ITEM_ON at the same crosshair.
+            // Ref: MOT Player.java case 2 / actionType 0.
+            if (ItemUseSemantics.skipClickBlockWhileUsing(
+                    ViaBedrock.getConfig().shouldEmulateNetEaseClient(),
+                    clientPlayer.isUsingItem(),
+                    clientPlayer.isShieldSneakEmulated())) {
                 if (sequence > 0) {
                     PacketFactory.sendJavaBlockChangedAck(wrapper.user(), sequence);
                 }

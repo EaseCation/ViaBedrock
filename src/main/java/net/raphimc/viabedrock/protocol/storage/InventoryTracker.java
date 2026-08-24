@@ -281,19 +281,21 @@ public class InventoryTracker extends StoredObject {
             if (this.currentContainer instanceof HorseContainer) {
                 return;
             }
+            // MOT plugin / fake inventories and ender chests with no viewing block
+            // write CONTAINER_OPEN at (0,0,0). That is not a world-backed holder:
+            // air at spawn must not close the GUI, and a real chest/ender/shulker
+            // sitting at world origin must not make a distant plugin chest fail the
+            // 6-block check. Real block inventories send their actual XYZ.
+            // Ref: MOT ContainerInventory.onOpen non-Vector3 holder;
+            // PlayerEnderChestInventory viewingEnderChest == null.
+            if (isDummyWorldPosition(this.currentContainer.position())) {
+                return;
+            }
 
             final ChunkTracker chunkTracker = this.user().get(ChunkTracker.class);
             final BlockStateRewriter blockStateRewriter = this.user().get(BlockStateRewriter.class);
             final int blockState = chunkTracker.getBlockState(this.currentContainer.position());
             final String tag = blockStateRewriter.tag(blockState);
-            // MOT plugin / fake inventories send CONTAINER_OPEN at (0,0,0). Air at world
-            // origin is not a real chest; keep the GUI. A real tagged block at spawn still
-            // closes if the player walks away. Untagged GenericContainers treat air as valid,
-            // so they must skip the distance check as well.
-            if (isDummyWorldPosition(this.currentContainer.position())
-                    && (!this.currentContainer.isWorldBacked() || !this.currentContainer.isValidBlockTag(tag))) {
-                return;
-            }
             if (!this.currentContainer.isValidBlockTag(tag)) {
                 ViaBedrock.getPlatform().getLogger().log(Level.INFO, "Closing " + this.currentContainer.type() + " because block state is not valid for container type: " + blockState);
                 this.forceCloseCurrentContainer();
@@ -514,7 +516,7 @@ public class InventoryTracker extends StoredObject {
     private record PendingItemStackRequest(int requestId, net.raphimc.viabedrock.experimental.inventory.InventorySnapshot snapshot) {
     }
 
-    boolean forceCloseCurrentContainer() {
+    public boolean forceCloseCurrentContainer() {
         final Container container = this.currentContainer;
         if (container == null || !this.returnCursorBeforeClose()) {
             return false;
