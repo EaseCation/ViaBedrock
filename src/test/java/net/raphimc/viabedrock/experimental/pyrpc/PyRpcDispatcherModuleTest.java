@@ -1,0 +1,72 @@
+/*
+ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
+ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+package net.raphimc.viabedrock.experimental.pyrpc;
+
+import org.junit.jupiter.api.Test;
+
+import java.nio.charset.StandardCharsets;
+
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class PyRpcDispatcherModuleTest {
+
+    @Test
+    void clientLoadAddonsFinishedFitsFixstr() {
+        final String method = PyRpcDispatcherModule.CLIENT_LOAD_ADDONS_FINISHED;
+        assertEquals(31, method.getBytes(StandardCharsets.UTF_8).length);
+
+        final byte[] payload = PyRpcDispatcherModule.buildClientLoadAddonsFinished();
+        assertEquals((byte) 0x91, payload[0]); // fixarray 1
+        assertEquals((byte) (0xa0 | 31), payload[1]); // fixstr 31
+        assertEquals(method, new String(payload, 2, 31, StandardCharsets.US_ASCII));
+        assertEquals(33, payload.length);
+    }
+
+    @Test
+    void stringsLongerThan31BytesUseStr8() {
+        final java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        final String longName = "ClientLoadAddonsFinishedFromGacX"; // 32 bytes
+        assertEquals(32, longName.getBytes(StandardCharsets.UTF_8).length);
+        PyRpcDispatcherModule.writeMsgPackStr(out, longName);
+        final byte[] encoded = out.toByteArray();
+        assertEquals((byte) 0xd9, encoded[0]);
+        assertEquals(32, encoded[1] & 0xFF);
+        assertEquals(longName, new String(encoded, 2, 32, StandardCharsets.US_ASCII));
+    }
+
+    @Test
+    void engineCallMatchesMotStoreBuySuccessEnvelope() {
+        // MOT NetEasePacketRegressionTest.testPyRpcPacketDecodesStoreBuySuccessSubPacket:
+        // msgpackArray(msgpackString("StoreBuySuccServerEvent"))
+        final byte[] payload = PyRpcDispatcherModule.buildEngineCall("StoreBuySuccServerEvent");
+        final byte[] expectedName = "StoreBuySuccServerEvent".getBytes(StandardCharsets.US_ASCII);
+        final byte[] expected = new byte[2 + expectedName.length];
+        expected[0] = (byte) 0x91;
+        expected[1] = (byte) (0xa0 | expectedName.length);
+        System.arraycopy(expectedName, 0, expected, 2, expectedName.length);
+        assertArrayEquals(expected, payload);
+    }
+
+    @Test
+    void masterC2sMsgIdIs98247598() {
+        assertEquals(98247598, PyRpcDispatcherModule.MSG_ID);
+        assertTrue(PyRpcDispatcherModule.ADDONS_FINISHED_DELAY_MS > 0L);
+    }
+}

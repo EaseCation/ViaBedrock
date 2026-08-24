@@ -33,6 +33,13 @@ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 /**
  * Shared JE PY_RPC transport. Bedrock PY_RPC bytes are forwarded unchanged
  * through floodgate:netease; JE C2S bytes are wrapped back into PY_RPC.
+ * <p>
+ * NukkitMaster {@code ClientEventListener} waits for the engine call
+ * {@code ClientLoadAddonsFinishedFromGac} before it will send
+ * {@code GetClientPlayerUidEvent} / HUD. Vanilla NetEase clients emit that
+ * after addons load; Java clients never do, so this module synthesizes it
+ * after MOT {@code SET_LOCAL_PLAYER_AS_INITIALIZED} (which fires
+ * {@code PlayerJoinEvent} and allocates {@code PlayerInfo}).
  */
 public class PyRpcDispatcherModule implements FeatureModule {
 
@@ -45,7 +52,11 @@ public class PyRpcDispatcherModule implements FeatureModule {
 
     // NukkitMaster's PyRpcMessageListener only accepts this magic msgId (the NetEase client
     // always sends it). S2C uses PyRpcPacket.DEFAULT_MSG_ID = 9753608 instead.
-    private static final int MSG_ID = 98247598;
+    static final int MSG_ID = 98247598;
+    /** NukkitMaster {@code ClientEventListener} engine-call gate for HUD / player-info. */
+    public static final String CLIENT_LOAD_ADDONS_FINISHED = "ClientLoadAddonsFinishedFromGac";
+    /** Delay after SET_LOCAL_PLAYER_AS_INITIALIZED so MOT can finish PlayerJoinEvent first. */
+    static final long ADDONS_FINISHED_DELAY_MS = 250L;
 
     private static void sendPyRpc(final com.viaversion.viaversion.api.connection.UserConnection user, final byte[] msgpackData) {
         try {
@@ -118,11 +129,74 @@ public class PyRpcDispatcherModule implements FeatureModule {
         out.write(value);
     }
 
-    private static void writeFixStr(final java.io.ByteArrayOutputStream out, final String s) {
+    static void writeFixStr(final java.io.ByteArrayOutputStream out, final String s) {
+        writeMsgPackStr(out, s);
+    }
+
+    /**
+     * MOT {@code PyRpcProtocol.asString} accepts MessagePack str (fixstr / str8 / str16).
+     * Keep this path — bin8 would base64-encode in some Master JSON helpers.
+     * {@code ClientLoadAddonsFinishedFromGac} is 31 bytes (fits fixstr); keep str8
+     * for any longer engine-call names.
+     */
+    static void writeMsgPackStr(final java.io.ByteArrayOutputStream out, final String s) {
         final byte[] b = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        if (b.length > 31) throw new IllegalArgumentException("fixstr max 31 bytes: " + s);
-        out.write(0xa0 | b.length);
+        if (b.length <= 31) {
+            out.write(0xa0 | b.length);
+        } else if (b.length <= 255) {
+            out.write(0xd9);
+            out.write(b.length);
+        } else if (b.length <= 65535) {
+            out.write(0xda);
+            out.write((b.length >>> 8) & 0xFF);
+            out.write(b.length & 0xFF);
+        } else {
+            throw new IllegalArgumentException("PY_RPC string too long: " + b.length);
+        }
         out.writeBytes(b);
+    }
+
+    /**
+     * Engine callback envelope used by NukkitMaster {@code processEngineCallback}:
+     * MessagePack array of {@code [method]} (no argument array). MOT regression
+     * {@code testPyRpcPacketDecodesStoreBuySuccessSubPacket} uses the same shape.
+     */
+    public static byte[] buildEngineCall(final String method) {
+        final java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(64);
+        out.write(0x91); // fixarray 1
+        writeFixStr(out, method);
+        return out.toByteArray();
+    }
+
+    public static byte[] buildClientLoadAddonsFinished() {
+        return buildEngineCall(CLIENT_LOAD_ADDONS_FINISHED);
+    }
+
+    /**
+     * MOT {@code SetLocalPlayerAsInitializedProcessor} calls {@code doFirstSpawn()},
+     * which fires {@code PlayerJoinEvent}. NukkitMaster then allocates
+     * {@code PlayerInfo}. Send the engine-call one tick later so
+     * {@code getPlayerInfo(player) != null} when HUD is pushed.
+     */
+    public static void scheduleClientLoadAddonsFinished(final com.viaversion.viaversion.api.connection.UserConnection user) {
+        if (!ViaBedrock.getConfig().shouldEmulateNetEaseClient()) {
+            return;
+        }
+        if (user.has(NetEaseAddonsFinishedStorage.class)) {
+            return;
+        }
+        user.put(new NetEaseAddonsFinishedStorage(user));
+        final io.netty.channel.Channel channel = user.getChannel();
+        if (channel == null || !channel.isActive()) {
+            return;
+        }
+        channel.eventLoop().schedule(() -> {
+            if (!channel.isActive()) {
+                return;
+            }
+            sendPyRpc(user, buildClientLoadAddonsFinished());
+            ViaBedrock.getPlatform().getLogger().info("[PY_RPC] sent ClientLoadAddonsFinishedFromGac");
+        }, ADDONS_FINISHED_DELAY_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
     }
 
     private static boolean isModEventS2C(final byte[] data) {

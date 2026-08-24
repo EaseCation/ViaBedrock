@@ -19,3 +19,15 @@ public class ModUiLifecycleStorage extends StoredObject {
     }
 
 }
+
+/**
+ * One-shot flag so {@code ClientLoadAddonsFinishedFromGac} is not re-sent on
+ * PLAY_STATUS PlayerSpawn reloads of the same connection.
+ */
+class NetEaseAddonsFinishedStorage extends StoredObject {
+
+    NetEaseAddonsFinishedStorage(final UserConnection user) {
+        super(user);
+    }
+
+}

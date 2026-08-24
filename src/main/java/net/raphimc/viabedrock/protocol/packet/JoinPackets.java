@@ -49,6 +49,7 @@ import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.api.util.StringUtil;
 import net.raphimc.viabedrock.api.util.TextUtil;
 import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
+import net.raphimc.viabedrock.experimental.pyrpc.PyRpcDispatcherModule;
 import net.raphimc.viabedrock.experimental.resourcepack.ResourcePackModule;
 import net.raphimc.viabedrock.platform.ViaBedrockConfig;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
@@ -211,6 +212,7 @@ public class JoinPackets {
                         setLocalPlayerAsInitialized.write(BedrockTypes.UNSIGNED_VAR_LONG, clientPlayer.runtimeId()); // entity runtime id
                         setLocalPlayerAsInitialized.scheduleSendToServer(BedrockProtocol.class);
                         startNetEaseLatencyHeartbeat(wrapper.user());
+                        PyRpcDispatcherModule.scheduleClientLoadAddonsFinished(wrapper.user());
                     } else {
                         wrapper.setPacketType(ClientboundPackets26_1.DISCONNECT);
                         writePlayStatusKickMessage(wrapper, status);
