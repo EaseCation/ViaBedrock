@@ -212,6 +212,8 @@ public enum ClientboundBedrockPackets implements ClientboundPacketType {
     VOXEL_SHAPES(MinecraftPacketIds.VoxelShapesPacket.getValue()),
     CAMERA_SPLINE(MinecraftPacketIds.CameraSpline.getValue()),
     CAMERA_AIM_ASSIST_ACTOR_PRIORITY(MinecraftPacketIds.CameraAimAssistActorPriority.getValue()),
+    REFRESH_ENTITLEMENTS(MinecraftPacketIds.RefreshEntitlementsPacket.getValue()),
+    RESOURCE_PACKS_READY_FOR_VALIDATION(MinecraftPacketIds.ResourcePacksReadyForValidation.getValue()),
     LOCATOR_BAR(MinecraftPacketIds.LocatorBarPacket.getValue()),
     SYNC_WORLD_CLOCKS(MinecraftPacketIds.SyncWorldClocks.getValue()),
     ATTRIBUTE_LAYER_SYNC(MinecraftPacketIds.ClientboundAttributeLayerSyncPacket.getValue()),

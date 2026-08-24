@@ -145,6 +145,10 @@ public class UnhandledPackets {
         // exist in the pool; cancel them so leftover bytes cannot kick Java.
         protocol.cancelClientbound(ClientboundBedrockPackets.PHOTO_INFO_REQUEST);
         protocol.cancelClientbound(ClientboundBedrockPackets.CLIENT_CHEAT_ABILITY);
+        // MOT ProtocolInfo leftover IDs that exist in MinecraftPacketIds but
+        // have no Java mapping. Cancel so an unknown ID cannot abort a batch.
+        protocol.cancelClientbound(ClientboundBedrockPackets.REFRESH_ENTITLEMENTS);
+        protocol.cancelClientbound(ClientboundBedrockPackets.RESOURCE_PACKS_READY_FOR_VALIDATION);
         protocol.cancelClientbound(ClientboundBedrockPackets.COMPRESSED_BIOME_DEFINITION_LIST);
         protocol.cancelClientbound(ClientboundBedrockPackets.SET_MOVEMENT_AUTHORITY);
         protocol.cancelClientbound(ClientboundBedrockPackets.PARTY_CHANGED);

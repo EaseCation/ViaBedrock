@@ -79,7 +79,7 @@ language: ""
 netease:
   enabled: false
   protocol-version: 860
-  game-version: "1.21.124"
+  game-version: "1.21.124_NetEase"
   raknet-protocol-version: 8
 # Shared secret for ViaProxy authentication bridge.
 # When set, generates HMAC-signed identity tokens in the skin JWT.

@@ -48,6 +48,7 @@ import io.netty.buffer.Unpooled;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.experimental.MappingLoadPhase;
+import net.raphimc.viabedrock.experimental.block.CustomBlockDisplayTracker;
 import net.raphimc.viabedrock.api.BedrockProtocolVersion;
 import net.raphimc.viabedrock.api.chunk.blockstate.BlockStateUpgrader;
 import net.raphimc.viabedrock.api.item.ItemUpgrader;
@@ -93,6 +94,7 @@ public class BedrockMappingData extends MappingDataBase {
     private BiMap<String, Integer> javaBlocks;
     private BiMap<BlockState, Integer> javaBlockStates;
     private Set<BedrockBlockState> bedrockBlockStates;
+    private Netease860BlockRuntimeOverlay netease860BlockRuntimeOverlay;
     private Map<BlockState, BlockState> bedrockToJavaBlockStates;
     private Map<String, String> bedrockCustomBlockTags;
     private Map<String, Map<String, Map<String, Set<String>>>> bedrockBlockTraits;
@@ -255,6 +257,16 @@ public class BedrockMappingData extends MappingDataBase {
                 this.bedrockBlockStates.add(bedrockBlockState);
                 bedrockBlockStatesByIdentifier.put(bedrockBlockState.namespacedIdentifier(), bedrockBlockState);
             }
+            this.netease860BlockRuntimeOverlay = Netease860BlockRuntimeOverlay.parse(this.readJson("bedrock/netease_860_block_runtime_ids.json"));
+            final boolean emulateNetEase = ViaBedrock.getConfig() != null && ViaBedrock.getConfig().shouldEmulateNetEaseClient();
+            if (emulateNetEase) {
+                for (Netease860BlockRuntimeOverlay.ExtraState extra : this.netease860BlockRuntimeOverlay.extraStates()) {
+                    final BedrockBlockState extraState = extra.toBedrockBlockState();
+                    if (this.bedrockBlockStates.add(extraState)) {
+                        bedrockBlockStatesByIdentifier.put(extraState.namespacedIdentifier(), extraState);
+                    }
+                }
+            }
 
             final JsonObject bedrockToJavaBlockStateMappingsJson = this.readJson("custom/blockstate_mappings.json");
             this.bedrockToJavaBlockStates = new HashMap<>(bedrockToJavaBlockStateMappingsJson.size());
@@ -269,6 +281,12 @@ public class BedrockMappingData extends MappingDataBase {
                 }
                 if (this.bedrockToJavaBlockStates.put(bedrockBlockState, javaBlockState) != null) {
                     throw new RuntimeException("Duplicate bedrock -> java block state mapping for " + bedrockBlockState.toBlockStateString());
+                }
+            }
+            if (emulateNetEase) {
+                for (Netease860BlockRuntimeOverlay.ExtraState extra : this.netease860BlockRuntimeOverlay.extraStates()) {
+                    final BedrockBlockState extraState = extra.toBedrockBlockState();
+                    this.bedrockToJavaBlockStates.putIfAbsent(extraState, CustomBlockDisplayTracker.PLACEHOLDER_JAVA_BLOCK_STATE);
                 }
             }
 
@@ -1168,6 +1186,10 @@ public class BedrockMappingData extends MappingDataBase {
 
     public Set<BedrockBlockState> getBedrockBlockStates() {
         return this.bedrockBlockStates;
+    }
+
+    public Netease860BlockRuntimeOverlay getNetease860BlockRuntimeOverlay() {
+        return this.netease860BlockRuntimeOverlay != null ? this.netease860BlockRuntimeOverlay : Netease860BlockRuntimeOverlay.empty();
     }
 
     public Map<BlockState, BlockState> getBedrockToJavaBlockStates() {

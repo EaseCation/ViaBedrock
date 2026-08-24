@@ -128,7 +128,7 @@ Here is an overview of the current and planned features in ViaBedrock.
 Some features are experimental, which means they are almost certainly not fully stable/tested and may cause unexpected issues. To enable those features set `enable-experimental-features` to `true` in the config file.
 
 * Block placing
-* Item use
+* Item use (NetEase 860: food/potion/milk/ominous, bow/crossbow/trident/spear/spyglass, shield-as-sneak, projectiles, empty/filled buckets, boats, lily pads, frog spawn, custom consumable finish)
 * Entity metadata
 * Some item data
 

@@ -70,6 +70,10 @@ class NeteasePacketLayoutTest {
         assertEquals(ClientboundBedrockPackets.UPDATE_SOUND_DATA, ClientboundBedrockPackets.getPacket(348));
         assertEquals(ClientboundBedrockPackets.SEND_PARTY_DESTINATION_COOKIE, ClientboundBedrockPackets.getPacket(349));
         assertEquals(ClientboundBedrockPackets.PARTY_DESTINATION_COOKIE_RESPONSE, ClientboundBedrockPackets.getPacket(350));
+        assertEquals(305, ClientboundBedrockPackets.REFRESH_ENTITLEMENTS.getId());
+        assertEquals(340, ClientboundBedrockPackets.RESOURCE_PACKS_READY_FOR_VALIDATION.getId());
+        assertEquals(ClientboundBedrockPackets.REFRESH_ENTITLEMENTS, ClientboundBedrockPackets.getPacket(305));
+        assertEquals(ClientboundBedrockPackets.RESOURCE_PACKS_READY_FOR_VALIDATION, ClientboundBedrockPackets.getPacket(340));
     }
 
     @Test

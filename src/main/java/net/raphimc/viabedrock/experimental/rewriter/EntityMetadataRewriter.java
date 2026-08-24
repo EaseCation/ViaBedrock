@@ -840,7 +840,8 @@ public class EntityMetadataRewriter {
         final boolean visible = ItemUseSemantics.javaUsingVisible(
                 clientPlayer.isUsingItem(),
                 isConsumableUseItem(clientPlayer, itemRewriter),
-                clientPlayer.usingItemTicks()
+                clientPlayer.usingItemTicks(),
+                consumableUseTicks(clientPlayer, itemRewriter)
         );
         return localPlayerLivingFlags(bedrockFlags, visible, visible ? clientPlayer.usingItemHand() : null);
     }
@@ -853,6 +854,16 @@ public class EntityMetadataRewriter {
         final String identifier = itemRewriter.bedrockIdentifier(snapshot.item());
         final Set<String> itemTags = identifier != null ? BedrockProtocol.MAPPINGS.getBedrockItemTags().get(identifier) : null;
         return ItemUseSemantics.isConsumableUseItem(identifier, itemTags, itemRewriter.itemUseDefinition(snapshot.item()));
+    }
+
+    private static int consumableUseTicks(final ClientPlayerEntity clientPlayer, final ItemRewriter itemRewriter) {
+        final ClientPlayerEntity.ItemUseSnapshot snapshot = clientPlayer.itemUseSnapshot();
+        if (snapshot == null || itemRewriter == null) {
+            return -1;
+        }
+        final String identifier = itemRewriter.bedrockIdentifier(snapshot.item());
+        final Set<String> itemTags = identifier != null ? BedrockProtocol.MAPPINGS.getBedrockItemTags().get(identifier) : null;
+        return ItemUseSemantics.consumableUseTicks(identifier, itemTags, itemRewriter.itemUseDefinition(snapshot.item()));
     }
 
     public static byte localPlayerLivingFlags(final Set<ActorFlags> bedrockFlags, final boolean usingItem, final InteractionHand hand) {

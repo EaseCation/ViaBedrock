@@ -92,6 +92,14 @@ class ItemUseSemanticsTest {
                 ItemUseSemantics.releaseAction("minecraft:apple", Set.of("minecraft:is_food"), null, 30, true));
         assertEquals(ItemReleaseInventoryTransaction_ActionType.Use,
                 ItemUseSemantics.releaseAction("minecraft:apple", Set.of("minecraft:is_food"), null, 31, true));
+        assertEquals(16, ItemUseSemantics.consumableUseTicks("minecraft:dried_kelp", Set.of("minecraft:is_food"), null));
+        assertEquals(ItemReleaseInventoryTransaction_ActionType.Release,
+                ItemUseSemantics.releaseAction("minecraft:dried_kelp", Set.of("minecraft:is_food"), null, 14, true));
+        assertEquals(ItemReleaseInventoryTransaction_ActionType.Use,
+                ItemUseSemantics.releaseAction("minecraft:dried_kelp", Set.of("minecraft:is_food"), null, 15, true));
+        assertEquals(32, ItemUseSemantics.consumableUseTicks("minecraft:honey_bottle", Set.of("minecraft:is_food"), null));
+        assertTrue(ItemUseSemantics.javaUsingVisible(true, true, 15, 16));
+        assertFalse(ItemUseSemantics.javaUsingVisible(true, true, 16, 16));
     }
 
     @Test
@@ -126,6 +134,11 @@ class ItemUseSemanticsTest {
         assertFalse(ItemUseSemantics.sendConsumableFinishTransaction(true, true));
         assertTrue(ItemUseSemantics.sendConsumableFinishTransaction(false, true));
         assertFalse(ItemUseSemantics.sendConsumableFinishTransaction(true, false));
+        assertTrue(ItemUseSemantics.motAutoCompletesConsumable("minecraft:apple", Set.of("minecraft:is_food")));
+        assertTrue(ItemUseSemantics.motAutoCompletesConsumable("minecraft:potion", null));
+        assertFalse(ItemUseSemantics.motAutoCompletesConsumable("easecation:stackable_potion_heal", null));
+        assertFalse(ItemUseSemantics.sendConsumableFinishTransaction(true, true, true));
+        assertTrue(ItemUseSemantics.sendConsumableFinishTransaction(true, true, false));
         assertFalse(ItemUseSemantics.delayReleaseAfterConsumableFinish(true, true));
         assertTrue(ItemUseSemantics.delayReleaseAfterConsumableFinish(false, true));
         assertFalse(ItemUseSemantics.delayReleaseAfterConsumableFinish(true, false));
@@ -236,6 +249,17 @@ class ItemUseSemanticsTest {
         assertEquals(82, ItemUseSemantics.riptideDurationTicks(0));
         assertTrue(ItemUseSemantics.dropDuplicateAirClickAfterUseOn(true, "minecraft:firework_rocket", true));
         assertFalse(ItemUseSemantics.dropDuplicateAirClickAfterUseOn(true, "minecraft:goat_horn", true));
+        assertTrue(ItemUseSemantics.isFilledPlaceBucket("minecraft:water_bucket"));
+        assertTrue(ItemUseSemantics.isFilledPlaceBucket("minecraft:powder_snow_bucket"));
+        assertTrue(ItemUseSemantics.isEmptyPickupBucket("minecraft:bucket"));
+        assertTrue(ItemUseSemantics.isWaterSurfacePlaceItem("minecraft:oak_boat", Set.of("minecraft:boat")));
+        assertTrue(ItemUseSemantics.isWaterSurfacePlaceItem("minecraft:waterlily", null));
+        assertTrue(ItemUseSemantics.isWaterSurfacePlaceItem("minecraft:frog_spawn", null));
+        assertTrue(ItemUseSemantics.isAirClickBlockPlaceItem("minecraft:lava_bucket", null));
+        assertTrue(ItemUseSemantics.dropDuplicateAirClickAfterUseOn(true, "minecraft:water_bucket", true));
+        assertTrue(ItemUseSemantics.dropDuplicateAirClickAfterUseOn(true, "minecraft:oak_boat", Set.of("minecraft:boat"), true));
+        assertTrue(ItemUseSemantics.dropDuplicateAirClickAfterUseOn(true, "minecraft:bucket", true));
+        assertFalse(ItemUseSemantics.dropDuplicateAirClickAfterUseOn(true, "minecraft:oak_boat", Set.of("minecraft:boat"), false));
         assertFalse(ItemUseSemantics.shouldStartContinuousUseFromUseItemOn(true));
         assertTrue(ItemUseSemantics.shouldStartContinuousUseFromUseItemOn(false));
         final com.viaversion.nbt.tag.CompoundTag ench = new com.viaversion.nbt.tag.CompoundTag();

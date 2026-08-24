@@ -32,6 +32,7 @@ import net.raphimc.viabedrock.api.model.BedrockBlockState;
 import net.raphimc.viabedrock.api.model.BlockState;
 import net.raphimc.viabedrock.api.util.HashedPaletteComparator;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
+import net.raphimc.viabedrock.protocol.data.Netease860BlockRuntimeOverlay;
 import net.raphimc.viabedrock.experimental.custommapping.CustomMappingSyncStorage;
 import net.raphimc.viabedrock.experimental.custommapping.RuntimeProjection;
 import net.raphimc.viabedrock.experimental.custommapping.RuntimeProjectionBuilder;
@@ -94,12 +95,39 @@ public class BlockStateRewriter implements StorableObject {
         final Map<String, String> missingCustomRuntimeExamples = new HashMap<>();
         final Map<String, Integer> missingVanillaRuntimeCounts = new HashMap<>();
         final Map<String, String> missingVanillaRuntimeExamples = new HashMap<>();
+        final boolean emulateNetEase = ViaBedrock.getConfig() != null && ViaBedrock.getConfig().shouldEmulateNetEaseClient();
+        final Netease860BlockRuntimeOverlay netease860Overlay = emulateNetEase && !hashedRuntimeBlockIds
+                ? BedrockProtocol.MAPPINGS.getNetease860BlockRuntimeOverlay()
+                : Netease860BlockRuntimeOverlay.empty();
+        int nextCustomSequentialId = netease860Overlay.nextCustomSequentialId();
 
         for (int i = 0; i < bedrockBlockStates.size(); i++) {
             final BedrockBlockState bedrockBlockState = bedrockBlockStates.get(i);
-            int bedrockId = hashedRuntimeBlockIds ? bedrockBlockState.blockStateTag().getIntTag("network_id").asInt() : i;
+            int bedrockId;
+            if (hashedRuntimeBlockIds) {
+                final var networkId = bedrockBlockState.blockStateTag().getIntTag("network_id");
+                if (networkId == null) {
+                    throw new IllegalStateException("Missing network_id for hashed block state " + bedrockBlockState.toBlockStateString());
+                }
+                bedrockId = networkId.asInt();
+            } else if (!netease860Overlay.isEmpty()) {
+                final var networkId = bedrockBlockState.blockStateTag().getIntTag("network_id");
+                if (networkId != null) {
+                    final int sequentialId = netease860Overlay.sequentialRuntimeId(networkId.asInt());
+                    bedrockId = sequentialId >= 0 ? sequentialId : nextCustomSequentialId++;
+                } else {
+                    bedrockId = nextCustomSequentialId++;
+                }
+            } else {
+                bedrockId = i;
+            }
             if (hashedRuntimeBlockIds && this.blockStateMappings.containsValue(bedrockId)) {
                 bedrockId++; // Bedrock client increments the hash in case a collision occurs
+            } else if (!hashedRuntimeBlockIds && !netease860Overlay.isEmpty() && this.blockStateMappings.containsValue(bedrockId)) {
+                while (this.blockStateMappings.containsValue(nextCustomSequentialId)) {
+                    nextCustomSequentialId++;
+                }
+                bedrockId = nextCustomSequentialId++;
             }
 
             this.blockStateMappings.put(bedrockBlockState, bedrockId);

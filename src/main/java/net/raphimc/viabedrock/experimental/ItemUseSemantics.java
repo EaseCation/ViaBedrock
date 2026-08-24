@@ -20,12 +20,21 @@ package net.raphimc.viabedrock.experimental;
 import net.raphimc.viabedrock.api.resourcepack.definition.ItemDefinitions.ItemUseDefinition;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemReleaseInventoryTransaction_ActionType;
 
+import java.util.Map;
 import java.util.Set;
 
 public final class ItemUseSemantics {
 
     private static final int DEFAULT_CONSUMABLE_USE_TICKS = 32;
+    private static final int MOT_DRIED_KELP_EATING_TICKS = 16;
     private static final String FOOD_ITEM_TAG = "minecraft:is_food";
+    private static final String BOAT_ITEM_TAG = "minecraft:boat";
+    private static final Map<String, Integer> MOT_CONSUMABLE_USE_TICKS = Map.of(
+            "minecraft:potion", DEFAULT_CONSUMABLE_USE_TICKS,
+            "minecraft:milk_bucket", DEFAULT_CONSUMABLE_USE_TICKS,
+            "minecraft:ominous_bottle", DEFAULT_CONSUMABLE_USE_TICKS,
+            "minecraft:dried_kelp", MOT_DRIED_KELP_EATING_TICKS
+    );
     private static final Set<String> CONSUME_ON_RELEASE_ITEMS = Set.of(
             "minecraft:potion",
             "minecraft:milk_bucket",
@@ -320,6 +329,9 @@ public final class ItemUseSemantics {
         if (DUPLICATE_CLICK_AIR_AFTER_USE_ON.contains(identifier)) {
             return true;
         }
+        if (isAirClickBlockPlaceItem(identifier, itemTags) || isEmptyPickupBucket(identifier) || isGlassBottle(identifier)) {
+            return true;
+        }
         return itemTags != null && itemTags.contains(ARMOR_ITEM_TAG);
     }
 
@@ -377,6 +389,45 @@ public final class ItemUseSemantics {
                 || "minecraft:pufferfish_bucket".equals(identifier)
                 || "minecraft:axolotl_bucket".equals(identifier)
                 || "minecraft:tadpole_bucket".equals(identifier);
+    }
+
+    static boolean isEmptyPickupBucket(final String identifier) {
+        return "minecraft:bucket".equals(identifier);
+    }
+
+    static boolean isGlassBottle(final String identifier) {
+        return "minecraft:glass_bottle".equals(identifier);
+    }
+
+    /**
+     * Java {@code BoatItem} / {@code PlaceOnWaterBlockItem} ray-miss as {@code USE_ITEM}.
+     * MOT only places from {@code onActivate} (CLICK_BLOCK) against the water surface.
+     */
+    static boolean isWaterSurfacePlaceItem(final String identifier, final Set<String> itemTags) {
+        if (identifier == null) {
+            return false;
+        }
+        if ("minecraft:waterlily".equals(identifier)
+                || "minecraft:lily_pad".equals(identifier)
+                || "minecraft:frog_spawn".equals(identifier)
+                || "minecraft:frogspawn".equals(identifier)) {
+            return true;
+        }
+        return itemTags != null && itemTags.contains(BOAT_ITEM_TAG);
+    }
+
+    static boolean isAirClickBlockPlaceItem(final String identifier, final Set<String> itemTags) {
+        return isFilledPlaceBucket(identifier) || isWaterSurfacePlaceItem(identifier, itemTags);
+    }
+
+    /**
+     * MOT {@code Item.java} defaults {@code canRelease()==false} / {@code getUseDuration()==0}.
+     * Resource-pack {@code ItemUseDefinition} therefore never reaches {@code processAutoCompletion}
+     * unless ViaBedrock sends a duration-ready second CLICK_AIR. Vanilla MOT foods/potions still
+     * auto-complete and must not get that extra click.
+     */
+    static boolean motAutoCompletesConsumable(final String identifier, final Set<String> itemTags) {
+        return CONSUME_ON_RELEASE_ITEMS.contains(identifier) || isFood(itemTags);
     }
 
     /**
@@ -453,7 +504,15 @@ public final class ItemUseSemantics {
      * using-state stays true.
      */
     static boolean sendConsumableFinishTransaction(final boolean emulateNetEase, final boolean consumable) {
-        return consumable && !emulateNetEase;
+        return sendConsumableFinishTransaction(emulateNetEase, consumable, true);
+    }
+
+    static boolean sendConsumableFinishTransaction(final boolean emulateNetEase, final boolean consumable,
+                                                   final boolean motAutoCompletes) {
+        if (!consumable) {
+            return false;
+        }
+        return !emulateNetEase || !motAutoCompletes;
     }
 
     /**
@@ -505,7 +564,13 @@ public final class ItemUseSemantics {
     }
 
     static boolean localUsingTimedOut(final boolean emulateNetEase, final boolean consumable, final int usingTicks) {
-        return emulateNetEase && consumable && usingTicks >= DEFAULT_CONSUMABLE_USE_TICKS + 16;
+        return localUsingTimedOut(emulateNetEase, consumable, usingTicks, DEFAULT_CONSUMABLE_USE_TICKS);
+    }
+
+    static boolean localUsingTimedOut(final boolean emulateNetEase, final boolean consumable, final int usingTicks,
+                                      final int useDurationTicks) {
+        final int duration = useDurationTicks > 0 ? useDurationTicks : DEFAULT_CONSUMABLE_USE_TICKS;
+        return emulateNetEase && consumable && usingTicks >= duration + 16;
     }
 
     /**
@@ -514,7 +579,28 @@ public final class ItemUseSemantics {
      * client already released the item.
      */
     public static boolean javaUsingVisible(final boolean usingItem, final boolean consumable, final int usingTicks) {
-        return usingItem && (!consumable || usingTicks < DEFAULT_CONSUMABLE_USE_TICKS);
+        return javaUsingVisible(usingItem, consumable, usingTicks, DEFAULT_CONSUMABLE_USE_TICKS);
+    }
+
+    public static boolean javaUsingVisible(final boolean usingItem, final boolean consumable, final int usingTicks,
+                                           final int useDurationTicks) {
+        final int duration = useDurationTicks > 0 ? useDurationTicks : DEFAULT_CONSUMABLE_USE_TICKS;
+        return usingItem && (!consumable || usingTicks < duration);
+    }
+
+    public static int consumableUseTicks(final String identifier, final Set<String> itemTags, final ItemUseDefinition itemUse) {
+        if (identifier != null && MOT_CONSUMABLE_USE_TICKS.containsKey(identifier)) {
+            return MOT_CONSUMABLE_USE_TICKS.get(identifier);
+        }
+        if (itemUse != null) {
+            return itemUse.useDurationTicks();
+        }
+        if (isFood(itemTags) || CONSUME_ON_RELEASE_ITEMS.contains(identifier)) {
+            // MOT Food.eatingTick is 31; NetEase finishReadyTicks subtracts 1 so apple
+            // auto-completes at 31. Dried kelp is overridden above to 16.
+            return DEFAULT_CONSUMABLE_USE_TICKS;
+        }
+        return -1;
     }
 
     /**
@@ -539,13 +625,6 @@ public final class ItemUseSemantics {
         return useDurationTicks > 0 && usingTicks >= finishReadyTicks(useDurationTicks, emulateNetEase)
                 ? ItemReleaseInventoryTransaction_ActionType.Use
                 : ItemReleaseInventoryTransaction_ActionType.Release;
-    }
-
-    private static int consumableUseTicks(final String identifier, final Set<String> itemTags, final ItemUseDefinition itemUse) {
-        if (CONSUME_ON_RELEASE_ITEMS.contains(identifier) || isFood(itemTags)) {
-            return DEFAULT_CONSUMABLE_USE_TICKS;
-        }
-        return itemUse != null ? itemUse.useDurationTicks() : -1;
     }
 
     /**

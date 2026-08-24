@@ -566,149 +566,71 @@ public class ExperimentalFeatures {
         );
     }
 
-    // --- Empty bucket / glass bottle fluid interaction (Java USE_ITEM -> Bedrock CLICK_BLOCK) ---
+    // --- Java USE_ITEM air-click items that MOT only handles as CLICK_BLOCK ---
 
-    private static final String EMPTY_BUCKET_IDENTIFIER = "minecraft:bucket";
-    private static final String GLASS_BOTTLE_IDENTIFIER = "minecraft:glass_bottle";
-    private static final double FLUID_REACH_SURVIVAL = 4.5D;
-    private static final double FLUID_REACH_CREATIVE = 5.0D;
-
-    private enum Fluid {
-        WATER,
-        LAVA
-    }
-
-    private record FluidHitResult(BlockPosition pos, int faceInt, BlockFace face, Position3f clickPosition) {
-    }
-
-    /**
-     * Java sends a plain USE_ITEM (click air) when an empty bucket / glass bottle is used on a fluid: the
-     * crosshair ray misses non-pickable fluids, so the client falls back to {@code BucketItem#use}, which
-     * does its own SOURCE_ONLY fluid ray trace server-side. A Bedrock server (client authoritative) instead
-     * expects the client to resolve the targeted fluid source and send a CLICK_BLOCK ItemUseTransaction.
-     * Returns the set of fluids the held item can pick up, or {@code null} if it is not such an item.
-     */
-    private static Set<Fluid> fluidInteractionItem(final ItemRewriter itemRewriter, final BedrockItem item) {
-        final String identifier = itemRewriter.bedrockIdentifier(item);
-        if (EMPTY_BUCKET_IDENTIFIER.equals(identifier)) {
-            return Set.of(Fluid.WATER, Fluid.LAVA);
-        }
-        if (GLASS_BOTTLE_IDENTIFIER.equals(identifier)) {
-            return Set.of(Fluid.WATER);
-        }
-        return null;
-    }
-
-    private static boolean isLiquidSource(final BlockStateRewriter blockStateRewriter, final int bedrockBlockStateId, final Set<Fluid> accepted) {
-        final BlockState state = blockStateRewriter.blockState(bedrockBlockStateId);
-        if (state == null) {
-            return false;
-        }
-        final String identifier = state.identifier();
-        // Bedrock represents both still and flowing liquids with a liquid_depth property; depth 0 is the full
-        // "source" level. Pooled liquids on servers are frequently flowing_water/flowing_lava even at depth 0,
-        // and Nukkit's ItemBucket fills any block where isLava()/isWaterSource() && isLiquidSource() (== depth 0),
-        // so we must accept the flowing_* identifiers too (not just water/lava).
-        final boolean isWater = "water".equals(identifier) || "flowing_water".equals(identifier);
-        final boolean isLava = "lava".equals(identifier) || "flowing_lava".equals(identifier);
-        final boolean matches = (isWater && accepted.contains(Fluid.WATER))
-                || (isLava && accepted.contains(Fluid.LAVA));
-        if (!matches) {
-            return false;
-        }
-        final String liquidDepth = state.properties().get("liquid_depth");
-        return liquidDepth == null || "0".equals(liquidDepth); // depth 0 = full source block, matching Java SOURCE_ONLY and Nukkit getDamage()==0
-    }
-
-    /**
-     * Voxel ray trace (Amanatides &amp; Woo) from the player's eye along their look direction, returning the
-     * first accepted fluid source block within reach, or {@code null} if none is hit.
-     */
-    private static FluidHitResult raytraceFluidSource(final UserConnection user, final ClientPlayerEntity clientPlayer, final float yaw, final float pitch, final Set<Fluid> accepted) {
+    private static ItemUseAirClickTarget.WorldView airClickWorld(final UserConnection user) {
         final ChunkTracker chunkTracker = user.get(ChunkTracker.class);
         final BlockStateRewriter blockStateRewriter = user.get(BlockStateRewriter.class);
-
-        // NOTE: ClientPlayerEntity.position() already stores the EYE position (feet y + eyeOffset), so we must
-        // NOT add eyeOffset again here.
-        final Position3f eye = clientPlayer.position();
-        final double yawRad = Math.toRadians(yaw);
-        final double pitchRad = Math.toRadians(pitch);
-        final double dx = -Math.sin(yawRad) * Math.cos(pitchRad);
-        final double dy = -Math.sin(pitchRad);
-        final double dz = Math.cos(yawRad) * Math.cos(pitchRad);
-        final double reach = clientPlayer.javaGameMode() == GameMode.CREATIVE ? FLUID_REACH_CREATIVE : FLUID_REACH_SURVIVAL;
-
-        final double ox = eye.x();
-        final double oy = eye.y();
-        final double oz = eye.z();
-
-        int bx = (int) Math.floor(ox);
-        int by = (int) Math.floor(oy);
-        int bz = (int) Math.floor(oz);
-
-        final int stepX = dx > 0 ? 1 : (dx < 0 ? -1 : 0);
-        final int stepY = dy > 0 ? 1 : (dy < 0 ? -1 : 0);
-        final int stepZ = dz > 0 ? 1 : (dz < 0 ? -1 : 0);
-
-        final double tDeltaX = dx != 0 ? Math.abs(1.0 / dx) : Double.MAX_VALUE;
-        final double tDeltaY = dy != 0 ? Math.abs(1.0 / dy) : Double.MAX_VALUE;
-        final double tDeltaZ = dz != 0 ? Math.abs(1.0 / dz) : Double.MAX_VALUE;
-
-        double tMaxX = dx != 0 ? ((dx > 0 ? bx + 1 : bx) - ox) / dx : Double.MAX_VALUE;
-        double tMaxY = dy != 0 ? ((dy > 0 ? by + 1 : by) - oy) / dy : Double.MAX_VALUE;
-        double tMaxZ = dz != 0 ? ((dz > 0 ? bz + 1 : bz) - oz) / dz : Double.MAX_VALUE;
-
-        int crossedAxis = -1; // 0=x, 1=y, 2=z, -1 = origin block (eye already inside it)
-        int crossedStep = 0;
-        double entryT = 0.0;
-
-        for (int i = 0; i < 256; i++) {
-            final BlockPosition pos = new BlockPosition(bx, by, bz);
-            if (isLiquidSource(blockStateRewriter, chunkTracker.getBlockState(pos), accepted)) {
-                final Direction direction = switch (crossedAxis) {
-                    case 0 -> crossedStep > 0 ? Direction.WEST : Direction.EAST;
-                    case 1 -> crossedStep > 0 ? Direction.DOWN : Direction.UP;
-                    case 2 -> crossedStep > 0 ? Direction.NORTH : Direction.SOUTH;
-                    default -> Direction.UP; // eye inside the source; face is only cosmetic for the fill
-                };
-                final Position3f clickPosition = new Position3f(
-                        clamp01((float) (ox + dx * entryT - bx)),
-                        clamp01((float) (oy + dy * entryT - by)),
-                        clamp01((float) (oz + dz * entryT - bz))
-                );
-                return new FluidHitResult(pos, direction.verticalId(), direction.blockFace(), clickPosition);
+        return new ItemUseAirClickTarget.WorldView() {
+            @Override
+            public int blockStateId(final int layer, final BlockPosition position) {
+                return chunkTracker.getBlockState(layer, position);
             }
 
-            if (tMaxX <= tMaxY && tMaxX <= tMaxZ) {
-                if (tMaxX > reach) break;
-                entryT = tMaxX;
-                bx += stepX;
-                tMaxX += tDeltaX;
-                crossedAxis = 0;
-                crossedStep = stepX;
-            } else if (tMaxY <= tMaxZ) {
-                if (tMaxY > reach) break;
-                entryT = tMaxY;
-                by += stepY;
-                tMaxY += tDeltaY;
-                crossedAxis = 1;
-                crossedStep = stepY;
-            } else {
-                if (tMaxZ > reach) break;
-                entryT = tMaxZ;
-                bz += stepZ;
-                tMaxZ += tDeltaZ;
-                crossedAxis = 2;
-                crossedStep = stepZ;
+            @Override
+            public BlockState blockState(final int bedrockBlockStateId) {
+                return blockStateRewriter.blockState(bedrockBlockStateId);
             }
-        }
-        return null;
+
+            @Override
+            public int airId() {
+                return chunkTracker.bedrockAirId();
+            }
+        };
     }
 
-    private static float clamp01(final float value) {
-        if (value < 0F) return 0F;
-        if (value > 1F) return 1F;
-        return value;
+    private static double airClickReach(final ClientPlayerEntity clientPlayer) {
+        return clientPlayer.javaGameMode() == GameMode.CREATIVE
+                ? ItemUseAirClickTarget.REACH_CREATIVE
+                : ItemUseAirClickTarget.REACH_SURVIVAL;
+    }
+
+    private static boolean trySendAirClickAsBlockUse(final UserConnection user, final ClientPlayerEntity clientPlayer,
+                                                     final ItemUseHandContext handContext, final ItemRewriter itemRewriter,
+                                                     final InventoryTransactionRewriter inventoryTransactionRewriter,
+                                                     final float yaw, final float pitch, final int sequence) {
+        final String identifier = itemRewriter.bedrockIdentifier(handContext.item());
+        if (identifier == null) {
+            return false;
+        }
+        final Set<String> itemTags = BedrockProtocol.MAPPINGS.getBedrockItemTags().get(identifier);
+        final ItemUseAirClickTarget.WorldView world = airClickWorld(user);
+        final double reach = airClickReach(clientPlayer);
+        ItemUseAirClickTarget.Hit hit = null;
+        final Set<ItemUseAirClickTarget.Fluid> pickupFluids = ItemUseAirClickTarget.pickupFluids(identifier);
+        if (pickupFluids != null) {
+            hit = ItemUseAirClickTarget.raytraceFluidSource(world, clientPlayer.position(), yaw, pitch, reach, pickupFluids);
+        }
+        if (hit == null) {
+            hit = ItemUseAirClickTarget.raytracePlaceClick(world, clientPlayer.position(), yaw, pitch, reach, identifier, itemTags);
+        }
+        if (hit == null) {
+            return false;
+        }
+        sendItemUseOnBlock(
+                user,
+                clientPlayer,
+                handContext,
+                inventoryTransactionRewriter,
+                user.get(ChunkTracker.class),
+                hit.pos(),
+                hit.faceInt(),
+                hit.face(),
+                hit.clickPosition(),
+                hit.insideBlock(),
+                sequence
+        );
+        return true;
     }
 
     /**
@@ -1150,7 +1072,13 @@ public class ExperimentalFeatures {
         if (snapshot == null || clientPlayer.isConsumableFinishSent()) {
             return;
         }
-        if (!ItemUseSemantics.sendConsumableFinishTransaction(ViaBedrock.getConfig().shouldEmulateNetEaseClient(), true)) {
+        final ItemRewriter itemRewriter = user.get(ItemRewriter.class);
+        final String identifier = itemRewriter.bedrockIdentifier(snapshot.item());
+        final Set<String> itemTags = identifier != null ? BedrockProtocol.MAPPINGS.getBedrockItemTags().get(identifier) : null;
+        if (!ItemUseSemantics.sendConsumableFinishTransaction(
+                ViaBedrock.getConfig().shouldEmulateNetEaseClient(),
+                true,
+                ItemUseSemantics.motAutoCompletesConsumable(identifier, itemTags))) {
             return;
         }
         sendUseItemTransaction(user, inventoryTransactionRewriter, createHandContext(snapshot), clientPlayer, false);
@@ -1308,14 +1236,27 @@ public class ExperimentalFeatures {
             }
             if (ItemUseSemantics.keepLocalUsingAfterConsumableFinish(ViaBedrock.getConfig().shouldEmulateNetEaseClient(), isConsumableUseItem(itemRewriter, selectedItem), clientPlayer.isConsumableFinishSent())) {
                 final ItemUseSnapshot snapshot = clientPlayer.itemUseSnapshot();
-                if (snapshot != null && (ItemUseSemantics.consumableConsumedByServer(
-                        snapshot.item().identifier(),
-                        snapshot.item().amount(),
-                        selectedItem.isEmpty(),
-                        selectedItem.identifier(),
-                        selectedItem.amount()
-                ) || ItemUseSemantics.localUsingTimedOut(true, true, clientPlayer.usingItemTicks()))) {
-                    stopUsingItem(wrapper.user(), clientPlayer);
+                if (snapshot != null) {
+                    final String snapshotIdentifier = itemRewriter.bedrockIdentifier(snapshot.item());
+                    final Set<String> snapshotTags = snapshotIdentifier != null
+                            ? BedrockProtocol.MAPPINGS.getBedrockItemTags().get(snapshotIdentifier)
+                            : null;
+                    if (ItemUseSemantics.consumableConsumedByServer(
+                            snapshot.item().identifier(),
+                            snapshot.item().amount(),
+                            selectedItem.isEmpty(),
+                            selectedItem.identifier(),
+                            selectedItem.amount())
+                            || ItemUseSemantics.localUsingTimedOut(
+                                    true,
+                                    true,
+                                    clientPlayer.usingItemTicks(),
+                                    ItemUseSemantics.consumableUseTicks(
+                                            snapshotIdentifier,
+                                            snapshotTags,
+                                            itemRewriter.itemUseDefinition(snapshot.item())))) {
+                        stopUsingItem(wrapper.user(), clientPlayer);
+                    }
                 }
             }
         });
@@ -1366,21 +1307,12 @@ public class ExperimentalFeatures {
                 return;
             }
 
-            // Empty bucket / glass bottle on a fluid: Java sends a plain USE_ITEM (click air) and relies on a
-            // server-side SOURCE_ONLY ray trace, which a client authoritative Bedrock server (e.g. Nukkit's
-            // ItemBucket/ItemGlassBottle, which only implement onActivate) never performs. Resolve the targeted
-            // fluid source here and translate to a CLICK_BLOCK ItemUseTransaction like a real Bedrock client.
-            final Set<Fluid> acceptedFluids = fluidInteractionItem(itemRewriter, selectedItem);
-            if (acceptedFluids != null) {
-                final FluidHitResult hit = raytraceFluidSource(wrapper.user(), clientPlayer, yaw, pitch, acceptedFluids);
-                if (hit != null) {
-                    wrapper.cancel();
-                    // insideBlock=true so the deferred ack is keyed on the fluid block itself (water/lava -> air),
-                    // which is exactly where the server's block update lands when the fluid is picked up.
-                    sendItemUseOnBlock(wrapper.user(), clientPlayer, handContext, inventoryTransactionRewriter, wrapper.user().get(ChunkTracker.class), hit.pos(), hit.faceInt(), hit.face(), hit.clickPosition(), true, sequence);
-                    return;
-                }
-                // No fluid source hit: fall through to the normal click-air use (Java would also no-op here).
+            // Java USE_ITEM for empty buckets/bottles, filled buckets, boats and lily pads is an air click.
+            // MOT only runs onActivate from CLICK_BLOCK, so resolve the looked-at block here.
+            // Same-tick USE_ITEM_ON already cancelled above via dropDuplicateAirClickAfterUseOn.
+            if (trySendAirClickAsBlockUse(wrapper.user(), clientPlayer, handContext, itemRewriter, inventoryTransactionRewriter, yaw, pitch, sequence)) {
+                wrapper.cancel();
+                return;
             }
 
             if (isChargedCrossbow(itemRewriter, selectedItem) && handContext.isMainHand()) {

@@ -252,10 +252,21 @@ public class ClientAuthInventoryModule implements FeatureModule {
     }
 
     public static boolean tryHandleSwapHands(final UserConnection user) {
+        return tryHandleSwapHands(user, true);
+    }
+
+    /**
+     * MOT CLICK_AIR / CLICK_BLOCK only read {@code getItemInHand()}. Java offhand
+     * use is promoted by swapping the two slots on MOT, then optionally restoring.
+     * {@code syncJava=false} keeps the Java client showing the original hands.
+     */
+    public static boolean tryHandleSwapHands(final UserConnection user, final boolean syncJava) {
         final InventoryTracker tracker = user.get(InventoryTracker.class);
         if (tracker.getPendingCloseContainer() != null) {
-            PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
-            return true;
+            if (syncJava) {
+                PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
+            }
+            return !syncJava;
         }
 
         final List<InventoryActionData> actions = runOrRollback(
@@ -263,15 +274,19 @@ public class ClientAuthInventoryModule implements FeatureModule {
                 error -> ViaBedrock.getPlatform().getLogger().log(Level.WARNING,
                         "Failed to simulate Java hand swap; rolling back to the authoritative inventory", error));
         if (actions == null) {
-            PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
-            return true;
+            if (syncJava) {
+                PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
+            }
+            return false;
         }
         if (actions.isEmpty()) {
             return true;
         }
         if (!allowsLockedActions(actions)) {
-            PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
-            return true;
+            if (syncJava) {
+                PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
+            }
+            return false;
         }
         final boolean openedForThisAction = needsBedrockPlayerInventoryOpen(tracker, ContainerID.CONTAINER_ID_INVENTORY.getValue());
         if (openedForThisAction) {
@@ -279,14 +294,18 @@ public class ClientAuthInventoryModule implements FeatureModule {
         }
 
         if (!sendPredictedActions(user, actions)) {
-            PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
+            if (syncJava) {
+                PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
+            }
             if (openedForThisAction) {
                 closeTransientBedrockPlayerInventory(tracker);
             }
-            return true;
+            return false;
         }
         applyMirrorUpdates(actions, tracker);
-        PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
+        if (syncJava) {
+            PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
+        }
         // F works with Java inventory still open. Only unwind MOT when this
         // swap was the SAI handshake, not an already-open E screen.
         if (openedForThisAction) {

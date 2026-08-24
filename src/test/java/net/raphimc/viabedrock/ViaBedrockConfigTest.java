@@ -18,6 +18,7 @@ import java.nio.file.Path;
 import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ViaBedrockConfigTest {
 
@@ -84,6 +85,25 @@ class ViaBedrockConfigTest {
         assertEquals("test-secret", config.getRemotePackServiceSecret());
         assertEquals(1500, config.getRemotePackServiceConnectTimeoutMillis());
         assertEquals(9000, config.getRemotePackServiceRequestTimeoutMillis());
+    }
+
+    @Test
+    void neteaseGameVersionDefaultsToMotNetEaseEnumName(@TempDir final Path tempDir) throws Exception {
+        final Path configFile = tempDir.resolve("viabedrock.yml");
+        Files.writeString(configFile, """
+                netease:
+                  enabled: true
+                  protocol-version: 860
+                  raknet-protocol-version: 8
+                """);
+
+        final ViaBedrockConfig config = new ViaBedrockConfig(configFile.toFile(), Logger.getAnonymousLogger());
+        config.reload();
+
+        assertTrue(config.shouldEmulateNetEaseClient());
+        assertEquals(860, config.getNetEaseProtocolVersion());
+        assertEquals(8, config.getNetEaseRakNetProtocolVersion());
+        assertEquals("1.21.124_NetEase", config.getNetEaseGameVersion());
     }
 
 }

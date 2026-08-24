@@ -18,6 +18,11 @@ This file has been dumped from a BDS server using [CloudburstMC/ProxyPass](https
 ### data/bedrock/block_palette.nbt
 [GeyserMC/Geyser](https://github.com/GeyserMC/Geyser/blob/ba17cf2f4b030603bea017e2c30902e2187df340/core/src/main/resources/bedrock/block_palette.1_26_20.nbt)
 
+Hashed `network_id` values match Nukkit-MOT `runtime_block_states_netease_860.dat` (FNV-1a of little-endian `{name, states}`). Sequential MOT runtime ids are **not** this file's hashed-name order.
+
+### data/bedrock/netease_860_block_runtime_ids.json
+Generated from Nukkit-MOT jar resource `runtime_block_states_netease_860.dat` (local dump: `decompiled/jars/Nukkit-MOT-SNAPSHOT.jar`). Maps hashed `network_id` → MOT sequential `runtimeId`, and adds MOT-only `minecraft:micro_block`.
+
 ### data/bedrock/block_sounds.json
 This file has been generated using `BedrockSoundListGenerator` using data from the official bedrock client's assets folder.
 

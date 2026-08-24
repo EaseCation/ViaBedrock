@@ -160,7 +160,7 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
         final ConfigSection netease = this.getSection("netease");
         this.emulateNetEaseClient = getBoolean(netease, "enabled", false);
         this.netEaseProtocolVersion = getInt(netease, "protocol-version", 860);
-        this.netEaseGameVersion = getString(netease, "game-version", "1.21.124");
+        this.netEaseGameVersion = getString(netease, "game-version", "1.21.124_NetEase");
         this.netEaseRakNetProtocolVersion = getInt(netease, "raknet-protocol-version", 8);
         this.enableServerEntityAnimation = this.getBoolean("enable-server-entity-animation", true);
         this.javaSkinFetchTimeout = this.getInt("java-skin-fetch-timeout", 1000);
