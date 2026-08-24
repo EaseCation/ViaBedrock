@@ -32,6 +32,9 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
 
     private static final String DEFAULT_TAB_LIST_HEADER = "%level_name%\n";
     private static final String DEFAULT_TAB_LIST_FOOTER = "\u00A7aViaBedrock \u00A73v%version%\n\u00A77https://github.com/RaphiMC/ViaBedrock";
+    private static final int NETEASE_PROTOCOL_VERSION = 860;
+    private static final String NETEASE_GAME_VERSION = "1.21.124_NetEase";
+    private static final int NETEASE_RAKNET_PROTOCOL_VERSION = 8;
 
     private boolean enableExperimentalFeatures;
     private boolean enableSwordBlockingAnimation;
@@ -159,9 +162,23 @@ public class ViaBedrockConfig extends Config implements net.raphimc.viabedrock.p
         this.viaProxyAuthSecret = this.getString("viaproxy-auth-secret", "");
         final ConfigSection netease = this.getSection("netease");
         this.emulateNetEaseClient = getBoolean(netease, "enabled", false);
-        this.netEaseProtocolVersion = getInt(netease, "protocol-version", 860);
-        this.netEaseGameVersion = getString(netease, "game-version", "1.21.124_NetEase");
-        this.netEaseRakNetProtocolVersion = getInt(netease, "raknet-protocol-version", 8);
+        final int configuredNetEaseProtocol = getInt(netease, "protocol-version", NETEASE_PROTOCOL_VERSION);
+        final String configuredNetEaseGameVersion = getString(netease, "game-version", NETEASE_GAME_VERSION);
+        final int configuredNetEaseRakNetProtocol = getInt(netease, "raknet-protocol-version", NETEASE_RAKNET_PROTOCOL_VERSION);
+        if (this.emulateNetEaseClient) {
+            if (configuredNetEaseProtocol != NETEASE_PROTOCOL_VERSION
+                    || !NETEASE_GAME_VERSION.equals(configuredNetEaseGameVersion)
+                    || configuredNetEaseRakNetProtocol != NETEASE_RAKNET_PROTOCOL_VERSION) {
+                this.logger.warning("NetEase emulation is pinned to protocol 860, GameVersion 1.21.124_NetEase and RakNet 8; ignoring incompatible netease settings");
+            }
+            this.netEaseProtocolVersion = NETEASE_PROTOCOL_VERSION;
+            this.netEaseGameVersion = NETEASE_GAME_VERSION;
+            this.netEaseRakNetProtocolVersion = NETEASE_RAKNET_PROTOCOL_VERSION;
+        } else {
+            this.netEaseProtocolVersion = configuredNetEaseProtocol;
+            this.netEaseGameVersion = configuredNetEaseGameVersion;
+            this.netEaseRakNetProtocolVersion = configuredNetEaseRakNetProtocol;
+        }
         this.enableServerEntityAnimation = this.getBoolean("enable-server-entity-animation", true);
         this.javaSkinFetchTimeout = this.getInt("java-skin-fetch-timeout", 1000);
         final ConfigSection tabList = this.getSection("tab-list");

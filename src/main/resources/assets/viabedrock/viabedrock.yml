@@ -73,9 +73,9 @@ disable-server-blacklist: false
 language: ""
 # NetEase / China Edition client emulation.
 # enabled: pretend to be a NetEase client (RakNet 8 + protocol 860 + NetEase login fields).
-# protocol-version: written into REQUEST_NETWORK_SETTINGS and LOGIN. 0 keeps the Java handshake version.
-# game-version: GameVersion claim in the skin JWT.
-# raknet-protocol-version: used by ViaProxy when connecting to the Bedrock server. 0 keeps the international default.
+# The MOT 1.21.124 NetEase compatibility path is a single protocol tuple.
+# When enabled, ViaBedrock pins these values to protocol 860, GameVersion 1.21.124_NetEase and RakNet 8.
+# The explicit values remain here so generated runtime configs document the required wire versions.
 netease:
   enabled: false
   protocol-version: 860

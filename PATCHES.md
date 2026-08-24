@@ -2,6 +2,20 @@
 
 Protocol truth: `decompiled/nukkit-mot` encode/decode, then `decompiled/nukkitmaster` for PyRpc / ModUI. Do not treat international Bedrock wiki or Geyser palettes as MOT 860.
 
+## 2026-08-24 — Pin NetEase protocol tuple
+
+- **Goal:** `netease.enabled=true` still accepted international protocol / GameVersion / RakNet values and could send Java 1.21.0 + RakNet 11 to MOT 860.
+- **Change:** When NetEase emulation is enabled, pin protocol 860, GameVersion `1.21.124_NetEase` and RakNet 8. Warn and ignore incompatible YAML.
+- **Refs:** `decompiled/nukkit-mot/cn/nukkit/GameVersion.java` (`V1_21_124_NETEASE`), `cn/nukkit/network/session/RakNetPlayerSession.java` (RakNet 8).
+- **Risk:** International Bedrock sessions must keep `netease.enabled: false`. Runtime configs that already set 860/8 are unchanged.
+
+## 2026-08-24 — CAMERA_PRESETS experimental override
+
+- **Goal:** Runtime log `Packet type CAMERA_PRESETS already registered` aborted experimental camera translation. `UnhandledPackets` cancels the packet so leftover bytes cannot kick Java when experimental features are off; `CameraInterface.register` then used `registerClientbound`.
+- **Change:** Use `replaceClientbound` so experimental camera can decode MOT presets into `becamera:data` without a second registration.
+- **Refs:** `UnhandledPackets.java` CAMERA_PRESETS cancel; `CameraInterface.java`; runtime `artifacts/runtime/logs/latest.log`.
+- **Risk:** Experimental camera still requires `becamera:confirm` from VBU. Without VBU the packet is consumed and not forwarded as Java.
+
 ## 2026-08-24 — ClientLoadAddonsFinishedFromGac
 
 - **Goal:** Java clients never emit NukkitMaster's engine-call gate, so HUD / player-info stayed empty after join.
@@ -17,7 +31,7 @@ Protocol truth: `decompiled/nukkit-mot` encode/decode, then `decompiled/nukkitma
 
 - **Goal:** NetEase MOT only runs `Item.onActivate` from CLICK_BLOCK. Java empty/filled buckets, glass bottles, boats, lily pads and frog spawn send USE_ITEM (air click) and previously did nothing.
 - **Change:** `ItemUseAirClickTarget` raytraces fluids / placeable surfaces; `ExperimentalFeatures` converts those air clicks. Same-tick duplicate USE_ITEM_ON is dropped. Kelp / custom consumables that MOT cannot auto-complete send a second CLICK_AIR.
-- **Risk:** Requires `enable-experimental-features`. Food/potion/bow/shield still need NukkitMOTJE on the MOT side. Offhand promotion can swap MOT hands without rewriting the Java inventory (`tryHandleSwapHands(user, false)`).
+- **Risk:** Requires `enable-experimental-features`. Food/potion/bow/shield/ride AABB now depend on GanAC `JavaClientCompatModule` (NukkitMOTJE is retired). Offhand promotion can swap MOT hands without rewriting the Java inventory (`tryHandleSwapHands(user, false)`).
 
 ## 2026-08-24 — MOT 860 sequential palette overlay + leftover IDs
 
