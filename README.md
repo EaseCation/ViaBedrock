@@ -47,7 +47,7 @@ Enable it in `viabedrock.yml` (keep secrets empty in public configs):
 netease:
   enabled: true
   protocol-version: 860
-  game-version: "1.21.124"
+  game-version: "1.21.124_NetEase"
   raknet-protocol-version: 8
 ```
 
@@ -59,7 +59,7 @@ Local changes on top of EaseCation/ViaBedrock:
 - `NETWORK_STACK_LATENCY` echo plus an active heartbeat after spawn
 - Server-authoritative inventory clicks encoded as `ITEM_STACK_REQUEST`
 - ModUI PY_RPC bridging on `moduiclient:*`
-- After `SET_LOCAL_PLAYER_AS_INITIALIZED`, synthesize NukkitMaster engine-call `ClientLoadAddonsFinishedFromGac` (msgId `98247598`) so HUD / player-info is not gated forever
+- After `SET_LOCAL_PLAYER_AS_INITIALIZED`, synthesize NukkitMaster engine-call `ClientLoadAddonsFinishedFromGac` (msgId `98247598`) so HUD / player-info is not gated forever. The one-shot is only marked sent after the payload leaves; inactive channels retry instead of dropping the gate.
 
 Build this module with `./gradlew publishToMavenLocal` (Java 21) after publishing the matching ViaVersion fork to mavenLocal. Then build ViaProxy_NetEase.
 

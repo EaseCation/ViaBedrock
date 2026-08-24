@@ -177,33 +177,98 @@ public class PyRpcDispatcherModule implements FeatureModule {
      * which fires {@code PlayerJoinEvent}. NukkitMaster then allocates
      * {@code PlayerInfo}. Send the engine-call one tick later so
      * {@code getPlayerInfo(player) != null} when HUD is pushed.
+     * <p>
+     * Do not mark the one-shot as sent until the payload actually leaves. A
+     * CONFIGURATION-state PlayerSpawn or a still-inactive Netty channel used
+     * to store the flag and return, so later PLAY retries never fired.
      */
     public static void scheduleClientLoadAddonsFinished(final com.viaversion.viaversion.api.connection.UserConnection user) {
         if (!ViaBedrock.getConfig().shouldEmulateNetEaseClient()) {
             return;
         }
-        if (user.has(NetEaseAddonsFinishedStorage.class)) {
+        NetEaseAddonsFinishedStorage storage = user.get(NetEaseAddonsFinishedStorage.class);
+        if (storage == null) {
+            storage = new NetEaseAddonsFinishedStorage(user);
+            user.put(storage);
+        }
+        if (storage.sent) {
             return;
         }
-        user.put(new NetEaseAddonsFinishedStorage(user));
-        final io.netty.channel.Channel channel = user.getChannel();
-        if (channel == null || !channel.isActive()) {
+        enqueueClientLoadAddonsFinished(user, storage, ADDONS_FINISHED_DELAY_MS);
+    }
+
+    static void enqueueClientLoadAddonsFinished(final com.viaversion.viaversion.api.connection.UserConnection user,
+                                                final NetEaseAddonsFinishedStorage storage,
+                                                final long delayMs) {
+        if (storage.sent || storage.scheduled) {
             return;
         }
-        channel.eventLoop().schedule(() -> {
-            if (!channel.isActive()) {
+        storage.scheduled = true;
+        storage.attempts++;
+        final Runnable send = () -> {
+            storage.scheduled = false;
+            if (storage.sent) {
+                return;
+            }
+            final io.netty.channel.Channel channel = user.getChannel();
+            if (channel == null || !channel.isActive()) {
+                if (storage.attempts < NetEaseAddonsFinishedStorage.MAX_ATTEMPTS) {
+                    enqueueClientLoadAddonsFinished(user, storage, ADDONS_FINISHED_DELAY_MS);
+                } else {
+                    ViaBedrock.getPlatform().getLogger().warning("[PY_RPC] giving up ClientLoadAddonsFinishedFromGac; channel never became active");
+                }
                 return;
             }
             sendPyRpc(user, buildClientLoadAddonsFinished());
+            storage.sent = true;
             ViaBedrock.getPlatform().getLogger().info("[PY_RPC] sent ClientLoadAddonsFinishedFromGac");
-        }, ADDONS_FINISHED_DELAY_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+        };
+        final io.netty.channel.Channel channel = user.getChannel();
+        if (channel != null && channel.eventLoop() != null) {
+            channel.eventLoop().schedule(send, delayMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+            return;
+        }
+        com.viaversion.viaversion.api.Via.getPlatform().runSync(send, Math.max(1L, delayMs / 50L));
     }
 
-    private static boolean isModEventS2C(final byte[] data) {
-        // MsgPack fixarray(3) + fixstr/bin8 "ModEventS2C"
-        return data.length > 14 && data[0] == (byte) 0x93
-                && data[1] == (byte) 0xc4 && data[2] == 0x0b
-                && new String(data, 3, 11, java.nio.charset.StandardCharsets.US_ASCII).equals("ModEventS2C");
+    /**
+     * MOT {@code PyRpcWriter.writeBinaryString} encodes method names as MessagePack
+     * bin ({@code 0xC4} + length). Some Master / third-party senders use str
+     * ({@code fixstr}/{@code str8}). Accept both so HUD lifecycle still starts.
+     */
+    static boolean isModEventS2C(final byte[] data) {
+        return "ModEventS2C".equals(readFirstMsgPackString(data));
+    }
+
+    static String readFirstMsgPackString(final byte[] data) {
+        if (data == null || data.length < 3 || data[0] != (byte) 0x93) {
+            return null;
+        }
+        int index = 1;
+        final int code = data[index] & 0xFF;
+        final int length;
+        if ((code & 0xE0) == 0xA0) { // fixstr
+            length = code & 0x1F;
+            index += 1;
+        } else if (code == 0xC4 || code == 0xD9) { // bin8 / str8
+            if (index + 2 > data.length) {
+                return null;
+            }
+            length = data[index + 1] & 0xFF;
+            index += 2;
+        } else if (code == 0xC5 || code == 0xDA) { // bin16 / str16
+            if (index + 3 > data.length) {
+                return null;
+            }
+            length = ((data[index + 1] & 0xFF) << 8) | (data[index + 2] & 0xFF);
+            index += 3;
+        } else {
+            return null;
+        }
+        if (length < 0 || index + length > data.length) {
+            return null;
+        }
+        return new String(data, index, length, java.nio.charset.StandardCharsets.UTF_8);
     }
 
 

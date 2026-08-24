@@ -23,6 +23,7 @@ import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PyRpcDispatcherModuleTest {
@@ -68,5 +69,35 @@ class PyRpcDispatcherModuleTest {
     void masterC2sMsgIdIs98247598() {
         assertEquals(98247598, PyRpcDispatcherModule.MSG_ID);
         assertTrue(PyRpcDispatcherModule.ADDONS_FINISHED_DELAY_MS > 0L);
+    }
+
+    @Test
+    void motBin8ModEventS2CIsDetected() {
+        final byte[] name = "ModEventS2C".getBytes(StandardCharsets.US_ASCII);
+        final byte[] data = new byte[3 + name.length];
+        data[0] = (byte) 0x93; // fixarray 3, MOT PyRpcWriter.writeMessage
+        data[1] = (byte) 0xC4; // bin8, MOT PyRpcWriter.writeBinaryString
+        data[2] = (byte) name.length;
+        System.arraycopy(name, 0, data, 3, name.length);
+        assertTrue(PyRpcDispatcherModule.isModEventS2C(data));
+        assertEquals("ModEventS2C", PyRpcDispatcherModule.readFirstMsgPackString(data));
+    }
+
+    @Test
+    void fixstrModEventS2CIsDetected() {
+        final byte[] name = "ModEventS2C".getBytes(StandardCharsets.US_ASCII);
+        final byte[] data = new byte[2 + name.length];
+        data[0] = (byte) 0x93;
+        data[1] = (byte) (0xA0 | name.length);
+        System.arraycopy(name, 0, data, 2, name.length);
+        assertTrue(PyRpcDispatcherModule.isModEventS2C(data));
+    }
+
+    @Test
+    void engineCallIsNotModEventS2C() {
+        assertFalse(PyRpcDispatcherModule.isModEventS2C(PyRpcDispatcherModule.buildClientLoadAddonsFinished()));
+        assertFalse(PyRpcDispatcherModule.isModEventS2C(new byte[]{(byte) 0x93, (byte) 0xC4, 0x03, 'f', 'o', 'o'}));
+        assertFalse(PyRpcDispatcherModule.isModEventS2C(null));
+        assertFalse(PyRpcDispatcherModule.isModEventS2C(new byte[0]));
     }
 }

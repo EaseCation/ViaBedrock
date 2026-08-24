@@ -21,10 +21,17 @@ public class ModUiLifecycleStorage extends StoredObject {
 }
 
 /**
- * One-shot flag so {@code ClientLoadAddonsFinishedFromGac} is not re-sent on
- * PLAY_STATUS PlayerSpawn reloads of the same connection.
+ * One-shot / retry state so {@code ClientLoadAddonsFinishedFromGac} is not
+ * re-sent on PLAY_STATUS PlayerSpawn reloads, but can still be retried when
+ * the Netty channel is not active at the first spawn notification.
  */
 class NetEaseAddonsFinishedStorage extends StoredObject {
+
+    static final int MAX_ATTEMPTS = 8;
+
+    volatile boolean sent;
+    volatile boolean scheduled;
+    volatile int attempts;
 
     NetEaseAddonsFinishedStorage(final UserConnection user) {
         super(user);

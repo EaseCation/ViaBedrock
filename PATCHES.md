@@ -2,6 +2,13 @@
 
 Protocol truth: `decompiled/nukkit-mot` encode/decode, then `decompiled/nukkitmaster` for PyRpc / ModUI. Do not treat international Bedrock wiki or Geyser palettes as MOT 860.
 
+## 2026-08-24 — Retry ClientLoadAddonsFinishedFromGac until sent
+
+- **Goal:** `scheduleClientLoadAddonsFinished` stored a one-shot flag even when the Netty channel was inactive, so later PLAY retries never emitted the Master HUD gate.
+- **Change:** Track `sent` / `scheduled` / `attempts` on the connection. Reschedule up to 8 times until the payload leaves. Detect MOT `ModEventS2C` as MessagePack bin8 **or** str (fixstr/str8).
+- **Refs:** `decompiled/nukkit-mot/cn/nukkit/network/protocol/netease/pyrpc/io/PyRpcWriter.java` (`writeBinaryString` → `0xC4`); `decompiled/nukkitmaster/.../ClientEventListener.java`.
+- **Risk:** If the backend never becomes active, Via logs a warning after 8 attempts instead of silently skipping HUD.
+
 ## 2026-08-24 — Pin NetEase protocol tuple
 
 - **Goal:** `netease.enabled=true` still accepted international protocol / GameVersion / RakNet values and could send Java 1.21.0 + RakNet 11 to MOT 860.
@@ -55,3 +62,4 @@ Protocol truth: `decompiled/nukkit-mot` encode/decode, then `decompiled/nukkitma
 - EaseCation `upstream/main` is already at merge-base `fcf85f26`; no NetEase-only commits left to cherry-pick.
 - Particle / VBU memory: custom entity payloads stay on `viabedrockutility:data`. Display-entity fallback can leak if VBU is missing and `enable-server-entity-animation` is on.
 - NukkitMaster shop / urge callbacks (`UrgeShipEvent`, `StoreBuySuccServerEvent`) are still not synthesized from Java.
+- Java clients do not emit C2S `SyncSkin(236)`; MOT only applies that path on protocol 860 for Bedrock-style skin changes after login.
