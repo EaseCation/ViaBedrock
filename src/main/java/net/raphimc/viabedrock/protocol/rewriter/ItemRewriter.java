@@ -20,23 +20,35 @@ package net.raphimc.viabedrock.protocol.rewriter;
 import com.google.common.collect.BiMap;
 import com.google.common.collect.HashBiMap;
 import com.viaversion.nbt.tag.CompoundTag;
+import com.viaversion.nbt.tag.IntTag;
 import com.viaversion.nbt.tag.ListTag;
+import com.viaversion.nbt.tag.LongTag;
 import com.viaversion.nbt.tag.NumberTag;
 import com.viaversion.nbt.tag.StringTag;
 import com.viaversion.nbt.tag.Tag;
 import com.viaversion.viaversion.api.Via;
 import com.viaversion.viaversion.api.connection.StoredObject;
 import com.viaversion.viaversion.api.connection.UserConnection;
+import com.viaversion.viaversion.api.minecraft.HolderSet;
 import com.viaversion.viaversion.api.minecraft.data.StructuredDataContainer;
 import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
 import com.viaversion.viaversion.api.minecraft.item.Item;
 import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
+import com.viaversion.viaversion.api.minecraft.item.data.AdventureModePredicate;
+import com.viaversion.viaversion.api.minecraft.item.data.BlockPredicate;
 import com.viaversion.viaversion.api.minecraft.item.data.DyedColor;
+import com.viaversion.viaversion.api.minecraft.item.data.Enchantments;
+import com.viaversion.viaversion.api.minecraft.item.data.PotionContents;
+import com.viaversion.viaversion.api.minecraft.item.data.PotionEffect;
+import com.viaversion.viaversion.api.minecraft.item.data.PotionEffectData;
 import com.viaversion.viaversion.api.type.OptionalType;
 import com.viaversion.viaversion.api.type.Type;
+import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
 import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectMap;
 import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectOpenHashMap;
 import com.viaversion.viaversion.libs.fastutil.ints.IntSortedSet;
+import com.viaversion.viaversion.protocols.v1_20_3to1_20_5.data.PotionEffects1_20_5;
+import com.viaversion.viaversion.protocols.v1_20_3to1_20_5.data.Potions1_20_5;
 import com.viaversion.viaversion.util.Key;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.model.BlockState;
@@ -48,6 +60,7 @@ import net.raphimc.viabedrock.experimental.rewriter.ExperimentalItemRewriter;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.data.BedrockMappingData;
 import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
+import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.Enchant_Type;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemVersion;
 import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomItemTags;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
@@ -68,6 +81,8 @@ import java.util.logging.Level;
 public class ItemRewriter extends StoredObject {
 
     private static final Map<String, NbtRewriter> ITEM_NBT_REWRITERS = new HashMap<>();
+    private static final StructuredDataKey<AdventureModePredicate> JAVA_CAN_PLACE_ON = VersionedTypes.V26_1.structuredDataKeys().canPlaceOn;
+    private static final StructuredDataKey<AdventureModePredicate> JAVA_CAN_BREAK = VersionedTypes.V26_1.structuredDataKeys().canBreak;
     private static final Set<String> DYEABLE_LEATHER_ITEMS = Set.of(
             "minecraft:leather_helmet",
             "minecraft:leather_chestplate",
@@ -78,7 +93,11 @@ public class ItemRewriter extends StoredObject {
 
     private final BiMap<String, Integer> items;
     private final Set<String> componentItems;
+    private final BlockStateRewriter blockStateRewriter;
     private final Int2ObjectMap<IntSortedSet> blockItemValidBlockStates;
+    private final Int2ObjectMap<JavaToBedrockItemMapping> javaToBedrockItems;
+    private final Int2ObjectMap<PotionItemMappings> javaToBedrockPotionItems;
+    private final Int2ObjectMap<Enchant_Type> javaToBedrockEnchantments;
     private final Type<BedrockItem> itemType;
     private final Type<BedrockItem> optionalItemType;
     private final Type<BedrockItem[]> itemArrayType;
@@ -103,7 +122,8 @@ public class ItemRewriter extends StoredObject {
                 this.componentItems.add(itemEntry.identifier());
             }
         }
-        final BlockStateRewriter blockStateRewriter = this.user().get(BlockStateRewriter.class);
+        this.blockStateRewriter = this.user().get(BlockStateRewriter.class);
+        final BlockStateRewriter blockStateRewriter = this.blockStateRewriter;
         final Set<String> blockItems = new HashSet<>(BedrockProtocol.MAPPINGS.getBedrockBlockItems());
         if (blockStateRewriter != null) {
             for (String identifier : this.items.keySet()) {
@@ -145,6 +165,9 @@ public class ItemRewriter extends StoredObject {
             }
         }
 
+        this.javaToBedrockItems = this.createJavaToBedrockItemMappings(blockStateRewriter);
+        this.javaToBedrockPotionItems = this.createJavaToBedrockPotionItemMappings();
+        this.javaToBedrockEnchantments = createJavaToBedrockEnchantments();
         this.itemType = new BedrockItemType(this.items.getOrDefault("minecraft:shield", 0), this.blockItemValidBlockStates, false);
         this.optionalItemType = new OptionalType<>(this.itemType);
         this.itemArrayType = new ArrayType<>(this.itemType, BedrockTypes.UNSIGNED_VAR_INT);
@@ -321,6 +344,7 @@ public class ItemRewriter extends StoredObject {
                     javaItem.dataContainer().set(StructuredDataKey.LORE, additionalLore.toArray(new Tag[0]));
                 }
             }
+            LegacyItemTagRewriter.apply(javaItem.dataContainer(), bedrockTag);
         }
 
         if (ViaBedrock.getConfig().shouldEnableExperimentalFeatures()) {
@@ -332,6 +356,9 @@ public class ItemRewriter extends StoredObject {
             ITEM_NBT_REWRITERS.get(tag).toJava(this.user(), bedrockItem, javaItem);
         }
 
+        this.applyAdventureModePredicate(javaItem, JAVA_CAN_PLACE_ON, bedrockItem.canPlace());
+        this.applyAdventureModePredicate(javaItem, JAVA_CAN_BREAK, bedrockItem.canBreak());
+        CustomItemDataComponents.applyBedrockItemShadow(javaItem, identifier, bedrockItem);
         return javaItem;
     }
 
@@ -360,6 +387,39 @@ public class ItemRewriter extends StoredObject {
             return rgb;
         }
         return null;
+    }
+
+    private void applyAdventureModePredicate(
+            final Item javaItem,
+            final StructuredDataKey<AdventureModePredicate> key,
+            final String[] bedrockIdentifiers
+    ) {
+        if (this.blockStateRewriter == null || bedrockIdentifiers == null || bedrockIdentifiers.length == 0) {
+            return;
+        }
+
+        final BiMap<String, Integer> javaBlocks = BedrockProtocol.MAPPINGS.getJavaBlocks();
+        final Set<Integer> javaBlockIds = new LinkedHashSet<>(bedrockIdentifiers.length);
+        for (String identifier : bedrockIdentifiers) {
+            if (identifier == null) {
+                return;
+            }
+            final String namespacedIdentifier;
+            try {
+                namespacedIdentifier = Key.namespaced(identifier);
+            } catch (final IllegalArgumentException ignored) {
+                return;
+            }
+            final Integer javaBlockId = javaBlocks.get(namespacedIdentifier);
+            if (javaBlockId == null || this.blockStateRewriter.validBlockStates(namespacedIdentifier) == null) {
+                return;
+            }
+            javaBlockIds.add(javaBlockId);
+        }
+
+        final int[] ids = javaBlockIds.stream().mapToInt(Integer::intValue).toArray();
+        final BlockPredicate blockPredicate = new BlockPredicate(HolderSet.of(ids), null, null);
+        javaItem.dataContainer().set(key, new AdventureModePredicate(new BlockPredicate[]{blockPredicate}));
     }
 
     public CompoundTag javaItem(final CompoundTag bedrockTag) {
@@ -419,8 +479,665 @@ public class ItemRewriter extends StoredObject {
         return javaItems;
     }
 
+    private Int2ObjectMap<JavaToBedrockItemMapping> createJavaToBedrockItemMappings(final BlockStateRewriter blockStateRewriter) {
+        final Map<Integer, Set<JavaToBedrockItemMapping>> candidates = new HashMap<>();
+
+        for (Map.Entry<String, Map<Integer, BedrockMappingData.JavaItemMapping>> itemEntry
+                : BedrockProtocol.MAPPINGS.getBedrockToJavaMetaItems().entrySet()) {
+            final String bedrockIdentifier = itemEntry.getKey();
+            final Integer bedrockId = this.items.get(bedrockIdentifier);
+            if (!isVanillaItem(bedrockIdentifier, bedrockId)) {
+                continue;
+            }
+
+            final Map<Integer, BedrockMappingData.JavaItemMapping> mappings = itemEntry.getValue();
+            for (Map.Entry<Integer, BedrockMappingData.JavaItemMapping> mappingEntry : mappings.entrySet()) {
+                final Integer meta = mappingEntry.getKey();
+                if (meta == null && mappings.containsKey(0)) {
+                    continue;
+                }
+                final int data = meta != null ? meta : 0;
+                final BedrockMappingData.JavaItemMapping javaMapping = mappingEntry.getValue();
+                if (data < 0 || data > Short.MAX_VALUE || !isSafelyReversible(javaMapping)) {
+                    continue;
+                }
+                addReverseCandidate(candidates, javaMapping.id(),
+                        new JavaToBedrockItemMapping(bedrockIdentifier, bedrockId, (short) data, 0));
+            }
+        }
+
+        if (blockStateRewriter != null) {
+            for (Map.Entry<String, Map<BlockState, BedrockMappingData.JavaItemMapping>> itemEntry
+                    : BedrockProtocol.MAPPINGS.getBedrockToJavaBlockItems().entrySet()) {
+                final String bedrockIdentifier = itemEntry.getKey();
+                final Integer bedrockId = this.items.get(bedrockIdentifier);
+                if (!isVanillaItem(bedrockIdentifier, bedrockId)) {
+                    continue;
+                }
+
+                final IntSortedSet validBlockStates = this.blockItemValidBlockStates.get(bedrockId.intValue());
+                if (validBlockStates == null || validBlockStates.isEmpty()) {
+                    continue;
+                }
+
+                final Map<Integer, JavaToBedrockItemMapping> canonicalMappings = new HashMap<>();
+                for (Map.Entry<BlockState, BedrockMappingData.JavaItemMapping> mappingEntry : itemEntry.getValue().entrySet()) {
+                    final BedrockMappingData.JavaItemMapping javaMapping = mappingEntry.getValue();
+                    if (!isSafelyReversible(javaMapping)) {
+                        continue;
+                    }
+                    final int blockRuntimeId = blockStateRewriter.bedrockId(mappingEntry.getKey());
+                    if (blockRuntimeId == 0 || blockRuntimeId == -1 || !validBlockStates.contains(blockRuntimeId)) {
+                        continue;
+                    }
+                    final JavaToBedrockItemMapping candidate = new JavaToBedrockItemMapping(
+                            bedrockIdentifier, bedrockId, (short) 0, blockRuntimeId);
+                    canonicalMappings.merge(javaMapping.id(), candidate,
+                            (first, second) -> first.blockRuntimeId() <= second.blockRuntimeId() ? first : second);
+                }
+                canonicalMappings.forEach((javaId, candidate) -> addReverseCandidate(candidates, javaId, candidate));
+            }
+        }
+
+        final Int2ObjectMap<JavaToBedrockItemMapping> mappings = new Int2ObjectOpenHashMap<>();
+        final BiMap<String, Integer> javaItems = BedrockProtocol.MAPPINGS.getJavaItems();
+        if (javaItems == null) {
+            return mappings;
+        }
+        for (Map.Entry<Integer, Set<JavaToBedrockItemMapping>> entry : candidates.entrySet()) {
+            final String javaIdentifier = javaItems.inverse().get(entry.getKey());
+            if (javaIdentifier == null || !javaIdentifier.startsWith("minecraft:")) {
+                continue;
+            }
+
+            JavaToBedrockItemMapping exactMatch = null;
+            boolean multipleExactMatches = false;
+            for (JavaToBedrockItemMapping candidate : entry.getValue()) {
+                if (!candidate.bedrockIdentifier().equals(javaIdentifier)) {
+                    continue;
+                }
+                if (exactMatch != null) {
+                    multipleExactMatches = true;
+                    break;
+                }
+                exactMatch = candidate;
+            }
+            if (exactMatch != null && !multipleExactMatches) {
+                mappings.put(entry.getKey().intValue(), exactMatch);
+            } else if (exactMatch == null && entry.getValue().size() == 1) {
+                mappings.put(entry.getKey().intValue(), entry.getValue().iterator().next());
+            }
+        }
+        return mappings;
+    }
+
+    private Int2ObjectMap<PotionItemMappings> createJavaToBedrockPotionItemMappings() {
+        final Map<Integer, Map<PotionContentsKey, Set<JavaToBedrockItemMapping>>> exactCandidates = new HashMap<>();
+        final Map<Integer, Map<Integer, Set<JavaToBedrockItemMapping>>> potionCandidates = new HashMap<>();
+        final Map<Integer, Set<JavaToBedrockItemMapping>> fallbackCandidates = new HashMap<>();
+
+        for (Map.Entry<String, Map<Integer, BedrockMappingData.JavaItemMapping>> itemEntry
+                : BedrockProtocol.MAPPINGS.getBedrockToJavaMetaItems().entrySet()) {
+            final String bedrockIdentifier = itemEntry.getKey();
+            final Integer bedrockId = this.items.get(bedrockIdentifier);
+            if (!isVanillaItem(bedrockIdentifier, bedrockId)) {
+                continue;
+            }
+
+            final Map<Integer, BedrockMappingData.JavaItemMapping> itemMappings = itemEntry.getValue();
+            boolean potionItem = false;
+            for (BedrockMappingData.JavaItemMapping mapping : itemMappings.values()) {
+                if (mapping != null && mapping.overrideTag() != null
+                        && LegacyItemTagRewriter.potionContents(mapping.overrideTag()) != null) {
+                    potionItem = true;
+                    break;
+                }
+            }
+            if (!potionItem) {
+                continue;
+            }
+
+            for (Map.Entry<Integer, BedrockMappingData.JavaItemMapping> mappingEntry : itemMappings.entrySet()) {
+                final Integer meta = mappingEntry.getKey();
+                if (meta == null && itemMappings.containsKey(0)) {
+                    continue;
+                }
+                final int data = meta != null ? meta : 0;
+                final BedrockMappingData.JavaItemMapping javaMapping = mappingEntry.getValue();
+                if (data < 0 || data > Short.MAX_VALUE || javaMapping == null
+                        || !javaMapping.identifier().startsWith("minecraft:")) {
+                    continue;
+                }
+
+                final JavaToBedrockItemMapping candidate = new JavaToBedrockItemMapping(
+                        bedrockIdentifier, bedrockId, (short) data, 0);
+                addReverseCandidate(fallbackCandidates, javaMapping.id(), candidate);
+
+                final PotionContents potionContents = javaMapping.overrideTag() != null
+                        ? LegacyItemTagRewriter.potionContents(javaMapping.overrideTag()) : null;
+                if (potionContents == null) {
+                    continue;
+                }
+                final PotionContentsKey contentsKey = PotionContentsKey.of(potionContents);
+                exactCandidates.computeIfAbsent(javaMapping.id(), ignored -> new HashMap<>())
+                        .computeIfAbsent(contentsKey, ignored -> new HashSet<>()).add(candidate);
+                if (potionContents.potion() != null) {
+                    potionCandidates.computeIfAbsent(javaMapping.id(), ignored -> new HashMap<>())
+                            .computeIfAbsent(potionContents.potion(), ignored -> new HashSet<>()).add(candidate);
+                }
+            }
+        }
+
+        final Set<Integer> javaIds = new HashSet<>(fallbackCandidates.keySet());
+        javaIds.addAll(exactCandidates.keySet());
+        javaIds.addAll(potionCandidates.keySet());
+        final Int2ObjectMap<PotionItemMappings> mappings = new Int2ObjectOpenHashMap<>(javaIds.size());
+        for (int javaId : javaIds) {
+            final Map<PotionContentsKey, JavaToBedrockItemMapping> exactMappings = new HashMap<>();
+            for (Map.Entry<PotionContentsKey, Set<JavaToBedrockItemMapping>> entry
+                    : exactCandidates.getOrDefault(javaId, Map.of()).entrySet()) {
+                final JavaToBedrockItemMapping mapping = this.selectPotionMapping(javaId, entry.getValue());
+                if (mapping != null) {
+                    exactMappings.put(entry.getKey(), mapping);
+                }
+            }
+
+            final Int2ObjectMap<JavaToBedrockItemMapping> potionMappings = new Int2ObjectOpenHashMap<>();
+            for (Map.Entry<Integer, Set<JavaToBedrockItemMapping>> entry
+                    : potionCandidates.getOrDefault(javaId, Map.of()).entrySet()) {
+                final JavaToBedrockItemMapping mapping = this.selectPotionMapping(javaId, entry.getValue());
+                if (mapping != null) {
+                    potionMappings.put(entry.getKey().intValue(), mapping);
+                }
+            }
+
+            final JavaToBedrockItemMapping fallback = this.selectPotionMapping(
+                    javaId, fallbackCandidates.getOrDefault(javaId, Set.of()));
+            if (!exactMappings.isEmpty() || !potionMappings.isEmpty() || fallback != null) {
+                mappings.put(javaId, new PotionItemMappings(Map.copyOf(exactMappings), potionMappings, fallback));
+            }
+        }
+        return mappings;
+    }
+
+    private JavaToBedrockItemMapping selectPotionMapping(
+            final int javaId,
+            final Collection<JavaToBedrockItemMapping> candidates
+    ) {
+        if (candidates.isEmpty()) {
+            return null;
+        }
+        final String javaIdentifier = BedrockProtocol.MAPPINGS.getJavaItems().inverse().get(javaId);
+        if (javaIdentifier == null || !javaIdentifier.startsWith("minecraft:")) {
+            return null;
+        }
+
+        final List<JavaToBedrockItemMapping> exactCandidates = candidates.stream()
+                .filter(candidate -> candidate.bedrockIdentifier().equals(javaIdentifier)).toList();
+        final Collection<JavaToBedrockItemMapping> selected = exactCandidates.isEmpty() ? candidates : exactCandidates;
+        String bedrockIdentifier = null;
+        JavaToBedrockItemMapping result = null;
+        for (JavaToBedrockItemMapping candidate : selected) {
+            if (bedrockIdentifier != null && !bedrockIdentifier.equals(candidate.bedrockIdentifier())) {
+                return null;
+            }
+            bedrockIdentifier = candidate.bedrockIdentifier();
+            if (result == null || candidate.data() < result.data()) {
+                result = candidate;
+            }
+        }
+        return result;
+    }
+
+    private static Int2ObjectMap<Enchant_Type> createJavaToBedrockEnchantments() {
+        final Map<String, Set<Enchant_Type>> candidates = new HashMap<>();
+        for (Map.Entry<Enchant_Type, String> entry : BedrockProtocol.MAPPINGS.getBedrockToJavaEnchantments().entrySet()) {
+            candidates.computeIfAbsent(entry.getValue(), ignored -> EnumSet.noneOf(Enchant_Type.class)).add(entry.getKey());
+        }
+
+        final Int2ObjectMap<Enchant_Type> mappings = new Int2ObjectOpenHashMap<>();
+        final CompoundTag enchantmentsRegistry = BedrockProtocol.MAPPINGS.getJavaRegistries()
+                .getCompoundTag("minecraft:enchantment");
+        if (enchantmentsRegistry == null) {
+            return mappings;
+        }
+        int javaId = 0;
+        for (String identifier : enchantmentsRegistry.keySet()) {
+            final Set<Enchant_Type> enchantments = candidates.get(identifier);
+            if (enchantments != null && enchantments.size() == 1) {
+                mappings.put(javaId, enchantments.iterator().next());
+            }
+            javaId++;
+        }
+        return mappings;
+    }
+
+    private static boolean isVanillaItem(final String bedrockIdentifier, final Integer bedrockId) {
+        return bedrockIdentifier.startsWith("minecraft:") && bedrockId != null && bedrockId != 0 && bedrockId != -1;
+    }
+
+    private static boolean isSafelyReversible(final BedrockMappingData.JavaItemMapping mapping) {
+        return mapping != null && mapping.identifier().startsWith("minecraft:")
+                && mapping.name() == null && mapping.overrideTag() == null;
+    }
+
+    private static void addReverseCandidate(
+            final Map<Integer, Set<JavaToBedrockItemMapping>> candidates,
+            final int javaId,
+            final JavaToBedrockItemMapping candidate
+    ) {
+        candidates.computeIfAbsent(javaId, ignored -> new HashSet<>()).add(candidate);
+    }
+
     public BedrockItem bedrockItem(final Item javaItem) {
-        throw new UnsupportedOperationException("Translating Java items to Bedrock is not yet supported");
+        try {
+            return this.bedrockItem0(javaItem);
+        } catch (final RuntimeException e) {
+            try {
+                if (ViaBedrock.getPlatform() != null) {
+                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING,
+                            "Failed to rewrite Java item id=" + (javaItem != null ? javaItem.identifier() : -1), e);
+                }
+            } catch (final RuntimeException ignored) {
+            }
+            return BedrockItem.empty();
+        }
+    }
+
+    private BedrockItem bedrockItem0(final Item javaItem) {
+        if (javaItem == null || javaItem.isEmpty()) {
+            return BedrockItem.empty();
+        }
+
+        StructuredDataContainer data = null;
+        try {
+            data = javaItem.dataContainer();
+        } catch (final UnsupportedOperationException ignored) {
+        }
+        final CompoundTag customData = data != null ? data.get(StructuredDataKey.CUSTOM_DATA) : null;
+
+        if (customData != null && customData.contains(CustomItemDataComponents.BEDROCK_ITEM_SHADOW_KEY)) {
+            final BedrockItem shadowedItem = this.restoreBedrockItemShadow(
+                    customData.get(CustomItemDataComponents.BEDROCK_ITEM_SHADOW_KEY), javaItem.amount());
+            if (shadowedItem == null) {
+                return BedrockItem.empty();
+            }
+            final String shadowedIdentifier = this.bedrockIdentifier(shadowedItem.identifier());
+            shadowedItem.setTag(this.createBedrockTag(data, shadowedIdentifier, shadowedItem.tag()));
+            this.overlayJavaItemMutations(shadowedItem, data, javaItem);
+            return shadowedItem;
+        }
+
+        JavaToBedrockItemMapping mapping = null;
+        boolean syncedCustomMapping = false;
+        boolean identifierFallbackMapping = false;
+        final CustomMappingSyncStorage customMappingSync = this.user().get(CustomMappingSyncStorage.class);
+        final String syncedIdentifier = customMappingSync != null
+                ? customMappingSync.access().customItemIdentifier(javaItem.identifier()) : null;
+        if (syncedIdentifier != null) {
+            mapping = this.customItemMapping(syncedIdentifier);
+            if (mapping == null) {
+                return BedrockItem.empty();
+            }
+            syncedCustomMapping = true;
+        }
+
+        if (mapping == null && customData != null && customData.contains(CustomItemDataComponents.BEDROCK_IDENTIFIER_KEY)) {
+            if (!(customData.get(CustomItemDataComponents.BEDROCK_IDENTIFIER_KEY) instanceof StringTag identifierTag)) {
+                return BedrockItem.empty();
+            }
+            mapping = this.customItemMapping(identifierTag.getValue());
+            if (mapping == null) {
+                return BedrockItem.empty();
+            }
+            identifierFallbackMapping = true;
+        }
+
+        final BiMap<String, Integer> javaItems = BedrockProtocol.MAPPINGS.getJavaItems();
+        final String javaIdentifier = javaItems != null ? javaItems.inverse().get(javaItem.identifier()) : null;
+        if (syncedCustomMapping && javaIdentifier != null) {
+            return BedrockItem.empty();
+        }
+        if (identifierFallbackMapping && javaIdentifier != null && !"minecraft:paper".equals(javaIdentifier)) {
+            return BedrockItem.empty();
+        }
+        if (mapping == null) {
+            final PotionItemMappings potionMappings = this.javaToBedrockPotionItems.get(javaItem.identifier());
+            if (potionMappings != null) {
+                mapping = potionMappings.mapping(data != null
+                        ? data.get(StructuredDataKey.POTION_CONTENTS1_21_2) : null);
+            }
+        }
+        if (mapping == null) {
+            mapping = this.javaToBedrockItems.get(javaItem.identifier());
+        }
+        if (mapping == null) {
+            return BedrockItem.empty();
+        }
+
+        final int amount = Math.min(javaItem.amount(), 0xFF);
+        final BedrockItem bedrockItem = new BedrockItem(mapping.bedrockId(), mapping.data(), (byte) amount);
+        bedrockItem.setBlockRuntimeId(mapping.blockRuntimeId());
+        if (data != null) {
+            bedrockItem.setTag(this.createBedrockTag(data, mapping.bedrockIdentifier(), null));
+            final String[] canPlace = this.bedrockBlockPredicates(data.get(JAVA_CAN_PLACE_ON));
+            if (canPlace != null) {
+                bedrockItem.setCanPlace(canPlace);
+            }
+            final String[] canBreak = this.bedrockBlockPredicates(data.get(JAVA_CAN_BREAK));
+            if (canBreak != null) {
+                bedrockItem.setCanBreak(canBreak);
+            }
+        }
+        return bedrockItem;
+    }
+
+    private void overlayJavaItemMutations(final BedrockItem bedrockItem, final StructuredDataContainer data, final Item javaItem) {
+        if (bedrockItem == null || data == null) {
+            return;
+        }
+        final String[] canPlace = this.bedrockBlockPredicates(data.get(JAVA_CAN_PLACE_ON));
+        if (canPlace != null) {
+            bedrockItem.setCanPlace(canPlace);
+        }
+        final String[] canBreak = this.bedrockBlockPredicates(data.get(JAVA_CAN_BREAK));
+        if (canBreak != null) {
+            bedrockItem.setCanBreak(canBreak);
+        }
+        final PotionItemMappings potionMappings = this.javaToBedrockPotionItems.get(javaItem.identifier());
+        if (potionMappings != null) {
+            final JavaToBedrockItemMapping potionMapping = potionMappings.mapping(data.get(StructuredDataKey.POTION_CONTENTS1_21_2));
+            if (potionMapping != null) {
+                bedrockItem.setData(potionMapping.data());
+            }
+        }
+    }
+
+    private JavaToBedrockItemMapping customItemMapping(final String bedrockIdentifier) {
+        final Integer bedrockId = this.items.get(bedrockIdentifier);
+        if (bedrockId == null || bedrockId == 0 || bedrockId == -1) {
+            return null;
+        }
+        return new JavaToBedrockItemMapping(
+                bedrockIdentifier, bedrockId, (short) 0,
+                BlockItemMappingLayout.fallbackBlockRuntimeId(this.blockItemValidBlockStates.get(bedrockId.intValue())));
+    }
+
+    private BedrockItem restoreBedrockItemShadow(final Tag shadowTag, final int javaAmount) {
+        if (!(shadowTag instanceof CompoundTag shadow)
+                || !(shadow.get("version") instanceof IntTag versionTag)
+                || versionTag.asInt() != CustomItemDataComponents.BEDROCK_ITEM_SHADOW_VERSION
+                || !(shadow.get("identifier") instanceof StringTag identifierTag)
+                || !(shadow.get("data") instanceof IntTag dataTag)
+                || !(shadow.get("block_runtime_id") instanceof IntTag blockRuntimeTag)
+                || !(shadow.get("blocking_ticks") instanceof LongTag blockingTicksTag)) {
+            return null;
+        }
+        final Integer bedrockId = this.items.get(identifierTag.getValue());
+        final int itemData = dataTag.asInt();
+        if (bedrockId == null || bedrockId == 0 || bedrockId == -1
+                || itemData < 0 || itemData > Short.MAX_VALUE) {
+            return null;
+        }
+
+        final String[] canPlace = shadowStrings(shadow, "can_place");
+        final String[] canBreak = shadowStrings(shadow, "can_break");
+        if (canPlace == null || canBreak == null) {
+            return null;
+        }
+        final CompoundTag bedrockTag;
+        if (shadow.contains("tag")) {
+            if (!(shadow.get("tag") instanceof CompoundTag tag)) {
+                return null;
+            }
+            bedrockTag = tag.copy();
+        } else {
+            bedrockTag = null;
+        }
+        return new BedrockItem(
+                bedrockId,
+                (short) itemData,
+                (byte) Math.min(javaAmount, 0xFF),
+                bedrockTag,
+                canPlace,
+                canBreak,
+                blockingTicksTag.asLong(),
+                blockRuntimeTag.asInt(),
+                null
+        );
+    }
+
+    private static String[] shadowStrings(final CompoundTag shadow, final String key) {
+        final ListTag<StringTag> list = shadow.getListTag(key, StringTag.class);
+        if (list == null) {
+            return null;
+        }
+        final String[] values = new String[list.size()];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = list.get(i).getValue();
+        }
+        return values;
+    }
+
+    private String[] bedrockBlockPredicates(final AdventureModePredicate adventureModePredicate) {
+        if (adventureModePredicate == null || this.blockStateRewriter == null) {
+            return null;
+        }
+
+        final BlockPredicate[] predicates = adventureModePredicate.predicates();
+        if (predicates == null) {
+            return null;
+        }
+        final BiMap<Integer, String> javaBlocks = BedrockProtocol.MAPPINGS.getJavaBlocks().inverse();
+        final Set<String> bedrockIdentifiers = new LinkedHashSet<>();
+        for (BlockPredicate predicate : predicates) {
+            if (predicate == null || predicate.holderSet() == null) {
+                return null;
+            }
+            if ((predicate.propertyMatchers() != null && predicate.propertyMatchers().length != 0) || predicate.tag() != null) {
+                return null;
+            }
+            final var dataMatchers = predicate.dataMatchers();
+            if (dataMatchers != null
+                    && ((dataMatchers.exactPredicates() != null && dataMatchers.exactPredicates().length != 0)
+                    || (dataMatchers.predicates() != null && dataMatchers.predicates().length != 0))) {
+                return null;
+            }
+
+            if (predicate.holderSet().hasTagKey()) {
+                final String tagKey = predicate.holderSet().tagKey();
+                if (tagKey == null || tagKey.isEmpty()) {
+                    return null;
+                }
+                final String identifier = tagKey.contains(":") ? tagKey : "minecraft:" + tagKey;
+                if (this.blockStateRewriter.validBlockStates(identifier) == null) {
+                    return null;
+                }
+                bedrockIdentifiers.add(identifier);
+                continue;
+            }
+            if (!predicate.holderSet().hasIds()) {
+                return null;
+            }
+            for (int javaBlockId : predicate.holderSet().ids()) {
+                final String identifier = javaBlocks.get(javaBlockId);
+                if (identifier == null || this.blockStateRewriter.validBlockStates(identifier) == null) {
+                    return null;
+                }
+                bedrockIdentifiers.add(identifier);
+            }
+        }
+        return bedrockIdentifiers.toArray(new String[0]);
+    }
+
+    private CompoundTag createBedrockTag(
+            final StructuredDataContainer data,
+            final String bedrockIdentifier,
+            final CompoundTag shadowTag
+    ) {
+        final CompoundTag bedrockTag = shadowTag != null ? shadowTag.copy() : new CompoundTag();
+
+        final Integer damage = data.get(StructuredDataKey.DAMAGE);
+        if (damage != null) {
+            if (damage > 0) {
+                bedrockTag.putInt("Damage", damage);
+            } else {
+                bedrockTag.remove("Damage");
+            }
+        } else if (data.hasEmpty(StructuredDataKey.DAMAGE)) {
+            bedrockTag.remove("Damage");
+        }
+        if (shadowTag == null && DYEABLE_LEATHER_ITEMS.contains(bedrockIdentifier)) {
+            final DyedColor dyedColor = data.get(StructuredDataKey.DYED_COLOR1_21_5);
+            if (dyedColor != null) {
+                bedrockTag.putInt("customColor", dyedColor.rgb() & 0xFFFFFF);
+            }
+        }
+
+        final Tag customName = data.get(StructuredDataKey.CUSTOM_NAME);
+        final Tag[] javaLore = data.get(StructuredDataKey.LORE);
+        final ListTag<StringTag> bedrockLore = new ListTag<>(StringTag.class);
+        if (javaLore != null) {
+            for (Tag lore : javaLore) {
+                final String line = javaTextToBedrock(lore);
+                if (line == null || isGeneratedFallbackLore(line, bedrockIdentifier)) {
+                    continue;
+                }
+                bedrockLore.add(new StringTag(TextUtil.toSingleLine(line)));
+            }
+        }
+        final boolean updateName = customName != null || data.hasEmpty(StructuredDataKey.CUSTOM_NAME);
+        final boolean updateLore = data.hasEmpty(StructuredDataKey.LORE)
+                || javaLore != null && (javaLore.length == 0 || !bedrockLore.isEmpty());
+        if (updateName || updateLore) {
+            CompoundTag display = bedrockTag.getCompoundTag("display");
+            display = display != null ? display.copy() : new CompoundTag();
+            if (customName != null) {
+                final String name = javaTextToBedrock(customName);
+                if (name != null) {
+                    display.putString("Name", name);
+                }
+            } else if (updateName) {
+                display.remove("Name");
+            }
+
+            if (updateLore) {
+                if (bedrockLore.isEmpty()) {
+                    display.remove("Lore");
+                } else {
+                    display.put("Lore", bedrockLore);
+                }
+            }
+            if (display.isEmpty()) {
+                bedrockTag.remove("display");
+            } else {
+                bedrockTag.put("display", display);
+            }
+        }
+
+        if (shadowTag == null) {
+            this.writeEnchantments(data, bedrockTag);
+            writePotionContents(data, bedrockTag);
+        }
+        return bedrockTag.isEmpty() && shadowTag == null ? null : bedrockTag;
+    }
+
+    private void writeEnchantments(final StructuredDataContainer data, final CompoundTag bedrockTag) {
+        final Enchantments enchantments = data.get(StructuredDataKey.ENCHANTMENTS1_21_5);
+        if (enchantments == null) {
+            return;
+        }
+
+        final ListTag<CompoundTag> bedrockEnchantments = new ListTag<>(CompoundTag.class);
+        final int[] javaIds = enchantments.enchantments().keySet().toIntArray();
+        Arrays.sort(javaIds);
+        for (int javaId : javaIds) {
+            final Enchant_Type bedrockEnchantment = this.javaToBedrockEnchantments.get(javaId);
+            if (bedrockEnchantment == null) {
+                continue;
+            }
+            final int level = Math.max(0, Math.min(enchantments.getLevel(javaId), 255));
+            final CompoundTag enchantmentTag = new CompoundTag();
+            enchantmentTag.putShort("id", (short) bedrockEnchantment.getValue());
+            enchantmentTag.putShort("lvl", (short) level);
+            bedrockEnchantments.add(enchantmentTag);
+        }
+        if (!bedrockEnchantments.isEmpty()) {
+            bedrockTag.put("ench", bedrockEnchantments);
+        }
+    }
+
+    private static void writePotionContents(final StructuredDataContainer data, final CompoundTag bedrockTag) {
+        final PotionContents potionContents = data.get(StructuredDataKey.POTION_CONTENTS1_21_2);
+        if (potionContents == null) {
+            return;
+        }
+
+        if (potionContents.potion() != null) {
+            final String potionIdentifier = Potions1_20_5.idToKey(potionContents.potion());
+            if (potionIdentifier != null) {
+                bedrockTag.putString("Potion", Key.namespaced(potionIdentifier));
+            }
+        } else if (potionContents.customColor() != null
+                || (potionContents.customEffects() != null && potionContents.customEffects().length != 0)) {
+            bedrockTag.putString("Potion", "");
+        }
+        if (potionContents.customColor() != null) {
+            bedrockTag.putInt("CustomPotionColor", potionContents.customColor());
+        }
+
+        final ListTag<CompoundTag> customEffects = new ListTag<>(CompoundTag.class);
+        if (potionContents.customEffects() != null) {
+            for (PotionEffect effect : potionContents.customEffects()) {
+                if (effect == null || effect.effectData() == null) {
+                    continue;
+                }
+                final String effectIdentifier = PotionEffects1_20_5.idToKey(effect.effect());
+                if (effectIdentifier == null) {
+                    continue;
+                }
+                final CompoundTag effectTag = writePotionEffectData(effect.effectData());
+                effectTag.putString("id", effectIdentifier);
+                customEffects.add(effectTag);
+            }
+        }
+        if (!customEffects.isEmpty()) {
+            bedrockTag.put("custom_potion_effects", customEffects);
+        }
+    }
+
+    private static CompoundTag writePotionEffectData(final PotionEffectData effectData) {
+        final CompoundTag rootTag = new CompoundTag();
+        CompoundTag currentTag = rootTag;
+        PotionEffectData currentData = effectData;
+        while (currentData != null) {
+            currentTag.putInt("amplifier", currentData.amplifier());
+            currentTag.putInt("duration", currentData.duration());
+            currentTag.putBoolean("ambient", currentData.ambient());
+            currentTag.putBoolean("show_particles", currentData.showParticles());
+            currentTag.putBoolean("show_icon", currentData.showIcon());
+            currentData = currentData.hiddenEffect();
+            if (currentData != null) {
+                final CompoundTag hiddenTag = new CompoundTag();
+                currentTag.put("hidden_effect", hiddenTag);
+                currentTag = hiddenTag;
+            }
+        }
+        return rootTag;
+    }
+
+    private static String javaTextToBedrock(final Tag javaText) {
+        try {
+            return ProtocolConstants.JAVA_TEXT_COMPONENT_SERIALIZER.deserializeNbtTree(javaText).asLegacyFormatString();
+        } catch (final RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static boolean isGeneratedFallbackLore(final String lore, final String bedrockIdentifier) {
+        final String plainLore = TextUtil.stripFormatting(lore);
+        return plainLore.equals("[ViaBedrock] Custom item: " + bedrockIdentifier)
+                || plainLore.equals("[ViaBedrock] Mapped item: " + bedrockIdentifier);
     }
 
     public BedrockItem[] bedrockItems(final Item[] javaItems) {
@@ -493,6 +1210,82 @@ public class ItemRewriter extends StoredObject {
 
     public Type<BedrockItem[]> newItemArrayType() {
         return this.newItemArrayType;
+    }
+
+    private record PotionItemMappings(
+            Map<PotionContentsKey, JavaToBedrockItemMapping> exactMappings,
+            Int2ObjectMap<JavaToBedrockItemMapping> potionMappings,
+            JavaToBedrockItemMapping fallback
+    ) {
+        JavaToBedrockItemMapping mapping(final PotionContents potionContents) {
+            if (potionContents == null) {
+                return this.fallback;
+            }
+            final JavaToBedrockItemMapping exactMapping = this.exactMappings.get(PotionContentsKey.of(potionContents));
+            if (exactMapping != null) {
+                return exactMapping;
+            }
+            if (potionContents.potion() != null) {
+                final JavaToBedrockItemMapping potionMapping = this.potionMappings.get(potionContents.potion().intValue());
+                if (potionMapping != null) {
+                    return potionMapping;
+                }
+            }
+            return this.fallback;
+        }
+    }
+
+    private record PotionContentsKey(
+            Integer potion,
+            Integer customColor,
+            List<PotionEffectKey> customEffects
+    ) {
+        static PotionContentsKey of(final PotionContents potionContents) {
+            final List<PotionEffectKey> effects = new ArrayList<>();
+            if (potionContents.customEffects() != null) {
+                for (PotionEffect effect : potionContents.customEffects()) {
+                    if (effect != null && effect.effectData() != null) {
+                        effects.add(new PotionEffectKey(
+                                effect.effect(), PotionEffectDataKey.of(effect.effectData())));
+                    }
+                }
+            }
+            return new PotionContentsKey(potionContents.potion(), potionContents.customColor(), List.copyOf(effects));
+        }
+    }
+
+    private record PotionEffectKey(int effect, PotionEffectDataKey data) {
+    }
+
+    private record PotionEffectDataKey(List<PotionEffectDataValue> values) {
+        static PotionEffectDataKey of(final PotionEffectData data) {
+            final List<PotionEffectDataValue> values = new ArrayList<>();
+            PotionEffectData current = data;
+            while (current != null) {
+                values.add(new PotionEffectDataValue(
+                        current.amplifier(), current.duration(), current.ambient(),
+                        current.showParticles(), current.showIcon()));
+                current = current.hiddenEffect();
+            }
+            return new PotionEffectDataKey(List.copyOf(values));
+        }
+    }
+
+    private record PotionEffectDataValue(
+            int amplifier,
+            int duration,
+            boolean ambient,
+            boolean showParticles,
+            boolean showIcon
+    ) {
+    }
+
+    private record JavaToBedrockItemMapping(
+            String bedrockIdentifier,
+            int bedrockId,
+            short data,
+            int blockRuntimeId
+    ) {
     }
 
     public interface NbtRewriter {

@@ -62,6 +62,22 @@ Protocol truth: `decompiled/nukkit-mot` encode/decode, then `decompiled/nukkitma
   - `decompiled/nukkit-mot/cn/nukkit/network/protocol/ProtocolInfo.java` (305 / 340)
 - **Risk:** Overlay is vanilla MOT 860 only. Custom blocks still come from START_GAME `blockProperties` and are assigned ids after the MOT sequential max. Live `ITEM_REGISTRY` still overrides static item ids.
 
+## 2026-08-25 — Experimental metadata, riding, inventory, items, and block interaction
+
+- **Goal:** README experimental gaps (entity metadata/mounting, CAI/SAI, item data, block break/place, item use) still mismatched MOT 860. SAI repeated crafts omitted `CraftRecipeAuto`, offhand F-swap treated request emission as success, item amounts 128–255 looked empty, placement ACKs ignored batched subchunk updates, and entity variants used Bedrock ordinals.
+- **Change:**
+  - Entity metadata uses semantic Java registry ids; unknown Bedrock properties stay raw. Copper flower is Java SADDLE poppy. Tropical fish is packed from VARIANT/MARK_VARIANT/COLOR_INDEX/COLOR_2_INDEX. Sniffer MOT flags 110–112 map to generated DEPRECATED_1/2/3.
+  - Riding emits Java SET_PASSENGERS with controller first; boat paddle release zeros rowingTime.
+  - SAI rollback is generation-gated. Offhand promotion stays PENDING until the matching ItemStackResponse OK; rejected ISR resyncs Java. Promotion OK flushes deferred ATTACK/INTERACT but does not restore until the promoted use ends.
+  - Repeated SAI crafts emit MOT 860 `CraftRecipeAuto` DEFAULT descriptors from the matched grid. Extra-output recipes stay one craft. CAI QUICK_MOVE may aggregate counts.
+  - Item shadows round-trip identifier/meta/blockRuntimeId/NBT/canPlace/canBreak; unsigned amounts 128–255 survive. Named HolderSet overlay only applies when the tag key is a concrete Bedrock block id.
+  - Placement ACK target follows clicked-block replaceability. `powder_snow` is not generic replaceable; snow layers fail closed at height 7/missing; double plants only grass/fern. START break ACK is immediate except instant-break; NetEase completion is PredictDestroyBlock only.
+- **Refs:**
+  - `decompiled/nukkit-mot/cn/nukkit/utils/BinaryStream.java` (CraftRecipeAuto DEFAULT descriptors)
+  - `decompiled/nukkit-mot/cn/nukkit/inventory/request/CraftRecipeAutoProcessor.java`
+  - `decompiled/nukkit-mot/cn/nukkit/entity/Entity.java` (sniffer flags 110–112)
+- **Risk:** README boxes stay unchecked. Full `gradlew test` still includes optional JFR/GC soak tests gated by env vars. Extra-output auto-craft with `times != 1` is rejected by MOT.
+
 ## Open risks (not patched here)
 
 - Static `runtime_item_states.json` is still the international dump. MOT `runtime_item_states_netease_860.json` differs on 552 vanilla ids, but MOT always sends live `ITEM_REGISTRY`, so classification (`id <= 255`) is the remaining static risk.

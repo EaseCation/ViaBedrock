@@ -19,6 +19,43 @@ package net.raphimc.viabedrock.protocol.model;
 
 import com.viaversion.viaversion.libs.fastutil.ints.Int2IntMap;
 import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectMap;
+import com.viaversion.viaversion.libs.fastutil.ints.Int2IntOpenHashMap;
+import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectOpenHashMap;
 
-public record EntityProperties(Int2IntMap intProperties, Int2ObjectMap<Float> floatProperties) {
+import java.util.List;
+import java.util.Objects;
+
+public record EntityProperties(
+        Int2IntMap intProperties,
+        Int2ObjectMap<Float> floatProperties,
+        String entityIdentifier,
+        List<EntityPropertyValue> namedProperties
+) {
+
+    public EntityProperties(final Int2IntMap intProperties, final Int2ObjectMap<Float> floatProperties) {
+        this(intProperties, floatProperties, null, List.of());
+    }
+
+    public EntityProperties {
+        Objects.requireNonNull(intProperties, "intProperties");
+        Objects.requireNonNull(floatProperties, "floatProperties");
+        namedProperties = namedProperties == null ? List.of() : List.copyOf(namedProperties);
+    }
+
+    public static EntityProperties empty() {
+        return new EntityProperties(new Int2IntOpenHashMap(), new Int2ObjectOpenHashMap<>());
+    }
+
+    public EntityProperties withNamedProperties(final String entityIdentifier, final List<EntityPropertyValue> namedProperties) {
+        return new EntityProperties(this.intProperties, this.floatProperties, entityIdentifier, namedProperties);
+    }
+
+    public EntityPropertyValue namedProperty(final String name) {
+        for (final EntityPropertyValue property : this.namedProperties) {
+            if (property.name().equals(name)) {
+                return property;
+            }
+        }
+        return null;
+    }
 }

@@ -23,6 +23,7 @@ import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
 import com.viaversion.viaversion.api.minecraft.item.HashedItem;
 import com.viaversion.viaversion.api.minecraft.item.Item;
 import com.viaversion.viaversion.api.minecraft.item.data.Equippable;
+import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.model.container.AnvilContainer;
 import net.raphimc.viabedrock.api.model.container.Container;
 import net.raphimc.viabedrock.api.model.container.CraftingTableContainer;
@@ -30,19 +31,24 @@ import net.raphimc.viabedrock.experimental.inventory.SlotMapper.BedrockSlotRef;
 import net.raphimc.viabedrock.experimental.model.inventory.InventoryActionData;
 import net.raphimc.viabedrock.experimental.model.inventory.InventorySource;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
+import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventorySourceType;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventorySource_InventorySourceFlags;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.ContainerInput;
+import net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
+import net.raphimc.viabedrock.protocol.packet.ItemStackRequestLayout;
 import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
+import net.raphimc.viabedrock.protocol.storage.EntityTracker;
+import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
 import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 
 public class ClickSimulator {
 
@@ -74,6 +80,21 @@ public class ClickSimulator {
             final Map<Short, HashedItem> changedSlots,
             final HashedItem carriedItem,
             final JavaItemStackLimits.Resolver stackLimits) {
+        return simulate(javaContainerId, javaSlot, button, action, tracker, dragState, changedSlots, carriedItem,
+                stackLimits, item -> tracker.user().get(ItemRewriter.class).javaItem(item));
+    }
+
+    static List<InventoryActionData> simulate(
+            final int javaContainerId,
+            final short javaSlot,
+            final byte button,
+            final ContainerInput action,
+            final InventoryTracker tracker,
+            final ClientAuthInventoryModule.DragState dragState,
+            final Map<Short, HashedItem> changedSlots,
+            final HashedItem carriedItem,
+            final JavaItemStackLimits.Resolver stackLimits,
+            final Function<BedrockItem, Item> javaItemResolver) {
 
         // Intercept crafting output slot clicks
         if (javaSlot == 0) {
@@ -88,39 +109,87 @@ public class ClickSimulator {
             }
         }
         if (javaSlot == 2 && javaContainerId != 0 && tracker.getCurrentContainer() instanceof AnvilContainer) {
-            // MOT applies the anvil result via CraftRecipeOptional + created-output Take.
-            // Java PICKUP puts the result on the cursor; QUICK_MOVE would need inventory
-            // placement and is left unsupported so the screen resyncs instead of desyncing.
-            return action == ContainerInput.PICKUP ? AnvilSimulator.simulateTakeResult(tracker) : null;
+            return switch (action) {
+                case PICKUP -> AnvilSimulator.simulateTakeResult(tracker);
+                case QUICK_MOVE -> simulatePredictedSpecialResultQuickMove(
+                        javaContainerId, javaSlot, button, tracker, dragState, changedSlots, carriedItem,
+                        stackLimits, javaItemResolver, AnvilSimulator::simulateTakeResult);
+                default -> null;
+            };
         }
         if (javaSlot == 2 && javaContainerId != 0 && CartographySimulator.isCartography(tracker.getCurrentContainer())) {
-            return action == ContainerInput.PICKUP ? CartographySimulator.simulateTakeResult(tracker) : null;
+            return switch (action) {
+                case PICKUP -> CartographySimulator.simulateTakeResult(tracker);
+                case QUICK_MOVE -> simulatePredictedSpecialResultQuickMove(
+                        javaContainerId, javaSlot, button, tracker, dragState, changedSlots, carriedItem,
+                        stackLimits, javaItemResolver, CartographySimulator::simulateTakeResult);
+                default -> null;
+            };
         }
         if (javaSlot == 2 && javaContainerId != 0 && GrindstoneSimulator.isGrindstone(tracker.getCurrentContainer())) {
-            return action == ContainerInput.PICKUP ? GrindstoneSimulator.simulateTakeResult(tracker) : null;
+            return switch (action) {
+                case PICKUP -> GrindstoneSimulator.simulateTakeResult(tracker);
+                case QUICK_MOVE -> simulatePredictedSpecialResultQuickMove(
+                        javaContainerId, javaSlot, button, tracker, dragState, changedSlots, carriedItem,
+                        stackLimits, javaItemResolver, GrindstoneSimulator::simulateTakeResult);
+                default -> null;
+            };
         }
         if (javaSlot == LoomSimulator.JAVA_RESULT_SLOT && javaContainerId != 0 && LoomSimulator.isLoom(tracker.getCurrentContainer())) {
-            return action == ContainerInput.PICKUP ? LoomSimulator.simulateTakeResult(tracker) : null;
+            return switch (action) {
+                case PICKUP -> LoomSimulator.simulateTakeResult(tracker);
+                case QUICK_MOVE -> simulatePredictedSpecialResultQuickMove(
+                        javaContainerId, javaSlot, button, tracker, dragState, changedSlots, carriedItem,
+                        stackLimits, javaItemResolver, LoomSimulator::simulateTakeResult);
+                default -> null;
+            };
         }
         if (javaSlot == StonecutterSimulator.JAVA_RESULT_SLOT && javaContainerId != 0 && StonecutterSimulator.isStonecutter(tracker.getCurrentContainer())) {
-            return action == ContainerInput.PICKUP ? StonecutterSimulator.simulateTakeResult(tracker) : null;
+            return switch (action) {
+                case PICKUP -> StonecutterSimulator.simulateTakeResult(tracker);
+                case QUICK_MOVE -> simulatePredictedSpecialResultQuickMove(
+                        javaContainerId, javaSlot, button, tracker, dragState, changedSlots, carriedItem,
+                        stackLimits, javaItemResolver, StonecutterSimulator::simulateTakeResult);
+                default -> null;
+            };
         }
         if (javaSlot == SmithingSimulator.JAVA_RESULT_SLOT && javaContainerId != 0 && SmithingSimulator.isSmithing(tracker.getCurrentContainer())) {
-            return action == ContainerInput.PICKUP ? SmithingSimulator.simulateTakeResult(tracker) : null;
+            return switch (action) {
+                case PICKUP -> SmithingSimulator.simulateTakeResult(tracker);
+                case QUICK_MOVE -> simulatePredictedSpecialResultQuickMove(
+                        javaContainerId, javaSlot, button, tracker, dragState, changedSlots, carriedItem,
+                        stackLimits, javaItemResolver, SmithingSimulator::simulateTakeResult);
+                default -> null;
+            };
         }
         if (javaSlot == TradeSimulator.JAVA_RESULT_SLOT && javaContainerId != 0 && TradeSimulator.isTrade(tracker.getCurrentContainer())) {
-            return action == ContainerInput.PICKUP ? TradeSimulator.simulateTakeResult(tracker) : null;
+            return switch (action) {
+                case PICKUP -> TradeSimulator.simulateTakeResult(tracker);
+                case QUICK_MOVE -> simulatePredictedSpecialResultQuickMove(
+                        javaContainerId, javaSlot, button, tracker, dragState, changedSlots, carriedItem,
+                        stackLimits, javaItemResolver, TradeSimulator::simulateTakeResult);
+                default -> null;
+            };
         }
 
         return switch (action) {
             case PICKUP -> simulatePickup(javaContainerId, javaSlot, button, tracker, stackLimits);
-            case QUICK_MOVE -> javaContainerId == 0 && javaSlot >= 1 && javaSlot <= 45
-                    ? simulatePredictedPlayerQuickMove(javaSlot, button, tracker, changedSlots, carriedItem, stackLimits)
-                    : simulateQuickMove(javaContainerId, javaSlot, tracker, stackLimits);
+            case QUICK_MOVE -> {
+                if (javaContainerId == 0 && javaSlot >= 1 && javaSlot <= 45) {
+                    yield simulatePredictedPlayerQuickMove(
+                            javaSlot, button, tracker, changedSlots, carriedItem, stackLimits);
+                }
+                if (tracker.getCurrentContainer() instanceof CraftingTableContainer) {
+                    yield simulateQuickMove(javaContainerId, javaSlot, tracker, stackLimits);
+                }
+                yield simulatePredictedContainerQuickMove(javaContainerId, javaSlot, button, tracker, changedSlots,
+                        carriedItem, stackLimits, javaItemResolver);
+            }
             case SWAP -> simulateSwap(javaContainerId, javaSlot, button, tracker);
             case CLONE -> simulateClone(javaContainerId, javaSlot, tracker, stackLimits);
             case THROW -> simulateThrow(javaContainerId, javaSlot, button, tracker);
-            case QUICK_CRAFT -> simulateQuickCraft(javaContainerId, javaSlot, button, tracker, dragState, stackLimits);
+            case QUICK_CRAFT -> simulateQuickCraft(javaContainerId, javaSlot, button, tracker, dragState,
+                    changedSlots, carriedItem, stackLimits, javaItemResolver);
             case PICKUP_ALL -> simulatePickupAll(javaContainerId, javaSlot, tracker, stackLimits);
         };
     }
@@ -445,6 +514,271 @@ public class ClickSimulator {
         return actions;
     }
 
+    private static List<InventoryActionData> simulatePredictedSpecialResultQuickMove(
+            final int javaContainerId,
+            final short javaSlot,
+            final byte button,
+            final InventoryTracker tracker,
+            final ClientAuthInventoryModule.DragState dragState,
+            final Map<Short, HashedItem> changedSlots,
+            final HashedItem carriedItem,
+            final JavaItemStackLimits.Resolver stackLimits,
+            final Function<BedrockItem, Item> javaItemResolver,
+            final Function<InventoryTracker, List<InventoryActionData>> resultSimulator) {
+        if (button < 0 || button > 1 || changedSlots == null || carriedItem == null
+                || javaItemResolver == null || resultSimulator == null) {
+            return null;
+        }
+
+        final Container container = tracker.getCurrentContainer();
+        if (container == null || javaContainerId != container.javaContainerId()) return null;
+
+        final BedrockItem cursorItem = SlotMapper.getCursorItem(tracker);
+        final Item javaCursorItem = javaItemResolver.apply(cursorItem.copy());
+        if (javaCursorItem == null || !samePredictedStack(javaCursorItem, carriedItem)) return null;
+
+        final List<InventoryActionData> baseActions = resultSimulator.apply(tracker);
+        if (baseActions == null || baseActions.isEmpty()) return null;
+
+        InventoryActionData resultMarker = null;
+        InventoryActionData cursorDestination = null;
+        for (final InventoryActionData action : baseActions) {
+            if (action.source().type() == InventorySourceType.NonImplementedFeatureTODO) {
+                if (resultMarker != null || action.fromItem().isEmpty() || !action.toItem().isEmpty()) {
+                    return null;
+                }
+                resultMarker = action;
+            } else if (action.source().type() == InventorySourceType.ContainerInventory
+                    && action.source().containerId() == ContainerID.CONTAINER_ID_PLAYER_ONLY_UI.getValue()
+                    && action.slot() == 0 && action.fromItem().isEmpty() && !action.toItem().isEmpty()) {
+                if (cursorDestination != null) return null;
+                cursorDestination = action;
+            }
+        }
+        if (resultMarker == null || cursorDestination == null) return null;
+
+        // Java may leave an output remainder when the player inventory cannot accept the
+        // entire generated stack. Account for that remainder instead of treating every
+        // non-empty result prediction as an unsupported transfer.
+        final HashedItem predictedResult = changedSlots.get(javaSlot);
+        if (predictedResult == null) return null;
+
+        final BedrockItem resultItem = resultMarker.fromItem().copy();
+        final int maxStackSize = stackLimits.maxStackSize(resultItem);
+        if (maxStackSize <= 0 || resultItem.amount() <= 0 || resultItem.amount() > maxStackSize) return null;
+        final Item javaResultItem = javaItemResolver.apply(resultItem.copy());
+        if (javaResultItem == null || javaResultItem.isEmpty()) return null;
+        final int resultRemainder;
+        if (predictedResult.isEmpty()) {
+            resultRemainder = 0;
+        } else {
+            if (!samePredictedItem(javaResultItem, predictedResult)
+                    || predictedResult.amount() <= 0 || predictedResult.amount() > resultItem.amount()) return null;
+            resultRemainder = predictedResult.amount();
+        }
+
+        final int containerSize = container.size();
+        final List<Integer> targetSlots = new ArrayList<>();
+        for (final Map.Entry<Short, HashedItem> entry : changedSlots.entrySet()) {
+            final int targetJavaSlot = entry.getKey();
+            if (targetJavaSlot == javaSlot) continue;
+            if (targetJavaSlot >= containerSize && targetJavaSlot < containerSize + 36) {
+                targetSlots.add(targetJavaSlot);
+                continue;
+            }
+            if (targetJavaSlot < 0 || targetJavaSlot >= containerSize
+                    || !matchesPredictedSpecialMenuChange(container, targetJavaSlot, entry.getValue(),
+                    baseActions, javaItemResolver)) {
+                return null;
+            }
+        }
+        if (targetSlots.isEmpty()) return null;
+
+        final List<InventoryActionData> destinationActions = new ArrayList<>(targetSlots.size());
+        int totalMoved = 0;
+        // Java's container quick-move path visits the player range in reverse order.
+        for (final int targetJavaSlot : descending(containerSize, containerSize + 35)) {
+            if (!targetSlots.contains(targetJavaSlot)) continue;
+            final HashedItem predictedTarget = changedSlots.get((short) targetJavaSlot);
+            if (!isValidPredictedTargetAmount(predictedTarget, maxStackSize)
+                    || !samePredictedItem(javaResultItem, predictedTarget)) return null;
+
+            final BedrockSlotRef targetRef = SlotMapper.resolve(javaContainerId, targetJavaSlot, tracker);
+            if (targetRef == null
+                    || targetRef.containerId() != ContainerID.CONTAINER_ID_INVENTORY.getValue()) return null;
+            final BedrockItem targetItem = targetRef.container().getItem(targetRef.slot());
+            if (!targetItem.isEmpty() && (targetItem.amount() > maxStackSize
+                    || !canStackPredicted(targetItem, resultItem))) return null;
+
+            final int targetAmountBefore = targetItem.isEmpty() ? 0 : targetItem.amount();
+            if (predictedTarget.amount() <= targetAmountBefore) return null;
+            final int moved = predictedTarget.amount() - targetAmountBefore;
+            if (moved > resultItem.amount() - totalMoved) return null;
+
+            final BedrockItem newTarget = targetItem.isEmpty() ? resultItem.copy() : targetItem.copy();
+            newTarget.setAmount(predictedTarget.amount());
+            destinationActions.add(slotAction(targetRef, targetItem, newTarget));
+            totalMoved += moved;
+        }
+        if (totalMoved <= 0 || totalMoved + resultRemainder != resultItem.amount()) return null;
+
+        final List<InventoryActionData> actions = new ArrayList<>(baseActions.size() - 1 + destinationActions.size());
+        for (final InventoryActionData action : baseActions) {
+            if (action != cursorDestination) actions.add(action);
+        }
+        actions.addAll(destinationActions);
+        return actions;
+    }
+
+    private static boolean matchesPredictedSpecialMenuChange(
+            final Container container,
+            final int javaSlot,
+            final HashedItem predictedItem,
+            final List<InventoryActionData> baseActions,
+            final Function<BedrockItem, Item> javaItemResolver) {
+        for (final InventoryActionData action : baseActions) {
+            if (action.source().type() != InventorySourceType.ContainerInventory
+                    || action.source().containerId() != (container.containerId() & 0xFF)) {
+                continue;
+            }
+            if (container.javaSlot(action.slot()) != javaSlot) continue;
+            final Item expected = javaItemResolver.apply(action.toItem().copy());
+            return expected != null && samePredictedStack(expected, predictedItem);
+        }
+        return false;
+    }
+
+    private static List<InventoryActionData> simulatePredictedContainerQuickMove(
+            final int javaContainerId,
+            final short javaSlot,
+            final byte button,
+            final InventoryTracker tracker,
+            final Map<Short, HashedItem> changedSlots,
+            final HashedItem carriedItem,
+            final JavaItemStackLimits.Resolver stackLimits,
+            final Function<BedrockItem, Item> javaItemResolver) {
+        if (button < 0 || button > 1 || changedSlots == null || carriedItem == null || javaItemResolver == null) {
+            return null;
+        }
+
+        final Container container = tracker.getCurrentContainer();
+        if (container == null || container instanceof CraftingTableContainer
+                || javaContainerId != container.javaContainerId()) return null;
+
+        final BedrockItem cursorItem = SlotMapper.getCursorItem(tracker);
+        final Item javaCarriedItem = javaItemResolver.apply(cursorItem.copy());
+        if (javaCarriedItem == null || !samePredictedStack(javaCarriedItem, carriedItem)) return null;
+
+        final BedrockSlotRef sourceRef = SlotMapper.resolve(javaContainerId, javaSlot, tracker);
+        if (sourceRef == null) return null;
+
+        final BedrockItem sourceItem = sourceRef.container().getItem(sourceRef.slot());
+        if (sourceItem.isEmpty()) {
+            return changedSlots.isEmpty() ? Collections.emptyList() : null;
+        }
+        if (changedSlots.isEmpty()) return Collections.emptyList();
+
+        final Item javaSourceItem = javaItemResolver.apply(sourceItem.copy());
+        final int maxStackSize = stackLimits.maxStackSize(sourceItem);
+        if (javaSourceItem == null || javaSourceItem.isEmpty()
+                || maxStackSize <= 0 || sourceItem.amount() > maxStackSize) return null;
+
+        final HashedItem predictedSource = changedSlots.get(javaSlot);
+        if (predictedSource == null || predictedSource.amount() < 0) return null;
+
+        final int sourceAmountAfter;
+        if (predictedSource.isEmpty()) {
+            sourceAmountAfter = 0;
+        } else {
+            if (!samePredictedItem(javaSourceItem, predictedSource)
+                    || predictedSource.amount() > maxStackSize
+                    || predictedSource.amount() >= sourceItem.amount()) return null;
+            sourceAmountAfter = predictedSource.amount();
+        }
+
+        final int removedAmount = sourceItem.amount() - sourceAmountAfter;
+        if (removedAmount <= 0) return null;
+
+        final int containerSize = container.size();
+        final List<InventoryActionData> targetActions = new ArrayList<>();
+        int addedAmount = 0;
+        for (final Map.Entry<Short, HashedItem> entry : changedSlots.entrySet()) {
+            final int targetJavaSlot = entry.getKey();
+            if (targetJavaSlot == javaSlot) continue;
+
+            // Recipe/result previews are client-local side effects of changing an input. They are
+            // never valid insertion destinations and must not become Bedrock inventory actions.
+            if (isResultOnlyContainerSlot(container, targetJavaSlot)) continue;
+            if (!isAllowedPredictedContainerQuickMoveTarget(javaSlot, targetJavaSlot, containerSize, container)) {
+                return null;
+            }
+
+            final HashedItem predictedTarget = entry.getValue();
+            final BedrockSlotRef targetRef = SlotMapper.resolve(javaContainerId, targetJavaSlot, tracker);
+            if (targetRef == null || !isValidPredictedTargetAmount(predictedTarget, maxStackSize)
+                    || !samePredictedItem(javaSourceItem, predictedTarget)) return null;
+
+            final BedrockItem targetItem = targetRef.container().getItem(targetRef.slot());
+            final int targetAmountBefore = targetItem.isEmpty() ? 0 : targetItem.amount();
+            if (!targetItem.isEmpty() && !canStackPredicted(targetItem, sourceItem)) return null;
+            if (predictedTarget.amount() <= targetAmountBefore) return null;
+
+            final int addedToTarget = predictedTarget.amount() - targetAmountBefore;
+            if (addedToTarget > removedAmount - addedAmount) return null;
+
+            final BedrockItem newTarget = targetItem.isEmpty() ? sourceItem.copy() : targetItem.copy();
+            newTarget.setAmount(predictedTarget.amount());
+            targetActions.add(slotAction(targetRef, targetItem, newTarget));
+            addedAmount += addedToTarget;
+        }
+
+        if (targetActions.isEmpty() || addedAmount != removedAmount) return null;
+
+        final BedrockItem newSource = sourceAmountAfter == 0 ? BedrockItem.empty() : sourceItem.copy();
+        if (sourceAmountAfter > 0) newSource.setAmount(sourceAmountAfter);
+
+        final List<InventoryActionData> actions = new ArrayList<>(targetActions.size() + 1);
+        actions.add(slotAction(sourceRef, sourceItem, newSource));
+        actions.addAll(targetActions);
+        return actions;
+    }
+
+    private static boolean isAllowedPredictedContainerQuickMoveTarget(
+            final int sourceSlot, final int targetSlot, final int containerSize, final Container container) {
+        if (targetSlot < 0 || targetSlot >= containerSize + 36 || targetSlot == sourceSlot) return false;
+
+        if (sourceSlot >= 0 && sourceSlot < containerSize) {
+            return targetSlot >= containerSize;
+        }
+        if (sourceSlot < containerSize || sourceSlot >= containerSize + 36) return false;
+
+        return targetSlot < containerSize && !isResultOnlyContainerSlot(container, targetSlot);
+    }
+
+    static boolean isResultOnlyContainerSlot(final Container container, final int javaSlot) {
+        if (container == null || javaSlot < 0 || javaSlot >= container.size()) return false;
+        final ItemStackRequestLayout.SlotInfo slotInfo = ItemStackSlotMapper.fromOpenContainer(container, javaSlot);
+        if (slotInfo == null) return false;
+
+        return switch (slotInfo.container()) {
+            case AnvilResultPreviewContainer,
+                 CraftingOutputPreviewContainer,
+                 CompoundCreatorOutputPreview,
+                 CreatedOutputContainer,
+                 ElementConstructorOutputPreview,
+                 FurnaceResultContainer,
+                 MaterialReducerOutput,
+                 SmithingTableResultPreviewContainer,
+                 LoomResultPreviewContainer,
+                 GrindstoneResultPreviewContainer,
+                 StonecutterResultPreviewContainer,
+                 CartographyResultPreviewContainer,
+                 TradeResultPreviewContainer,
+                 Trade2ResultPreviewContainer -> true;
+            default -> false;
+        };
+    }
+
     private static boolean isAllowedPredictedQuickMoveTarget(final int sourceSlot, final int targetSlot) {
         if (sourceSlot >= 1 && sourceSlot <= 8) {
             return targetSlot >= 9 && targetSlot <= 44;
@@ -516,10 +850,7 @@ public class ClickSimulator {
     }
 
     private static boolean canStackPredicted(final BedrockItem first, final BedrockItem second) {
-        return canStack(first, second)
-                && Arrays.equals(first.canPlace(), second.canPlace())
-                && Arrays.equals(first.canBreak(), second.canBreak())
-                && first.blockingTicks() == second.blockingTicks();
+        return canStack(first, second);
     }
 
     private static int trustedEquipmentSlot(final Item javaItem) {
@@ -568,6 +899,9 @@ public class ClickSimulator {
 
     static List<InventoryActionData> simulateQuickMove(int javaContainerId, short javaSlot, InventoryTracker tracker,
                                                        JavaItemStackLimits.Resolver stackLimits) {
+        if (javaContainerId != 0 && !(tracker.getCurrentContainer() instanceof CraftingTableContainer)) {
+            return null;
+        }
         final BedrockSlotRef sourceRef = SlotMapper.resolve(javaContainerId, javaSlot, tracker);
         if (sourceRef == null) return null;
 
@@ -650,18 +984,9 @@ public class ClickSimulator {
                 return Collections.emptyList();
             }
 
-            // Generic container window
-            final int containerSize = currentContainer != null ? currentContainer.size() : 27;
-
-            if (javaSlot < containerSize) {
-                // Source is in container → player inventory, insertItem(N, N+36, reverse=true):
-                // highest menu slot first, i.e. hotbar (slot 8→0) then main inventory (slot 35→9)
-                return descending(containerSize, containerSize + 35);
-            } else {
-                // Source is in player inventory → container only, insertItem(0, N, false).
-                // Vanilla has no player-area fallback: if the container is full the item stays put.
-                return ascending(0, containerSize - 1);
-            }
+            // Non-crafting menus require Java changedSlots predictions so slot acceptance and
+            // machine-specific inventory fallbacks are preserved without guessing result slots.
+            return Collections.emptyList();
         } else {
             // Player Inventory Window
             if (javaSlot >= 9 && javaSlot <= 35) {
@@ -801,9 +1126,15 @@ public class ClickSimulator {
 
     private static List<InventoryActionData> simulateQuickCraft(int javaContainerId, short javaSlot, byte button,
                                                                InventoryTracker tracker, ClientAuthInventoryModule.DragState dragState,
-                                                               JavaItemStackLimits.Resolver stackLimits) {
-        int stage = button & 3;
-        int mode = button >> 2;
+                                                               Map<Short, HashedItem> changedSlots, HashedItem carriedItem,
+                                                               JavaItemStackLimits.Resolver stackLimits,
+                                                               Function<BedrockItem, Item> javaItemResolver) {
+        final int stage = button & 3;
+        final int mode = button >> 2;
+        if (mode < 0 || mode > 2) {
+            dragState.reset();
+            return null;
+        }
 
         switch (stage) {
             case 0: // Begin drag
@@ -811,11 +1142,20 @@ public class ClickSimulator {
                 return Collections.emptyList();
 
             case 1: // Add slot
+                if (dragState.getDragMode() != mode || dragState.getDragSlots().size() >= 128) {
+                    dragState.reset();
+                    return null;
+                }
                 dragState.addSlot(javaSlot);
                 return Collections.emptyList();
 
             case 2: // End drag
-                return finishQuickCraft(javaContainerId, tracker, dragState, stackLimits);
+                if (dragState.getDragMode() != mode) {
+                    dragState.reset();
+                    return null;
+                }
+                return finishQuickCraft(javaContainerId, tracker, dragState, changedSlots, carriedItem,
+                        stackLimits, javaItemResolver);
 
             default:
                 dragState.reset();
@@ -823,14 +1163,85 @@ public class ClickSimulator {
         }
     }
 
+    private static boolean isCreativeMiddleDragAllowed(final InventoryTracker tracker) {
+        if (tracker == null || tracker.user() == null || ViaBedrock.getConfig() == null
+                || !ViaBedrock.getConfig().shouldEmulateNetEaseClient()
+                || ViaBedrock.getConfig().getNetEaseProtocolVersion() != 860) {
+            return false;
+        }
+        final GameSessionStorage session = tracker.user().get(GameSessionStorage.class);
+        if (session == null || !session.isInventoryServerAuthoritative()) {
+            return false;
+        }
+        final EntityTracker entityTracker = tracker.user().get(EntityTracker.class);
+        return entityTracker != null && entityTracker.getClientPlayer() != null
+                && entityTracker.getClientPlayer().javaGameMode() == GameMode.CREATIVE;
+    }
+
+    private static List<InventoryActionData> simulateCreativeMiddleDrag(
+            final int javaContainerId, final InventoryTracker tracker, final List<Short> dragSlots,
+            final BedrockItem cursorItem, final Map<Short, HashedItem> changedSlots,
+            final HashedItem carriedItem, final JavaItemStackLimits.Resolver stackLimits,
+            final Function<BedrockItem, Item> javaItemResolver) {
+        if (!isCreativeMiddleDragAllowed(tracker) || dragSlots.isEmpty() || cursorItem.isEmpty()
+                || changedSlots == null || changedSlots.isEmpty() || changedSlots.size() > 36
+                || carriedItem == null || javaItemResolver == null) {
+            return null;
+        }
+        final int maxStackSize = stackLimits.maxStackSize(cursorItem);
+        if (maxStackSize <= 0) return null;
+        final Item javaCursorItem = javaItemResolver.apply(cursorItem.copy());
+        if (javaCursorItem == null || javaCursorItem.isEmpty()
+                || !samePredictedStack(javaCursorItem, carriedItem)) {
+            return null;
+        }
+
+        final BedrockItem generated = cursorItem.copy();
+        generated.setAmount(maxStackSize);
+        generated.setNetId(null);
+        final List<InventoryActionData> actions = new ArrayList<>();
+        actions.add(new InventoryActionData(
+                new InventorySource(InventorySourceType.CreativeInventory,
+                        ContainerID.CONTAINER_ID_NONE.getValue(), InventorySource_InventorySourceFlags.NoFlag),
+                ItemStackRequestEncoder.CREATIVE_DRAG_MARKER_SLOT, BedrockItem.empty(), generated.copy()));
+
+        final List<Short> acceptedSlots = new ArrayList<>();
+        for (final short javaSlot : dragSlots) {
+            if (acceptedSlots.contains(javaSlot)) continue;
+            final BedrockSlotRef ref = SlotMapper.resolve(javaContainerId, javaSlot, tracker);
+            if (ref == null || ref.containerId() != ContainerID.CONTAINER_ID_INVENTORY.getValue()) continue;
+            final BedrockItem current = ref.container().getItem(ref.slot());
+            if (!current.isEmpty() && (!canStack(current, cursorItem) || current.amount() >= maxStackSize)) continue;
+            final HashedItem predicted = changedSlots.get(javaSlot);
+            if (!isValidPredictedTargetAmount(predicted, maxStackSize)
+                    || !samePredictedItem(javaCursorItem, predicted)
+                    || predicted.amount() != maxStackSize) {
+                return null;
+            }
+            acceptedSlots.add(javaSlot);
+            actions.add(slotAction(ref, current, generated.copy()));
+        }
+        if (acceptedSlots.isEmpty()) return null;
+        for (final short changedSlot : changedSlots.keySet()) {
+            if (!acceptedSlots.contains(changedSlot)) return null;
+        }
+        return actions;
+    }
+
     private static List<InventoryActionData> finishQuickCraft(int javaContainerId, InventoryTracker tracker,
                                                               ClientAuthInventoryModule.DragState dragState,
-                                                              JavaItemStackLimits.Resolver stackLimits) {
+                                                              Map<Short, HashedItem> changedSlots, HashedItem carriedItem,
+                                                              JavaItemStackLimits.Resolver stackLimits,
+                                                              Function<BedrockItem, Item> javaItemResolver) {
         final int dragMode = dragState.getDragMode();
         final List<Short> dragSlots = new ArrayList<>(dragState.getDragSlots());
         dragState.reset();
 
         final BedrockItem cursorItem = SlotMapper.getCursorItem(tracker);
+        if (dragMode == 2) {
+            return simulateCreativeMiddleDrag(javaContainerId, tracker, dragSlots, cursorItem, changedSlots,
+                    carriedItem, stackLimits, javaItemResolver);
+        }
         if (dragSlots.isEmpty() || cursorItem.isEmpty()) {
             return null;
         }
@@ -878,17 +1289,6 @@ public class ClickSimulator {
                 }
                 break;
             }
-            case 2: { // Creative middle click — fill to max
-                for (short slot : dragSlots) {
-                    final BedrockSlotRef ref = SlotMapper.resolve(javaContainerId, slot, tracker);
-                    if (ref == null) continue;
-                    final BedrockItem slotItem = ref.container().getItem(ref.slot());
-                    BedrockItem newSlot = cursorItem.copy();
-                    newSlot.setAmount(maxStackSize);
-                    actions.add(slotAction(ref, slotItem, newSlot));
-                }
-                break;
-            }
             default:
                 return null;
         }
@@ -896,14 +1296,9 @@ public class ClickSimulator {
         if (actions.isEmpty()) return null;
 
         // Add cursor action
-        BedrockItem newCursor;
-        if (dragMode == 2) {
-            newCursor = cursorItem; // Creative mode — cursor unchanged
-        } else {
-            int remainingAmount = cursorItem.amount() - totalDistributed;
-            newCursor = remainingAmount > 0 ? cursorItem.copy() : BedrockItem.empty();
-            if (remainingAmount > 0) newCursor.setAmount(remainingAmount);
-        }
+        int remainingAmount = cursorItem.amount() - totalDistributed;
+        final BedrockItem newCursor = remainingAmount > 0 ? cursorItem.copy() : BedrockItem.empty();
+        if (remainingAmount > 0) newCursor.setAmount(remainingAmount);
         actions.add(cursorAction(cursorItem, newCursor));
 
         return actions;

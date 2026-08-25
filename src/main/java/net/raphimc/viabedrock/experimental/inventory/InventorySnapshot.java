@@ -22,9 +22,9 @@ import net.raphimc.viabedrock.protocol.model.BedrockItem;
 import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 
 /**
- * Pre-click copy of the SAI mirror. NetEase 860 error ITEM_STACK_RESPONSE
- * packets omit container contents, so a rejected click has to restore this
- * snapshot instead of keeping the optimistic Java prediction.
+ * Pre-click copy of the SAI mirror. A rejected request restores this only when
+ * no newer authoritative INVENTORY_CONTENT/INVENTORY_SLOT has already corrected
+ * the mirror. Open-container contents are also tied to the captured window.
  */
 public final class InventorySnapshot {
 
@@ -33,42 +33,93 @@ public final class InventorySnapshot {
     private final BedrockItem[] armor;
     private final BedrockItem[] offhand;
     private final BedrockItem[] current;
+    private final long inventoryGeneration;
+    private final long hudGeneration;
+    private final long armorGeneration;
+    private final long offhandGeneration;
+    private final long currentGeneration;
+    private final Container currentContainer;
+    private final byte currentContainerId;
+    private final int currentJavaContainerId;
 
     private InventorySnapshot(final BedrockItem[] inventory, final BedrockItem[] hud, final BedrockItem[] armor,
-                              final BedrockItem[] offhand, final BedrockItem[] current) {
+                              final BedrockItem[] offhand, final BedrockItem[] current,
+                              final long inventoryGeneration, final long hudGeneration,
+                              final long armorGeneration, final long offhandGeneration,
+                              final long currentGeneration, final Container currentContainer,
+                              final byte currentContainerId, final int currentJavaContainerId) {
         this.inventory = inventory;
         this.hud = hud;
         this.armor = armor;
         this.offhand = offhand;
         this.current = current;
+        this.inventoryGeneration = inventoryGeneration;
+        this.hudGeneration = hudGeneration;
+        this.armorGeneration = armorGeneration;
+        this.offhandGeneration = offhandGeneration;
+        this.currentGeneration = currentGeneration;
+        this.currentContainer = currentContainer;
+        this.currentContainerId = currentContainerId;
+        this.currentJavaContainerId = currentJavaContainerId;
     }
 
     public static InventorySnapshot capture(final InventoryTracker tracker) {
         if (tracker == null) {
             return null;
         }
+        final Container inventory = tracker.getInventoryContainer();
+        final Container hud = tracker.getHudContainer();
+        final Container armor = tracker.getArmorContainer();
+        final Container offhand = tracker.getOffhandContainer();
+        final long inventoryGeneration = tracker.authoritativeInventoryGeneration(inventory);
+        final long hudGeneration = tracker.authoritativeInventoryGeneration(hud);
+        final long armorGeneration = tracker.authoritativeInventoryGeneration(armor);
+        final long offhandGeneration = tracker.authoritativeInventoryGeneration(offhand);
         final Container open = tracker.getCurrentContainer();
+        final boolean captureCurrent = open != null && open != tracker.getInventoryContainer();
         return new InventorySnapshot(
-                copy(tracker.getInventoryContainer()),
-                copy(tracker.getHudContainer()),
-                copy(tracker.getArmorContainer()),
-                copy(tracker.getOffhandContainer()),
-                open != null && open != tracker.getInventoryContainer() ? copy(open) : null
+                copy(inventory),
+                copy(hud),
+                copy(armor),
+                copy(offhand),
+                captureCurrent ? copy(open) : null,
+                inventoryGeneration,
+                hudGeneration,
+                armorGeneration,
+                offhandGeneration,
+                captureCurrent ? tracker.authoritativeInventoryGeneration(open) : 0L,
+                captureCurrent ? open : null,
+                captureCurrent ? open.containerId() : 0,
+                captureCurrent ? open.javaContainerId() : -1
         );
     }
 
-    public void restore(final InventoryTracker tracker) {
+    public boolean restore(final InventoryTracker tracker) {
         if (tracker == null) {
-            return;
+            return false;
         }
-        restoreInto(tracker.getInventoryContainer(), this.inventory);
-        restoreInto(tracker.getHudContainer(), this.hud);
-        restoreInto(tracker.getArmorContainer(), this.armor);
-        restoreInto(tracker.getOffhandContainer(), this.offhand);
+        boolean restored = false;
+        if (tracker.authoritativeInventoryGeneration(tracker.getInventoryContainer()) == this.inventoryGeneration) {
+            restored |= restoreInto(tracker.getInventoryContainer(), this.inventory);
+        }
+        if (tracker.authoritativeInventoryGeneration(tracker.getHudContainer()) == this.hudGeneration) {
+            restored |= restoreInto(tracker.getHudContainer(), this.hud);
+        }
+        if (tracker.authoritativeInventoryGeneration(tracker.getArmorContainer()) == this.armorGeneration) {
+            restored |= restoreInto(tracker.getArmorContainer(), this.armor);
+        }
+        if (tracker.authoritativeInventoryGeneration(tracker.getOffhandContainer()) == this.offhandGeneration) {
+            restored |= restoreInto(tracker.getOffhandContainer(), this.offhand);
+        }
         final Container open = tracker.getCurrentContainer();
-        if (open != null && open != tracker.getInventoryContainer() && this.current != null) {
-            restoreInto(open, this.current);
+        if (open == this.currentContainer
+                && open != null
+                && open.containerId() == this.currentContainerId
+                && open.javaContainerId() == this.currentJavaContainerId
+                && tracker.authoritativeInventoryGeneration(open) == this.currentGeneration) {
+            restored |= restoreInto(open, this.current);
         }
+        return restored;
     }
 
     private static BedrockItem[] copy(final Container container) {
@@ -83,13 +134,14 @@ public final class InventorySnapshot {
         return copy;
     }
 
-    private static void restoreInto(final Container container, final BedrockItem[] items) {
+    private static boolean restoreInto(final Container container, final BedrockItem[] items) {
         if (container == null || items == null) {
-            return;
+            return false;
         }
         final int size = Math.min(container.size(), items.length);
         for (int i = 0; i < size; i++) {
             container.setItemSilent(i, items[i] != null ? items[i].copy() : BedrockItem.empty());
         }
+        return true;
     }
 }

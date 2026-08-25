@@ -208,19 +208,27 @@ public final class ItemUseSemantics {
     }
 
     /**
-     * MOT {@code ItemBow.getArrow} only accepts id 262 ({@code minecraft:arrow}), not
-     * spectral/tipped. Survival with no such arrow must not start a local draw.
+     * MOT {@code ItemBow.getArrow} accepts any id 262 stack (plain or tipped via
+     * damage). Java spectral/tipped still have to count as draw-ammo so the client
+     * can start using; MOT fires 262 and treats unknown spectral as a normal arrow
+     * once the stack is in the main inventory.
      */
     static boolean canStartBow(final boolean emulateNetEase, final boolean bow, final boolean creative,
-                               final boolean hasRegularArrow) {
+                               final boolean hasBowAmmo) {
         if (!emulateNetEase || !bow) {
             return true;
         }
-        return creative || hasRegularArrow;
+        return creative || hasBowAmmo;
     }
 
     static boolean isRegularArrow(final String identifier) {
-        return "minecraft:arrow".equals(identifier);
+        return isBowAmmo(identifier);
+    }
+
+    static boolean isBowAmmo(final String identifier) {
+        return "minecraft:arrow".equals(identifier)
+                || "minecraft:tipped_arrow".equals(identifier)
+                || "minecraft:spectral_arrow".equals(identifier);
     }
 
     static boolean isShield(final String identifier) {
@@ -433,12 +441,16 @@ public final class ItemUseSemantics {
     /**
      * MOT CLICK_AIR / CLICK_BLOCK always call {@code inventory.getItemInHand()}
      * after {@code equipItem(hotbarSlot)}. {@code equipItem} rejects {@code < 0},
-     * and {@code equalsFast(itemInHand)} still compares against the main hand, so
-     * NetEase cannot consume an offhand stack from UseItemData. Keep the Java
-     * offhand (except shield sneak-emulation) until the player swaps with F.
+     * so an offhand stack in {@code itemInHand} would still consume the main hand.
+     * Non-shield offhand use is promoted with a silent F-swap first.
+     * Shield stays sneak-emulation and must not swap.
      * Ref: MOT Player.java case 1 CLICK_AIR; PlayerInventory.equipItem.
      */
     static boolean rejectNetEaseOffhandUse(final boolean emulateNetEase, final boolean offhand, final boolean shield) {
+        return emulateNetEase && offhand && !shield;
+    }
+
+    static boolean promoteOffhandUse(final boolean emulateNetEase, final boolean offhand, final boolean shield) {
         return emulateNetEase && offhand && !shield;
     }
 

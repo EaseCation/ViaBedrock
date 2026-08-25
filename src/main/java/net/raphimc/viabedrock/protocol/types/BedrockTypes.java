@@ -17,6 +17,7 @@
  */
 package net.raphimc.viabedrock.protocol.types;
 
+import com.viaversion.nbt.tag.CompoundTag;
 import com.viaversion.nbt.tag.Tag;
 import com.viaversion.viaversion.api.minecraft.BlockPosition;
 import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
@@ -74,6 +75,7 @@ public class BedrockTypes {
     public static final Type<BufferedImage> IMAGE = new ImageType();
 
     public static final Type<Tag> NETWORK_TAG = new TagType();
+    public static final Type<CompoundTag> BIG_ENDIAN_NETWORK_COMPOUND_TAG = new BigEndianNetworkTagType();
     public static final Type<Tag> TAG_LE = new TagLEType();
     public static final Type<Tag> COMPOUND_TAG_VALUE = new TagValueType(Tag_Type.Compound);
     public static final Type<BlockPosition> BLOCK_POSITION = new BlockPositionType();

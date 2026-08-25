@@ -118,6 +118,9 @@ public class ClientPlayerEntity extends PlayerEntity {
     private boolean crossbowChargeFinishSent;
     private boolean consumableFinishSent;
     private boolean shieldSneakEmulated;
+    private final OffhandPromotionState offhandPromotionState = new OffhandPromotionState();
+    private final OffhandRestoreIdentity offhandRestoreIdentity = new OffhandRestoreIdentity();
+    private final DeferredEntityActionQueue deferredEntityActions = new DeferredEntityActionQueue();
     private int lastUseOnAge = -1;
     private int crossbowChargeFinishAge = -1;
 
@@ -643,6 +646,7 @@ public class ClientPlayerEntity extends PlayerEntity {
         this.crossbowChargeFinishSent = false;
         this.consumableFinishSent = false;
         this.shieldSneakEmulated = false;
+        // Offhand promotion is independent: startUsingItem may follow a silent F-swap.
     }
 
     public InteractionHand usingItemHand() {
@@ -671,6 +675,142 @@ public class ClientPlayerEntity extends PlayerEntity {
 
     public void setShieldSneakEmulated(final boolean shieldSneakEmulated) {
         this.shieldSneakEmulated = shieldSneakEmulated;
+    }
+
+    public boolean isOffhandPromoted() {
+        return this.offhandPromotionState.isPromoted();
+    }
+
+    public boolean isOffhandPromotionPending() {
+        return this.offhandPromotionState.isPromotionPending();
+    }
+
+    public boolean shouldRetryOffhandRestore() {
+        return this.offhandPromotionState.shouldRetryRestore();
+    }
+
+    /**
+     * @param hand explicit Java hand, or {@code null} for a handless player action
+     */
+    public boolean canProcessHandSensitiveAction(final InteractionHand hand,
+                                                 final boolean allowOriginalOffhandUseContinuation) {
+        return this.canProcessHandSensitiveAction(hand, allowOriginalOffhandUseContinuation, false);
+    }
+
+    /**
+     * The reuse flag is deliberately reserved for USE_ITEM and USE_ITEM_ON. Entity interaction,
+     * swing, and inventory actions must prove a continuation instead of treating OFF_HAND as a
+     * generic escape hatch while the tracker is physically promoted.
+     */
+    public boolean canProcessHandSensitiveAction(final InteractionHand hand,
+                                                 final boolean allowOriginalOffhandUseContinuation,
+                                                 final boolean allowPromotedOffhandReuse) {
+        final boolean originalOffhandUseContinuation = allowOriginalOffhandUseContinuation
+                && this.isOriginalOffhandUseContinuation(hand);
+        return this.offhandPromotionState.canProcessHandSensitiveAction(
+                hand == InteractionHand.OFF_HAND,
+                originalOffhandUseContinuation,
+                allowPromotedOffhandReuse
+        );
+    }
+
+    public boolean isOriginalOffhandUseContinuation(final InteractionHand hand) {
+        return (hand == null || hand == InteractionHand.OFF_HAND)
+                && this.isUsingItem()
+                && this.itemUseSnapshot != null
+                && this.itemUseSnapshot.hand() == InteractionHand.OFF_HAND;
+    }
+
+    public boolean scheduleOffhandRestore() {
+        return this.offhandPromotionState.scheduleRestore();
+    }
+
+    public boolean isOffhandRestoreScheduled() {
+        return this.offhandPromotionState.isRestoreScheduled();
+    }
+
+    public boolean isOffhandRestoring() {
+        return this.offhandPromotionState.isRestoring();
+    }
+
+    public Integer offhandRestoreRequestId() {
+        return this.offhandPromotionState.restoreRequestId();
+    }
+
+    public Integer offhandPromotionRequestId() {
+        return this.offhandPromotionState.promotionRequestId();
+    }
+
+    public void markOffhandPromotionPending(final Integer requestId) {
+        this.offhandPromotionState.promotionPending(requestId);
+        this.offhandRestoreIdentity.clear();
+    }
+
+    public boolean markOffhandPromotionConfirmed(final Integer requestId) {
+        return this.offhandPromotionState.promotionConfirmed(requestId);
+    }
+
+    public boolean markOffhandPromotionRejected(final Integer requestId) {
+        final boolean rejected = this.offhandPromotionState.promotionRejected(requestId);
+        if (rejected) {
+            this.offhandRestoreIdentity.clear();
+        }
+        return rejected;
+    }
+
+    public void markOffhandPromoted() {
+        this.offhandPromotionState.promoted();
+        this.offhandRestoreIdentity.clear();
+    }
+
+    public void markOffhandRestoreSubmissionFailed() {
+        this.offhandPromotionState.restoreSubmissionFailed();
+        this.offhandRestoreIdentity.clear();
+    }
+
+    public void captureOffhandRestoreIdentity(final BedrockItem promotedMainHand, final BedrockItem promotedOffhand) {
+        this.offhandRestoreIdentity.capturePromotedHands(promotedMainHand, promotedOffhand);
+    }
+
+    public void markOffhandRestoreRequestSent(final int requestId) {
+        this.offhandPromotionState.restoreRequestSent(requestId);
+    }
+
+    public boolean promotedHandsMatch(final BedrockItem mainHand, final BedrockItem offhand) {
+        return this.offhandRestoreIdentity.matchesPromotedHands(mainHand, offhand);
+    }
+
+    public boolean restoredHandsMatch(final BedrockItem mainHand, final BedrockItem offhand) {
+        return this.offhandRestoreIdentity.matchesRestoredHands(mainHand, offhand);
+    }
+
+    public boolean markOffhandRestoreConfirmed(final Integer requestId) {
+        final boolean confirmed = this.offhandPromotionState.restoreConfirmed(requestId);
+        if (confirmed) {
+            this.offhandRestoreIdentity.clear();
+        }
+        return confirmed;
+    }
+
+    public boolean completeOffhandRestoreFlush() {
+        return this.offhandPromotionState.completeRestoreFlush();
+    }
+
+    public boolean markOffhandRestoreRejected(final Integer requestId) {
+        final boolean rejected = this.offhandPromotionState.restoreRejected(requestId);
+        if (rejected) {
+            this.offhandRestoreIdentity.clear();
+        }
+        return rejected;
+    }
+
+    public void abandonOffhandRestore() {
+        this.offhandPromotionState.abandonRestore();
+        this.offhandRestoreIdentity.clear();
+    }
+
+    public DeferredEntityActionQueue deferredEntityActions() {
+        return this.deferredEntityActions;
     }
 
     public int lastUseOnAge() {

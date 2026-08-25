@@ -41,6 +41,7 @@ public final class CustomMappingAccess {
     private final IntSet allowedBlockEntityTypes;
     private final Map<String, Integer> blockEntityTypeIds;
     private final Map<String, CustomItemMetadata> items;
+    private final Int2ObjectMap<String> itemIdentifiersByJavaRawId;
     private final Map<String, BlockEntityRule> identifierRules;
     private final int maxJavaBlockStateId;
     private final long lightProfileKey;
@@ -62,6 +63,7 @@ public final class CustomMappingAccess {
         this.allowedBlockEntityTypes = builder.allowedBlockEntityTypes;
         this.blockEntityTypeIds = Map.copyOf(builder.blockEntityTypeIds);
         this.items = Map.copyOf(builder.items);
+        this.itemIdentifiersByJavaRawId = reverseItemIdentifiers(this.items);
         this.identifierRules = Map.copyOf(builder.identifierRules);
         this.maxJavaBlockStateId = builder.maxJavaBlockStateId;
         this.lightProfileKey = builder.lightProfileKey;
@@ -195,6 +197,28 @@ public final class CustomMappingAccess {
 
     public CustomItemMetadata customItem(final String bedrockIdentifier) {
         return this.items.get(bedrockIdentifier);
+    }
+
+    public String customItemIdentifier(final int javaRawId) {
+        return this.itemIdentifiersByJavaRawId.get(javaRawId);
+    }
+
+    private static Int2ObjectMap<String> reverseItemIdentifiers(final Map<String, CustomItemMetadata> items) {
+        final Int2ObjectMap<String> identifiers = new Int2ObjectOpenHashMap<>(items.size());
+        final IntSet ambiguousIds = new IntOpenHashSet();
+        for (Map.Entry<String, CustomItemMetadata> entry : items.entrySet()) {
+            final int javaRawId = entry.getValue().javaRawId();
+            if (javaRawId < 0 || ambiguousIds.contains(javaRawId)) {
+                continue;
+            }
+            if (identifiers.containsKey(javaRawId)) {
+                identifiers.remove(javaRawId);
+                ambiguousIds.add(javaRawId);
+            } else {
+                identifiers.put(javaRawId, entry.getKey());
+            }
+        }
+        return identifiers;
     }
 
     public int emitLight(final int javaBlockStateId) {

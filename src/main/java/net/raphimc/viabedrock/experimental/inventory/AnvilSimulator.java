@@ -45,7 +45,7 @@ import java.util.List;
 public final class AnvilSimulator {
 
     // Distinct from CraftingSimulator's SOURCE_TODO crafting-result (-4).
-    private static final int TODO_ANVIL_RESULT = -6;
+    static final int TODO_ANVIL_RESULT = -6;
 
     private AnvilSimulator() {
     }
@@ -93,43 +93,56 @@ public final class AnvilSimulator {
     }
 
     public static boolean isTakeResult(final List<InventoryActionData> actions) {
-        if (actions == null) {
-            return false;
-        }
-        for (final InventoryActionData action : actions) {
-            if (action.source().type() == InventorySourceType.NonImplementedFeatureTODO
-                    && action.source().containerId() == TODO_ANVIL_RESULT) {
-                return true;
-            }
-        }
-        return false;
+        return CartographySimulator.hasTodoMarker(actions, TODO_ANVIL_RESULT)
+                && CartographySimulator.hasCursorTakeResult(actions);
     }
 
-    public static boolean sendTakeResult(final UserConnection user, final InventoryTracker tracker) {
+    static boolean isQuickMoveResult(final List<InventoryActionData> actions) {
+        return CartographySimulator.isQuickMoveResult(actions, TODO_ANVIL_RESULT);
+    }
+
+    static ItemStackRequestEncoder.EncodedRequest encodeQuickMoveResult(
+            final UserConnection user, final InventoryTracker tracker, final List<InventoryActionData> actions,
+            final boolean emulateNetEase, final int protocol) {
         final Container container = tracker.getCurrentContainer();
-        if (!(container instanceof AnvilContainer anvil)) {
-            return false;
+        if (!(container instanceof AnvilContainer anvil) || !isQuickMoveResult(actions)) {
+            return ItemStackRequestEncoder.EncodedRequest.notSupported();
         }
         final BedrockItem input = anvil.getItem(0);
         if (input == null || input.isEmpty()) {
-            return false;
+            return ItemStackRequestEncoder.EncodedRequest.notSupported();
+        }
+        final BedrockItem material = anvil.getItem(1);
+        final int materialCount = AnvilRepairCost.materialCount(input, material,
+                tracker.user() != null ? tracker.user().get(net.raphimc.viabedrock.protocol.rewriter.ItemRewriter.class) : null);
+        final int takeCount = CartographySimulator.destinationAmount(actions);
+        if (materialCount < 0 || takeCount <= 0) {
+            return ItemStackRequestEncoder.EncodedRequest.notSupported();
+        }
+        final AnvilSessionStorage session = user.get(AnvilSessionStorage.class);
+        final String renameText = session != null ? session.renameText() : "";
+        return ItemStackRequestEncoder.encodeAnvilApplyToDestinations(
+                tracker, renameText, 1, materialCount, takeCount, actions, emulateNetEase, protocol);
+    }
+
+    public static ItemStackRequestEncoder.EncodedRequest encodeTakeResult(final UserConnection user, final InventoryTracker tracker) {
+        final Container container = tracker.getCurrentContainer();
+        if (!(container instanceof AnvilContainer anvil)) {
+            return ItemStackRequestEncoder.EncodedRequest.notSupported();
+        }
+        final BedrockItem input = anvil.getItem(0);
+        if (input == null || input.isEmpty()) {
+            return ItemStackRequestEncoder.EncodedRequest.notSupported();
         }
         final BedrockItem material = anvil.getItem(1);
         final int materialCount = AnvilRepairCost.materialCount(input, material, tracker.user() != null ? tracker.user().get(net.raphimc.viabedrock.protocol.rewriter.ItemRewriter.class) : null);
         if (materialCount < 0) {
-            return false;
+            return ItemStackRequestEncoder.EncodedRequest.notSupported();
         }
         final AnvilSessionStorage session = user.get(AnvilSessionStorage.class);
         final String renameText = session != null ? session.renameText() : "";
-        final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encodeAnvilApply(
+        return ItemStackRequestEncoder.encodeAnvilApply(
                 tracker, renameText, 1, materialCount, Math.max(1, input.amount() > 0 ? 1 : 0));
-        if (encoded.unsupported() || encoded.isEmpty()) {
-            return false;
-        }
-        final PacketWrapper request = PacketWrapper.create(ServerboundBedrockPackets.ITEM_STACK_REQUEST, user);
-        request.write(Types.REMAINING_BYTES, encoded.payload());
-        request.sendToServer(BedrockProtocol.class);
-        return true;
     }
 
     public static void handleFilterEcho(final UserConnection user, final FilterTextLayout.Packet packet) {

@@ -71,6 +71,22 @@ public class RidingTracker extends StoredObject {
         super(user);
     }
 
+    public void resetForDimensionChange() {
+        for (final long passengerUniqueId : this.anchorsByPassenger.keySet().toLongArray()) {
+            this.removeAnchor(passengerUniqueId);
+        }
+        this.vehiclePassengers.clear();
+        this.anchorsByPassenger.clear();
+        this.seatOffsets.clear();
+        this.clearLocalRiding();
+    }
+
+    boolean hasTrackedRidingState() {
+        return !this.vehiclePassengers.isEmpty() || !this.anchorsByPassenger.isEmpty()
+                || !this.seatOffsets.isEmpty() || this.localVehicleUniqueId != null
+                || this.pendingDismountVehicleUniqueId != null;
+    }
+
     public Entity localVehicle() {
         if (this.localVehicleUniqueId == null) {
             return null;
@@ -173,10 +189,18 @@ public class RidingTracker extends StoredObject {
 
         this.removePassengerFromOtherVehicles(passengerUniqueId, vehicleUniqueId);
         final LongList passengers = this.vehiclePassengers.computeIfAbsent(vehicleUniqueId, k -> new LongArrayList());
-        passengers.rem(passengerUniqueId);
-        passengers.add(passengerUniqueId);
+        updatePassengerOrder(passengers, passengerUniqueId, type);
         this.updateLocalVehicle(passengerUniqueId, vehicleUniqueId);
         this.refreshVehicle(vehicleUniqueId);
+    }
+
+    static void updatePassengerOrder(final LongList passengers, final long passengerUniqueId, final byte linkType) {
+        if (linkType == LINK_RIDE) {
+            passengers.rem(passengerUniqueId);
+            passengers.add(0, passengerUniqueId);
+        } else if (linkType == LINK_PASSENGER && !contains(passengers, passengerUniqueId)) {
+            passengers.add(passengerUniqueId);
+        }
     }
 
     public void onEntityAdded(final Entity entity) {

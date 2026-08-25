@@ -17,6 +17,7 @@
  */
 package net.raphimc.viabedrock.experimental.inventory;
 
+import com.viaversion.nbt.tag.CompoundTag;
 import com.viaversion.viaversion.api.connection.StoredObject;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.minecraft.item.HashedItem;
@@ -32,6 +33,7 @@ import net.raphimc.viabedrock.api.model.container.AnvilContainer;
 import net.raphimc.viabedrock.api.model.container.Container;
 import net.raphimc.viabedrock.api.model.container.CraftingTableContainer;
 import net.raphimc.viabedrock.api.model.container.TradeContainer;
+import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
 import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.experimental.FeatureModule;
 import net.raphimc.viabedrock.experimental.model.inventory.BedrockInventoryTransaction;
@@ -59,6 +61,7 @@ import net.raphimc.viabedrock.protocol.data.enums.java.generated.ContainerInput;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
 import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 import net.raphimc.viabedrock.protocol.storage.AnvilSessionStorage;
+import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
 import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 import net.raphimc.viabedrock.protocol.storage.TradeSessionStorage;
@@ -74,6 +77,30 @@ import java.util.function.Supplier;
 import java.util.logging.Level;
 
 public class ClientAuthInventoryModule implements FeatureModule {
+
+    public record SwapHandsResult(boolean submitted, Integer requestId) {
+
+        private static SwapHandsResult failed() {
+            return new SwapHandsResult(false, null);
+        }
+
+        private static SwapHandsResult withoutRequest() {
+            return new SwapHandsResult(true, null);
+        }
+
+    }
+
+    private record PredictedActionsResult(boolean submitted, Integer requestId) {
+
+        private static PredictedActionsResult failed() {
+            return new PredictedActionsResult(false, null);
+        }
+
+        private static PredictedActionsResult withoutRequest() {
+            return new PredictedActionsResult(true, null);
+        }
+
+    }
 
     @Override
     public void onStorageRegistration(final UserConnection user) {
@@ -232,6 +259,9 @@ public class ClientAuthInventoryModule implements FeatureModule {
                     || StonecutterSimulator.isTakeResult(actions)
                     || SmithingSimulator.isTakeResult(actions)
                     || TradeSimulator.isTakeResult(actions)) {
+                // MOT's successful ItemStackResponse only carries deltas. Preserve the expected
+                // result identity in the mirror so an empty target can be reconstructed.
+                applyMirrorUpdates(actions, inventoryTracker);
                 return;
             }
 
@@ -261,12 +291,16 @@ public class ClientAuthInventoryModule implements FeatureModule {
      * {@code syncJava=false} keeps the Java client showing the original hands.
      */
     public static boolean tryHandleSwapHands(final UserConnection user, final boolean syncJava) {
+        return tryHandleSwapHandsTracked(user, syncJava).submitted();
+    }
+
+    public static SwapHandsResult tryHandleSwapHandsTracked(final UserConnection user, final boolean syncJava) {
         final InventoryTracker tracker = user.get(InventoryTracker.class);
         if (tracker.getPendingCloseContainer() != null) {
             if (syncJava) {
                 PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
             }
-            return !syncJava;
+            return SwapHandsResult.failed();
         }
 
         final List<InventoryActionData> actions = runOrRollback(
@@ -277,30 +311,31 @@ public class ClientAuthInventoryModule implements FeatureModule {
             if (syncJava) {
                 PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
             }
-            return false;
+            return SwapHandsResult.failed();
         }
         if (actions.isEmpty()) {
-            return true;
+            return SwapHandsResult.withoutRequest();
         }
         if (!allowsLockedActions(actions)) {
             if (syncJava) {
                 PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
             }
-            return false;
+            return SwapHandsResult.failed();
         }
         final boolean openedForThisAction = needsBedrockPlayerInventoryOpen(tracker, ContainerID.CONTAINER_ID_INVENTORY.getValue());
         if (openedForThisAction) {
             PacketFactory.sendBedrockOpenInventory(user);
         }
 
-        if (!sendPredictedActions(user, actions)) {
+        final PredictedActionsResult submission = sendPredictedActionsTracked(user, actions);
+        if (!submission.submitted()) {
             if (syncJava) {
                 PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
             }
             if (openedForThisAction) {
                 closeTransientBedrockPlayerInventory(tracker);
             }
-            return false;
+            return SwapHandsResult.failed();
         }
         applyMirrorUpdates(actions, tracker);
         if (syncJava) {
@@ -311,7 +346,7 @@ public class ClientAuthInventoryModule implements FeatureModule {
         if (openedForThisAction) {
             closeTransientBedrockPlayerInventory(tracker);
         }
-        return true;
+        return new SwapHandsResult(true, submission.requestId());
     }
 
     /**
@@ -426,20 +461,19 @@ public class ClientAuthInventoryModule implements FeatureModule {
             return;
         }
         if (decoded.entries() != null && !decoded.entries().isEmpty()) {
-            boolean restored = false;
+            boolean javaResyncRequired = false;
             for (final ItemStackResponseLayout.DecodedEntry entry : decoded.entries()) {
                 if (entry.ok()) {
                     tracker.takePendingItemStackRequest(entry.requestId());
                     continue;
                 }
-                final InventorySnapshot snapshot = tracker.takePendingItemStackRequest(entry.requestId());
-                if (snapshot != null) {
-                    snapshot.restore(tracker);
-                    restored = true;
+                if (restoreRejectedItemStackRequest(tracker, entry.requestId())
+                        && !isSilentOffhandRestoreRequest(user, entry.requestId())) {
+                    javaResyncRequired = true;
                 }
             }
             applyStackResponse(tracker, decoded);
-            if (restored) {
+            if (javaResyncRequired) {
                 PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
                 if (tracker.getCurrentContainer() != null && tracker.getCurrentContainer() != tracker.getInventoryContainer()) {
                     PacketFactory.sendJavaContainerSetContent(user, tracker.getCurrentContainer());
@@ -454,7 +488,7 @@ public class ClientAuthInventoryModule implements FeatureModule {
             // mirror must stamp those ids or the next click fails netId check.
             // Ref: MOT ItemStackRequestHandler.handleRequests OK path and
             // TransferItemActionProcessor.buildContainer.
-            if (decoded.requestIds() != null) {
+            if (decoded.requestIds().length != 0) {
                 for (final int requestId : decoded.requestIds()) {
                     tracker.takePendingItemStackRequest(requestId);
                 }
@@ -465,26 +499,55 @@ public class ClientAuthInventoryModule implements FeatureModule {
             return;
         }
         InventorySnapshot snapshot = null;
-        if (decoded.requestIds() != null) {
+        boolean silentOffhandRestore = false;
+        if (decoded.requestIds().length != 0) {
             for (final int requestId : decoded.requestIds()) {
                 snapshot = tracker.takePendingItemStackRequest(requestId);
                 if (snapshot != null) {
+                    silentOffhandRestore = isSilentOffhandRestoreRequest(user, requestId);
                     break;
                 }
             }
         }
         if (snapshot == null) {
+            final Integer restoringRequestId = offhandRestoreRequestId(user);
             snapshot = tracker.takeLatestPendingItemStackRequest();
+            silentOffhandRestore = snapshot != null && restoringRequestId != null;
         }
         if (snapshot == null) {
             return;
         }
-        snapshot.restore(tracker);
+        if (!snapshot.restore(tracker) || silentOffhandRestore) {
+            return;
+        }
         PacketFactory.sendJavaContainerSetContent(user, tracker.getInventoryContainer());
         if (tracker.getCurrentContainer() != null && tracker.getCurrentContainer() != tracker.getInventoryContainer()) {
             PacketFactory.sendJavaContainerSetContent(user, tracker.getCurrentContainer());
         }
         sendJavaCursor(user, tracker);
+    }
+
+    static boolean restoreRejectedItemStackRequest(final InventoryTracker tracker, final int requestId) {
+        if (tracker == null) {
+            return false;
+        }
+        final InventorySnapshot snapshot = tracker.takePendingItemStackRequest(requestId);
+        return snapshot != null && snapshot.restore(tracker);
+    }
+
+    private static boolean isSilentOffhandRestoreRequest(final UserConnection user, final int requestId) {
+        return Integer.valueOf(requestId).equals(offhandRestoreRequestId(user));
+    }
+
+    private static Integer offhandRestoreRequestId(final UserConnection user) {
+        final EntityTracker entityTracker = user.get(EntityTracker.class);
+        if (entityTracker == null) {
+            return null;
+        }
+        final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
+        return clientPlayer != null && clientPlayer.isOffhandRestoring()
+                ? clientPlayer.offhandRestoreRequestId()
+                : null;
     }
 
     /**
@@ -537,7 +600,41 @@ public class ClientAuthInventoryModule implements FeatureModule {
         if (slot.stackNetworkId() > 0) {
             updated.setNetId(slot.stackNetworkId());
         }
+        applyStackResponseItemData(updated, slot);
         ref.container().setItemSilent(ref.slot(), updated);
+    }
+
+    static void applyStackResponseItemData(final BedrockItem item, final ItemStackResponseLayout.DecodedSlot slot) {
+        if (item == null || slot == null) {
+            return;
+        }
+        if (slot.durabilityCorrection() != null) {
+            // MOT fills this with Item#getDamage(), so this is an absolute value.
+            item.setData(slot.durabilityCorrection());
+        }
+        if (slot.customName() == null) {
+            return;
+        }
+
+        final String customName = slot.filteredCustomName() != null && !slot.filteredCustomName().isEmpty()
+                ? slot.filteredCustomName() : slot.customName();
+        final CompoundTag tag = item.tag() != null ? item.tag().copy() : new CompoundTag();
+        CompoundTag display = tag.getCompoundTag("display");
+        if (customName.isEmpty()) {
+            if (display != null) {
+                display.remove("Name");
+                if (display.isEmpty()) {
+                    tag.remove("display");
+                }
+            }
+        } else {
+            if (display == null) {
+                display = new CompoundTag();
+                tag.put("display", display);
+            }
+            display.putString("Name", customName);
+        }
+        item.setTag(tag.isEmpty() ? null : tag);
     }
 
     private static BedrockItem safeItem(final Container container, final int slot) {
@@ -731,78 +828,79 @@ public class ClientAuthInventoryModule implements FeatureModule {
     }
 
     private static boolean sendPredictedActions(final UserConnection user, final List<InventoryActionData> actions) {
-        final GameSessionStorage session = user.get(GameSessionStorage.class);
-        if (AnvilSimulator.isTakeResult(actions)) {
-            return session != null && session.isInventoryServerAuthoritative()
-                    && AnvilSimulator.sendTakeResult(user, user.get(InventoryTracker.class));
-        }
-        if (CartographySimulator.isTakeResult(actions)) {
-            return session != null && session.isInventoryServerAuthoritative()
-                    && CartographySimulator.sendTakeResult(user, user.get(InventoryTracker.class));
-        }
-        if (GrindstoneSimulator.isTakeResult(actions)) {
-            return session != null && session.isInventoryServerAuthoritative()
-                    && GrindstoneSimulator.sendTakeResult(user, user.get(InventoryTracker.class));
-        }
-        if (LoomSimulator.isTakeResult(actions)) {
-            return session != null && session.isInventoryServerAuthoritative()
-                    && LoomSimulator.sendTakeResult(user, user.get(InventoryTracker.class));
-        }
-        if (StonecutterSimulator.isTakeResult(actions)) {
-            return session != null && session.isInventoryServerAuthoritative()
-                    && StonecutterSimulator.sendTakeResult(user, user.get(InventoryTracker.class));
-        }
-        if (SmithingSimulator.isTakeResult(actions)) {
-            return session != null && session.isInventoryServerAuthoritative()
-                    && SmithingSimulator.sendTakeResult(user, user.get(InventoryTracker.class));
-        }
-        if (TradeSimulator.isTakeResult(actions)) {
-            return session != null && session.isInventoryServerAuthoritative()
-                    && TradeSimulator.sendTakeResult(user, user.get(InventoryTracker.class));
-        }
-        if (session != null && session.isInventoryServerAuthoritative()) {
-            final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encode(actions, user.get(InventoryTracker.class));
-            if (encoded.unsupported()) {
-                return false;
-            }
-            if (encoded.isEmpty()) {
-                return true;
-            }
-            sendItemStackRequest(user, encoded, InventorySnapshot.capture(user.get(InventoryTracker.class)));
-            return true;
-        }
-        sendNormalTransaction(user, actions);
-        return true;
+        return sendPredictedActionsTracked(user, actions).submitted();
+    }
+
+    private static PredictedActionsResult sendPredictedActionsTracked(final UserConnection user,
+                                                                      final List<InventoryActionData> actions) {
+        final InventoryTracker tracker = user.get(InventoryTracker.class);
+        return sendPredictedActionsTracked(user, actions, InventorySnapshot.capture(tracker));
     }
 
     private static boolean sendPredictedActions(final UserConnection user, final List<InventoryActionData> actions,
                                                 final InventorySnapshot snapshot) {
+        return sendPredictedActionsTracked(user, actions, snapshot).submitted();
+    }
+
+    private static PredictedActionsResult sendPredictedActionsTracked(final UserConnection user,
+                                                                      final List<InventoryActionData> actions,
+                                                                      final InventorySnapshot snapshot) {
         if (actions == null || actions.isEmpty()) {
-            return true;
-        }
-        if (AnvilSimulator.isTakeResult(actions)
-                || CartographySimulator.isTakeResult(actions)
-                || GrindstoneSimulator.isTakeResult(actions)
-                || LoomSimulator.isTakeResult(actions)
-                || StonecutterSimulator.isTakeResult(actions)
-                || SmithingSimulator.isTakeResult(actions)
-                || TradeSimulator.isTakeResult(actions)) {
-            return sendPredictedActions(user, actions);
+            return PredictedActionsResult.withoutRequest();
         }
         final GameSessionStorage session = user.get(GameSessionStorage.class);
-        if (session != null && session.isInventoryServerAuthoritative()) {
-            final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encode(actions, user.get(InventoryTracker.class));
-            if (encoded.unsupported()) {
-                return false;
-            }
-            if (encoded.isEmpty()) {
-                return true;
-            }
-            sendItemStackRequest(user, encoded, snapshot);
-            return true;
+        if (session == null || !session.isInventoryServerAuthoritative()) {
+            sendNormalTransaction(user, actions);
+            return PredictedActionsResult.withoutRequest();
         }
-        sendNormalTransaction(user, actions);
-        return true;
+
+        final InventoryTracker tracker = user.get(InventoryTracker.class);
+        if (!canSendItemStackRequest(tracker)) {
+            return PredictedActionsResult.failed();
+        }
+        final ItemStackRequestEncoder.EncodedRequest specialRequest = encodeSpecialTakeResult(user, actions, tracker);
+        final ItemStackRequestEncoder.EncodedRequest encoded = specialRequest != null
+                ? specialRequest
+                : ItemStackRequestEncoder.encode(actions, tracker);
+        if (encoded.unsupported()) {
+            return PredictedActionsResult.failed();
+        }
+        if (encoded.isEmpty()) {
+            return PredictedActionsResult.withoutRequest();
+        }
+        sendItemStackRequest(user, encoded, snapshot);
+        return new PredictedActionsResult(true, encoded.requestId());
+    }
+
+    static boolean canSendItemStackRequest(final InventoryTracker tracker) {
+        return tracker != null && tracker.pendingItemStackRequestCount() == 0;
+    }
+
+    private static ItemStackRequestEncoder.EncodedRequest encodeSpecialTakeResult(final UserConnection user,
+                                                                                  final List<InventoryActionData> actions,
+                                                                                  final InventoryTracker tracker) {
+        if (AnvilSimulator.isTakeResult(actions)) {
+            return AnvilSimulator.encodeTakeResult(user, tracker);
+        }
+        if (CartographySimulator.isTakeResult(actions)) {
+            return CartographySimulator.encodeTakeResult(tracker);
+        }
+        if (GrindstoneSimulator.isTakeResult(actions)) {
+            return GrindstoneSimulator.encodeTakeResult(tracker);
+        }
+        if (LoomSimulator.isTakeResult(actions)) {
+            return LoomSimulator.encodeTakeResult(user, tracker);
+        }
+        if (StonecutterSimulator.isTakeResult(actions)) {
+            return StonecutterSimulator.encodeTakeResult(tracker);
+        }
+        if (SmithingSimulator.isTakeResult(actions)) {
+            return SmithingSimulator.encodeTakeResult(tracker);
+        }
+        if (TradeSimulator.isTakeResult(actions)) {
+            return TradeSimulator.encodeTakeResult(tracker);
+        }
+        return null;
     }
 
     private static void sendItemStackRequest(final UserConnection user, final ItemStackRequestEncoder.EncodedRequest encoded,

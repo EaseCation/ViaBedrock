@@ -32,7 +32,8 @@ class ItemStackResponseLayoutTest {
         final ByteBuf buffer = Unpooled.buffer();
         try {
             BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 1);
-            ItemStackResponseLayout.writeOkEntry(buffer, true, 860, -1, 60, 0, 12, 7);
+            ItemStackResponseLayout.writeOkEntry(buffer, true, 860, -1, 60, 0, 12, 7,
+                    "Raw name", "Filtered name", 17);
             final ItemStackResponseLayout.DecodedResponse decoded = ItemStackResponseLayout.decode(buffer, true, 860);
             assertFalse(buffer.isReadable());
             assertFalse(decoded.anyRejected());
@@ -46,6 +47,9 @@ class ItemStackResponseLayoutTest {
             assertEquals(0, slot.slot());
             assertEquals(12, slot.count());
             assertEquals(7, slot.stackNetworkId());
+            assertEquals("Raw name", slot.customName());
+            assertEquals("Filtered name", slot.filteredCustomName());
+            assertEquals(17, slot.durabilityCorrection());
         } finally {
             buffer.release();
         }

@@ -104,27 +104,41 @@ public final class TradeSimulator {
     }
 
     public static boolean isTakeResult(final List<InventoryActionData> actions) {
-        return CartographySimulator.hasTodoMarker(actions, TODO_TRADE_RESULT);
+        return CartographySimulator.hasTodoMarker(actions, TODO_TRADE_RESULT)
+                && CartographySimulator.hasCursorTakeResult(actions);
     }
 
-    public static boolean sendTakeResult(final UserConnection user, final InventoryTracker tracker) {
+    static boolean isQuickMoveResult(final List<InventoryActionData> actions) {
+        return CartographySimulator.isQuickMoveResult(actions, TODO_TRADE_RESULT);
+    }
+
+    static ItemStackRequestEncoder.EncodedRequest encodeQuickMoveResult(
+            final InventoryTracker tracker, final List<InventoryActionData> actions,
+            final boolean emulateNetEase, final int protocol) {
+        final Container container = tracker.getCurrentContainer();
+        if (!isTrade(container) || !isQuickMoveResult(actions)) {
+            return ItemStackRequestEncoder.EncodedRequest.notSupported();
+        }
+        final TradeOfferLayout.Offer offer = selectedOffer(tracker);
+        final int takeCount = CartographySimulator.destinationAmount(actions);
+        if (offer == null || takeCount <= 0) {
+            return ItemStackRequestEncoder.EncodedRequest.notSupported();
+        }
+        return ItemStackRequestEncoder.encodeTradeApplyToDestinations(
+                tracker, offer.netId(), offer.buyACount(), offer.buyBCount(), takeCount, actions, emulateNetEase, protocol);
+    }
+
+    public static ItemStackRequestEncoder.EncodedRequest encodeTakeResult(final InventoryTracker tracker) {
         final Container container = tracker.getCurrentContainer();
         if (!isTrade(container)) {
-            return false;
+            return ItemStackRequestEncoder.EncodedRequest.notSupported();
         }
         final TradeOfferLayout.Offer offer = selectedOffer(tracker);
         if (offer == null) {
-            return false;
+            return ItemStackRequestEncoder.EncodedRequest.notSupported();
         }
-        final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encodeTradeApply(
+        return ItemStackRequestEncoder.encodeTradeApply(
                 tracker, offer.netId(), offer.buyACount(), offer.buyBCount(), 1);
-        if (encoded.unsupported() || encoded.isEmpty()) {
-            return false;
-        }
-        final PacketWrapper request = PacketWrapper.create(ServerboundBedrockPackets.ITEM_STACK_REQUEST, user);
-        request.write(Types.REMAINING_BYTES, encoded.payload());
-        request.sendToServer(BedrockProtocol.class);
-        return true;
     }
 
     private static TradeOfferLayout.Offer selectedOffer(final InventoryTracker tracker) {

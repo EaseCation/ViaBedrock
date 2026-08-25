@@ -88,28 +88,43 @@ public final class GrindstoneSimulator {
     }
 
     public static boolean isTakeResult(final List<InventoryActionData> actions) {
-        return CartographySimulator.hasTodoMarker(actions, TODO_GRINDSTONE_RESULT);
+        return CartographySimulator.hasTodoMarker(actions, TODO_GRINDSTONE_RESULT)
+                && CartographySimulator.hasCursorTakeResult(actions);
     }
 
-    public static boolean sendTakeResult(final UserConnection user, final InventoryTracker tracker) {
+    static boolean isQuickMoveResult(final List<InventoryActionData> actions) {
+        return CartographySimulator.isQuickMoveResult(actions, TODO_GRINDSTONE_RESULT);
+    }
+
+    static ItemStackRequestEncoder.EncodedRequest encodeQuickMoveResult(
+            final InventoryTracker tracker, final List<InventoryActionData> actions,
+            final boolean emulateNetEase, final int protocol) {
         final Container container = tracker.getCurrentContainer();
-        if (!isGrindstone(container)) {
-            return false;
+        if (!isGrindstone(container) || !isQuickMoveResult(actions)) {
+            return ItemStackRequestEncoder.EncodedRequest.notSupported();
         }
         final BedrockItem input = container.getItem(0);
         if (input == null || input.isEmpty()) {
-            return false;
+            return ItemStackRequestEncoder.EncodedRequest.notSupported();
         }
         final BedrockItem additional = container.getItem(1);
         final int additionalCount = additional != null && !additional.isEmpty() ? Math.min(1, additional.amount()) : 0;
-        final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encodeGrindstoneApply(
-                tracker, 1, additionalCount, 1);
-        if (encoded.unsupported() || encoded.isEmpty()) {
-            return false;
+        final int takeCount = CartographySimulator.destinationAmount(actions);
+        if (takeCount <= 0) return ItemStackRequestEncoder.EncodedRequest.notSupported();
+        return ItemStackRequestEncoder.encodeGrindstoneApplyToDestinations(tracker, 1, additionalCount, takeCount, actions, emulateNetEase, protocol);
+    }
+
+    public static ItemStackRequestEncoder.EncodedRequest encodeTakeResult(final InventoryTracker tracker) {
+        final Container container = tracker.getCurrentContainer();
+        if (!isGrindstone(container)) {
+            return ItemStackRequestEncoder.EncodedRequest.notSupported();
         }
-        final PacketWrapper request = PacketWrapper.create(ServerboundBedrockPackets.ITEM_STACK_REQUEST, user);
-        request.write(Types.REMAINING_BYTES, encoded.payload());
-        request.sendToServer(BedrockProtocol.class);
-        return true;
+        final BedrockItem input = container.getItem(0);
+        if (input == null || input.isEmpty()) {
+            return ItemStackRequestEncoder.EncodedRequest.notSupported();
+        }
+        final BedrockItem additional = container.getItem(1);
+        final int additionalCount = additional != null && !additional.isEmpty() ? Math.min(1, additional.amount()) : 0;
+        return ItemStackRequestEncoder.encodeGrindstoneApply(tracker, 1, additionalCount, 1);
     }
 }

@@ -17,11 +17,16 @@
  */
 package net.raphimc.viabedrock.experimental.rewriter;
 
+import com.viaversion.nbt.tag.CompoundTag;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.minecraft.EulerAngle;
+import com.viaversion.viaversion.api.minecraft.Particle;
 import com.viaversion.viaversion.api.minecraft.VillagerData;
 import com.viaversion.viaversion.api.minecraft.entities.EntityTypes1_21_11;
 import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
+import com.viaversion.viaversion.api.minecraft.entitydata.EntityDataType;
+import com.viaversion.viaversion.api.minecraft.item.Item;
+import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
@@ -40,7 +45,11 @@ import net.raphimc.viabedrock.protocol.data.generated.java.Attributes;
 import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
 import net.raphimc.viabedrock.api.util.TextUtil;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
+import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
+import net.raphimc.viabedrock.protocol.data.enums.java.generated.EquipmentSlot;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand;
+import net.raphimc.viabedrock.protocol.model.EntityProperties;
+import net.raphimc.viabedrock.protocol.model.EntityPropertyValue;
 import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
 
 import java.util.List;
@@ -107,11 +116,9 @@ public class EntityMetadataRewriter {
                 }
 
                 if (entity.javaType().is(EntityTypes1_21_11.BEE)) {
-                    byte beeBitMask = 0;
-                    if (bedrockFlags.contains(ActorFlags.ANGRY)) {
-                        beeBitMask |= 0x02;
-                    }
-
+                    final Boolean hasNectar = booleanValue(entity.entityProperties().namedProperty("minecraft:has_nectar"));
+                    // The actor flags path must still emit anger when the property snapshot has not arrived.
+                    final byte beeBitMask = beeFlags(entity, hasNectar);
                     upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.FLAGS), VersionedTypes.V26_1.entityDataTypes().byteType, beeBitMask));
                 }
 
@@ -125,31 +132,7 @@ public class EntityMetadataRewriter {
                 }
 
                 if (entity.javaType().is(EntityTypes1_21_11.SNIFFER)) {
-                    int sniffingState = 0;
-                    if (bedrockFlags.contains(ActorFlags.IDLING)) {
-                        sniffingState = 0;
-                    } else if (false) {
-                        //TODO: FEELING_HAPPY
-                        sniffingState = 1;
-                    } else if (false) {
-                        //TODO: SCENTING
-                        sniffingState = 2;
-                    } else if (bedrockFlags.contains(ActorFlags.SNIFFING)) {
-                        sniffingState = 3;
-                    } else if (bedrockFlags.contains(ActorFlags.SEARCHING)) {
-                        sniffingState = 4;
-                    } else if (bedrockFlags.contains(ActorFlags.DIGGING)) {
-                        sniffingState = 5;
-                    } else if (false) {
-                        //TODO: RISING
-                        sniffingState = 6;
-                    } else {
-                        sniffingState = 0;
-                        //TODO: Currently spams a bit but thats probably because we are missing states
-                        //ViaBedrock.getPlatform().getLogger().warning("Unknown sniffer state, defaulting to IDLING.");
-                    }
-
-                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.STATE), VersionedTypes.V26_1.entityDataTypes().snifferState, sniffingState));
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.STATE), VersionedTypes.V26_1.entityDataTypes().snifferState, snifferState(bedrockFlags)));
                 }
 
                 if (entity.javaType().is(EntityTypes1_21_11.TURTLE)) { //TODO: Test
@@ -269,46 +252,31 @@ public class EntityMetadataRewriter {
 
                 switch (entity.javaType()) {
                     case WOLF -> {
-                        int javaVariant = switch (variant) {
-                            case 0 -> 4; // PALE
-                            case 1 -> 7; // ASHEN
-                            case 2 -> 6; // BLACK
-                            case 3 -> 2; // CHESTNUT
-                            case 4 -> 1; // RUSTY
-                            case 5 -> 8; // SNOWY
-                            case 6 -> 0; // SPOTTED
-                            case 7 -> 3; // STRIPED
-                            case 8 -> 5; // WOODS
-                            default -> {
-                                ViaBedrock.getPlatform().getLogger().warning("Unknown wolf variant " + variant + ", defaulting to PALE.");
-                                yield 4;
-                            }
-                        };
-                        javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.VARIANT), VersionedTypes.V26_1.entityDataTypes().wolfVariantType, javaVariant));
+                        final Integer javaVariant = javaRegistryIndex("minecraft:wolf_variant", wolfVariantName(variant));
+                        if (javaVariant != null) {
+                            javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.VARIANT), VersionedTypes.V26_1.entityDataTypes().wolfVariantType, javaVariant));
+                        }
+                    }
+                    case CAT -> {
+                        final Integer javaVariant = javaRegistryIndex("minecraft:cat_variant", catVariantName(variant));
+                        if (javaVariant != null) {
+                            javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.VARIANT), VersionedTypes.V26_1.entityDataTypes().catVariantType, javaVariant));
+                        }
                     }
                     case HORSE -> {
                         javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.TYPE_VARIANT), VersionedTypes.V26_1.entityDataTypes().varIntType, variant));
                     }
                     case FROG -> {
-                        int javaVariant = switch (variant) {
-                            case 0 -> 1; // TEMPERATE
-                            case 1 -> 2; // COLD
-                            case 2 -> 0; // WARM
-                            default -> {
-                                ViaBedrock.getPlatform().getLogger().warning("Unknown frog variant " + variant + ", defaulting to TEMPERATE.");
-                                yield 1;
-                            }
-                        };
-                        javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.VARIANT), VersionedTypes.V26_1.entityDataTypes().frogVariantType, javaVariant));
+                        final Integer javaVariant = javaRegistryIndex("minecraft:frog_variant", frogVariantName(variant));
+                        if (javaVariant != null) {
+                            javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.VARIANT), VersionedTypes.V26_1.entityDataTypes().frogVariantType, javaVariant));
+                        }
                     }
                     case FOX -> {
                         final int javaVariant = variant == 1 ? 1 : 0; // SNOW : RED
                         javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.TYPE), VersionedTypes.V26_1.entityDataTypes().varIntType, javaVariant));
                     }
-                    case TROPICAL_FISH -> {
-                        //TODO: Remap tropical fish variants properly
-                        //javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.TYPE_VARIANT), VersionedTypes.V26_1.entityDataTypes().varIntType, variant));
-                    }
+                    case TROPICAL_FISH -> applyTropicalFishVariant(entity, javaEntityData);
                     case PUFFERFISH -> {} // For some reason bedrock sends the puffed state here as well as in the PUFFED_STATE Actor ID so we ignore this one
                     case SHULKER -> {
                         byte color = (byte) variant;
@@ -323,7 +291,7 @@ public class EntityMetadataRewriter {
                             case 4 -> 4; // BLUE
                             default -> {
                                 ViaBedrock.getPlatform().getLogger().warning("Unknown axolotl variant " + variant + ", defaulting to LUCY.");
-                                yield 2;
+                                yield 0;
                             }
                         };
                         javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.VARIANT), VersionedTypes.V26_1.entityDataTypes().varIntType, javaVariant));
@@ -363,9 +331,16 @@ public class EntityMetadataRewriter {
                 }
 
             }
-            case MARK_VARIANT, TRADE_TIER -> {
+            case MARK_VARIANT, TRADE_TIER, COLOR_2_INDEX -> {
+                if (entity.javaType().is(EntityTypes1_21_11.TROPICAL_FISH)) {
+                    applyTropicalFishVariant(entity, javaEntityData);
+                    break;
+                }
                 // Villager region/biome (MARK_VARIANT) and trade level (TRADE_TIER) also feed the combined
                 // Java VILLAGER_DATA field. Other entities using these IDs are not translated yet.
+                if (id == ActorDataIDs.COLOR_2_INDEX) {
+                    return false;
+                }
                 if (entity.javaType().is(EntityTypes1_21_11.VILLAGER) || entity.javaType().is(EntityTypes1_21_11.ZOMBIE_VILLAGER)) {
                     applyVillagerData(entity, javaEntityData);
                 } else {
@@ -376,6 +351,7 @@ public class EntityMetadataRewriter {
                 int javaColorIndex = readNumber(entityData).intValue();
 
                 switch (entity.javaType()) {
+                    case TROPICAL_FISH -> applyTropicalFishVariant(entity, javaEntityData);
                     case WOLF, CAT -> {
                         javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.COLLAR_COLOR), VersionedTypes.V26_1.entityDataTypes().varIntType, javaColorIndex));
                     }
@@ -654,6 +630,11 @@ public class EntityMetadataRewriter {
                     javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.HEIGHT), VersionedTypes.V26_1.entityDataTypes().floatType, height));
                 }
             }
+            case EFFECT_COLOR -> {
+                if (entity.javaType().is(EntityTypes1_21_11.AREA_EFFECT_CLOUD)) {
+                    writeAreaEffectCloudParticle(entity, javaEntityData);
+                }
+            }
             case DATA_RADIUS -> {
                 if (entity.javaType().isOrHasParent(EntityTypes1_21_11.AREA_EFFECT_CLOUD)) {
                     float radius = readNumber(entityData).floatValue();
@@ -664,7 +645,7 @@ public class EntityMetadataRewriter {
             }
             case DATA_WAITING -> {
                 if (entity.javaType().is(EntityTypes1_21_11.AREA_EFFECT_CLOUD)) {
-                    boolean isWaiting = (boolean) entityData.getValue();
+                    final boolean isWaiting = areaEffectCloudWaiting(readNumber(entityData));
                     javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.WAITING), VersionedTypes.V26_1.entityDataTypes().booleanType, isWaiting));
                 } else {
                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received DATA_WAITING for non-AREA_EFFECT_CLOUD entity " + entity.type());
@@ -672,7 +653,7 @@ public class EntityMetadataRewriter {
             }
             case DATA_PARTICLE -> {
                 if (entity.javaType().is(EntityTypes1_21_11.AREA_EFFECT_CLOUD)) {
-                    int particle_id_or_colour = readNumber(entityData).intValue(); //TODO: not sure what this is exactly
+                    writeAreaEffectCloudParticle(entity, javaEntityData);
                 } else {
                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received DATA_PARTICLE for non-AREA_EFFECT_CLOUD entity " + entity.type());
                 }
@@ -814,6 +795,291 @@ public class EntityMetadataRewriter {
         return true;
     }
 
+    /** Translates named MOT properties after the dynamic registry has resolved them. */
+    public static boolean rewriteEntityProperties(final Entity entity, final List<EntityData> javaEntityData) {
+        final EntityProperties properties = entity.entityProperties();
+        boolean translated = false;
+        final EntityTypes1_21_11 type = entity.javaType();
+
+        if (type.is(EntityTypes1_21_11.COW)) {
+            translated |= putProperty(entity, javaEntityData, EntityDataFields.VARIANT,
+                    VersionedTypes.V26_1.entityDataTypes().cowVariantType,
+                    javaRegistryIndex("minecraft:cow_variant",
+                            climateVariantName(properties.namedProperty("minecraft:climate_variant"))));
+        } else if (type.is(EntityTypes1_21_11.PIG)) {
+            translated |= putProperty(entity, javaEntityData, EntityDataFields.VARIANT,
+                    VersionedTypes.V26_1.entityDataTypes().pigVariantType,
+                    javaRegistryIndex("minecraft:pig_variant",
+                            climateVariantName(properties.namedProperty("minecraft:climate_variant"))));
+        } else if (type.is(EntityTypes1_21_11.CHICKEN)) {
+            translated |= putProperty(entity, javaEntityData, EntityDataFields.VARIANT,
+                    VersionedTypes.V26_1.entityDataTypes().chickenVariantType,
+                    javaRegistryIndex("minecraft:chicken_variant",
+                            climateVariantName(properties.namedProperty("minecraft:climate_variant"))));
+        }
+
+        if (type.is(EntityTypes1_21_11.CAT)) {
+            translated |= putProperty(entity, javaEntityData, EntityDataFields.SOUND_VARIANT,
+                    VersionedTypes.V26_1.entityDataTypes().catSoundVariant,
+                    javaRegistryIndex("minecraft:cat_sound_variant",
+                            catSoundVariantName(properties.namedProperty("minecraft:sound_variant"))));
+        } else if (type.is(EntityTypes1_21_11.WOLF)) {
+            translated |= putProperty(entity, javaEntityData, EntityDataFields.SOUND_VARIANT,
+                    VersionedTypes.V26_1.entityDataTypes().wolfSoundVariantType,
+                    javaRegistryIndex("minecraft:wolf_sound_variant",
+                            wolfSoundVariantName(properties.namedProperty("minecraft:sound_variant"))));
+        }
+
+        if (type.is(EntityTypes1_21_11.ARMADILLO)) {
+            translated |= putProperty(entity, javaEntityData, EntityDataFields.ARMADILLO_STATE,
+                    VersionedTypes.V26_1.entityDataTypes().armadilloState,
+                    javaArmadilloState(properties.namedProperty("minecraft:armadillo_state")));
+        }
+
+        if (type.is(EntityTypes1_21_11.CREAKING)) {
+            final Boolean canMoveValue = booleanValue(properties.namedProperty("minecraft:can_move"));
+            if (canMoveValue != null) {
+                translated |= putProperty(entity, javaEntityData, EntityDataFields.CAN_MOVE,
+                        VersionedTypes.V26_1.entityDataTypes().booleanType, canMoveValue);
+            }
+
+            final EntityPropertyValue state = properties.namedProperty("minecraft:creaking_state");
+            if (state != null && state.enumValue() != null) {
+                final CreakingStateFlags stateFlags = creakingState(state.enumValue());
+                if (stateFlags != null) {
+                    translated |= putProperty(entity, javaEntityData, EntityDataFields.IS_ACTIVE,
+                            VersionedTypes.V26_1.entityDataTypes().booleanType, stateFlags.active());
+                    translated |= putProperty(entity, javaEntityData, EntityDataFields.IS_TEARING_DOWN,
+                            VersionedTypes.V26_1.entityDataTypes().booleanType, stateFlags.tearingDown());
+                }
+            }
+            // minecraft:creaking_swaying_ticks has no Java metadata equivalent; it remains in the snapshot.
+        }
+
+        if (type.is(EntityTypes1_21_11.HAPPY_GHAST)) {
+            final Boolean canMoveValue = booleanValue(properties.namedProperty("minecraft:can_move"));
+            if (canMoveValue != null) {
+                translated |= putProperty(entity, javaEntityData, EntityDataFields.STAYS_STILL,
+                        VersionedTypes.V26_1.entityDataTypes().booleanType, !canMoveValue);
+            }
+        }
+
+        if (type.is(EntityTypes1_21_11.COPPER_GOLEM)) {
+            translated |= putProperty(entity, javaEntityData, EntityDataFields.WEATHER_STATE,
+                    VersionedTypes.V26_1.entityDataTypes().weatheringCopperState,
+                    javaWeatheringCopperState(properties.namedProperty("minecraft:oxidation_level")));
+            translated |= putProperty(entity, javaEntityData, EntityDataFields.COPPER_GOLEM_STATE,
+                    VersionedTypes.V26_1.entityDataTypes().copperGolemState,
+                    javaCopperGolemState(properties.namedProperty("minecraft:chest_interaction")));
+            // minecraft:has_flower is Java SADDLE equipment containing a poppy, not metadata.
+            sendCopperGolemFlowerEquipment(entity, booleanValue(properties.namedProperty("minecraft:has_flower")));
+        }
+
+        if (type.is(EntityTypes1_21_11.BEE)) {
+            final Boolean hasNectar = booleanValue(properties.namedProperty("minecraft:has_nectar"));
+            if (hasNectar != null) {
+                translated |= putProperty(entity, javaEntityData, EntityDataFields.FLAGS,
+                        VersionedTypes.V26_1.entityDataTypes().byteType, beeFlags(entity, hasNectar));
+            }
+        }
+
+        if (type.is(EntityTypes1_21_11.ZOMBIE_NAUTILUS)) {
+            translated |= putProperty(entity, javaEntityData, EntityDataFields.VARIANT,
+                    VersionedTypes.V26_1.entityDataTypes().zombieNautilusVariantType,
+                    javaRegistryIndex("minecraft:zombie_nautilus_variant",
+                            zombieNautilusVariantName(properties.namedProperty("minecraft:variant"))));
+        }
+        return translated;
+    }
+
+    private static boolean putProperty(final Entity entity, final List<EntityData> javaEntityData,
+                                       final String field, final EntityDataType dataType, final Object value) {
+        if (value == null) {
+            return false;
+        }
+        final List<String> fields = BedrockProtocol.MAPPINGS.getJavaEntityDataFields().get(entity.javaType());
+        if (fields == null) {
+            return false;
+        }
+        final int index = fields.indexOf(field);
+        if (index < 0) {
+            return false;
+        }
+        upsert(javaEntityData, new EntityData(index, dataType, value));
+        return true;
+    }
+
+    static String climateVariantName(final EntityPropertyValue property) {
+        if (property == null || property.enumValue() == null) {
+            return null;
+        }
+        return switch (property.enumValue()) {
+            case "temperate", "warm", "cold" -> namespaced(property.enumValue());
+            default -> null;
+        };
+    }
+
+    static String catSoundVariantName(final EntityPropertyValue property) {
+        if (property == null || property.enumValue() == null) {
+            return null;
+        }
+        return switch (property.enumValue()) {
+            case "default" -> "minecraft:classic";
+            case "royal" -> "minecraft:royal";
+            default -> null;
+        };
+    }
+
+    static String wolfSoundVariantName(final EntityPropertyValue property) {
+        if (property == null || property.enumValue() == null) {
+            return null;
+        }
+        return switch (property.enumValue()) {
+            case "default" -> "minecraft:classic";
+            case "mad" -> "minecraft:angry";
+            case "big", "cute", "grumpy", "puglin", "sad" -> namespaced(property.enumValue());
+            default -> null;
+        };
+    }
+
+    static String zombieNautilusVariantName(final EntityPropertyValue property) {
+        if (property == null || property.enumValue() == null) {
+            return null;
+        }
+        return switch (property.enumValue()) {
+            case "default" -> "minecraft:temperate";
+            case "coral" -> "minecraft:warm";
+            default -> null;
+        };
+    }
+
+    static Integer javaArmadilloState(final EntityPropertyValue property) {
+        if (property == null || property.enumValue() == null) {
+            return null;
+        }
+        // Java ArmadilloState has IDLE, ROLLING, SCARED, UNROLLING. Bedrock's
+        // peeking and relaxing states both use Java's SCARED state.
+        return switch (property.enumValue()) {
+            case "unrolled" -> 0;
+            case "rolled_up" -> 1;
+            case "rolled_up_peeking", "rolled_up_relaxing" -> 2;
+            case "rolled_up_unrolling" -> 3;
+            default -> null;
+        };
+    }
+
+    static Integer javaWeatheringCopperState(final EntityPropertyValue property) {
+        if (property == null || property.enumValue() == null) {
+            return null;
+        }
+        return switch (property.enumValue()) {
+            case "unoxidized" -> 0; // Java UNAFFECTED
+            case "exposed" -> 1;
+            case "weathered" -> 2;
+            case "oxidized" -> 3;
+            default -> null;
+        };
+    }
+
+    static Integer javaCopperGolemState(final EntityPropertyValue property) {
+        if (property == null || property.enumValue() == null) {
+            return null;
+        }
+        return switch (property.enumValue()) {
+            case "none" -> 0; // Java IDLE
+            case "take" -> 1; // Java GETTING_ITEM
+            case "take_fail" -> 2; // Java GETTING_NO_ITEM
+            case "put" -> 3; // Java DROPPING_ITEM
+            case "put_fail" -> 4; // Java DROPPING_NO_ITEM
+            default -> null;
+        };
+    }
+
+    static Integer javaRegistryIndex(final String registryKey, final String value) {
+        return javaRegistryIndex(BedrockProtocol.MAPPINGS.getJavaRegistries(), registryKey, value);
+    }
+
+    static Integer javaRegistryIndex(final CompoundTag registries, final String registryKey, final String value) {
+        if (value == null) {
+            return null;
+        }
+        if (registries != null) {
+            final CompoundTag registry = registries.getCompoundTag(registryKey);
+            if (registry != null) {
+                final String namespacedValue = namespaced(value);
+                int index = 0;
+                for (final String identifier : registry.keySet()) {
+                    if (identifier.equals(namespacedValue)) {
+                        return index;
+                    }
+                    index++;
+                }
+            }
+        }
+        return fallbackRegistryIndex(registryKey, value);
+    }
+
+    private static Integer fallbackRegistryIndex(final String registryKey, final String value) {
+        final String[] fallback = switch (registryKey) {
+            case "minecraft:villager_profession" -> new String[]{
+                    "none", "armorer", "butcher", "cartographer", "cleric", "farmer", "fisherman",
+                    "fletcher", "leatherworker", "librarian", "mason", "nitwit", "shepherd", "toolsmith", "weaponsmith"
+            };
+            case "minecraft:villager_type" -> new String[]{
+                    "desert", "jungle", "plains", "savanna", "snow", "swamp", "taiga"
+            };
+            default -> null;
+        };
+        if (fallback == null) {
+            return null;
+        }
+        final String namespacedValue = namespaced(value);
+        for (int i = 0; i < fallback.length; i++) {
+            if (namespaced(fallback[i]).equals(namespacedValue)) {
+                return i;
+            }
+        }
+        return null;
+    }
+
+    private static String namespaced(final String value) {
+        return value.indexOf(':') >= 0 ? value : "minecraft:" + value;
+    }
+
+    private static Boolean booleanValue(final EntityPropertyValue property) {
+        return property != null ? property.booleanValue() : null;
+    }
+
+    private static byte beeFlags(final Entity entity, final Boolean hasNectar) {
+        return beeFlags(entity.hasEntityFlag(ActorFlags.ANGRY), hasNectar);
+    }
+
+    static byte beeFlags(final boolean angry, final Boolean hasNectar) {
+        byte flags = 0;
+        if (angry) {
+            flags |= 0x02;
+        }
+        if (Boolean.TRUE.equals(hasNectar)) {
+            flags |= 0x08;
+        }
+        return flags;
+    }
+
+    static CreakingStateFlags creakingState(final String state) {
+        if (state == null) {
+            return null;
+        }
+        return switch (state) {
+            case "neutral" -> new CreakingStateFlags(false, false);
+            case "hostile_observed", "hostile_unobserved", "twitching" -> new CreakingStateFlags(true, false);
+            case "crumbling" -> new CreakingStateFlags(true, true);
+            default -> null;
+        };
+    }
+
+    record CreakingStateFlags(boolean active, boolean tearingDown) {
+    }
+
     static boolean noGravity(final EntityTypes1_21_11 type, final Set<ActorFlags> bedrockFlags) {
         // Bedrock servers can omit HAS_GRAVITY for dropped items while still simulating item gravity.
         return type.is(EntityTypes1_21_11.ITEM)
@@ -939,6 +1205,48 @@ public class EntityMetadataRewriter {
         return flags;
     }
 
+    static boolean areaEffectCloudWaiting(final Number waitTime) {
+        return waitTime != null && waitTime.intValue() > 0;
+    }
+
+    static AreaEffectCloudParticle areaEffectCloudParticle(final int particleId, final int effectColor) {
+        return switch (particleId) {
+            case 34 -> new AreaEffectCloudParticle("minecraft:entity_effect", 0xFF000000 | (effectColor & 0xFFFFFF), null);
+            case 35 -> new AreaEffectCloudParticle("minecraft:entity_effect", 0x20000000 | (effectColor & 0xFFFFFF), null);
+            case 36 -> new AreaEffectCloudParticle("minecraft:instant_effect", 0xFF000000 | (effectColor & 0xFFFFFF), 1F);
+            default -> null;
+        };
+    }
+
+    private static void writeAreaEffectCloudParticle(final Entity entity, final List<EntityData> javaEntityData) {
+        final EntityData particleData = entity.entityData().get(ActorDataIDs.DATA_PARTICLE);
+        final EntityData colorData = entity.entityData().get(ActorDataIDs.EFFECT_COLOR);
+        if (particleData == null || colorData == null) {
+            return;
+        }
+
+        final AreaEffectCloudParticle mapping = areaEffectCloudParticle(
+                readNumber(particleData).intValue(), readNumber(colorData).intValue());
+        if (mapping == null) {
+            return;
+        }
+        final Integer javaParticleId = BedrockProtocol.MAPPINGS.getJavaParticles().get(mapping.identifier());
+        if (javaParticleId == null) {
+            return;
+        }
+
+        final Particle particle = new Particle(javaParticleId);
+        particle.add(Types.INT, mapping.color());
+        if (mapping.power() != null) {
+            particle.add(Types.FLOAT, mapping.power());
+        }
+        upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.PARTICLE),
+                VersionedTypes.V26_1.entityDataTypes().particleType, particle));
+    }
+
+    record AreaEffectCloudParticle(String identifier, int color, Float power) {
+    }
+
     static byte sheepFlags(final int color, final boolean sheared) {
         return (byte) ((color & 0x0F) | (sheared ? 0x10 : 0));
     }
@@ -1049,11 +1357,12 @@ public class EntityMetadataRewriter {
         final int bedrockRegion = markVariantData != null ? readNumber(markVariantData).intValue() : 0;
         final int bedrockTradeTier = tradeTierData != null ? readNumber(tradeTierData).intValue() : 0;
 
-        final int profession = bedrockProfession >= 0 && bedrockProfession < BEDROCK_TO_JAVA_PROFESSION.length
-                ? BEDROCK_TO_JAVA_PROFESSION[bedrockProfession] : 0;
-        final int type = bedrockRegion >= 0 && bedrockRegion < BEDROCK_TO_JAVA_REGION.length
-                ? BEDROCK_TO_JAVA_REGION[bedrockRegion] : 0;
-        final int level = bedrockTradeTier + 1; // Java trade levels are 1-based, Bedrock 0-based
+        final Integer profession = javaVillagerProfession(bedrockProfession);
+        final Integer type = javaVillagerType(bedrockRegion);
+        if (profession == null || type == null) {
+            return;
+        }
+        final int level = Math.max(1, Math.min(5, bedrockTradeTier + 1)); // Java trade levels are 1-based, Bedrock 0-based
 
         final int index = entity.getJavaEntityDataIndex(EntityDataFields.VILLAGER_DATA);
         // Idempotent: if several villager fields arrive in one batch, keep a single VILLAGER_DATA entry.
@@ -1071,6 +1380,156 @@ public class EntityMetadataRewriter {
         if (forceInvisible || entity.hasEntityFlag(ActorFlags.INVISIBLE)) sharedFlags |= (1 << 5);
         if (entity.hasEntityFlag(ActorFlags.GLIDING)) sharedFlags |= (byte) (1 << 7);
         return sharedFlags;
+    }
+
+    static int snifferState(final Set<ActorFlags> flags) {
+        // MOT 860 still uses DATA_FLAG_SCENTING/RISING/FEELING_HAPPY = 110/111/112.
+        // Generated ActorFlags maps those values to DEPRECATED_1/2/3, so look them up by wire value.
+        if (hasFlagValue(flags, 111) || flags.contains(ActorFlags.EMERGING)) {
+            return 6; // RISING
+        }
+        if (flags.contains(ActorFlags.DIGGING)) {
+            return 5;
+        }
+        if (flags.contains(ActorFlags.SEARCHING)) {
+            return 4;
+        }
+        if (flags.contains(ActorFlags.SNIFFING)) {
+            return 3;
+        }
+        if (hasFlagValue(flags, 110)) {
+            return 2; // SCENTING
+        }
+        if (hasFlagValue(flags, 112)) {
+            return 1; // FEELING_HAPPY
+        }
+        return 0; // IDLING / default
+    }
+
+    private static boolean hasFlagValue(final Set<ActorFlags> flags, final int value) {
+        final ActorFlags flag = ActorFlags.getByValue(value);
+        return flag != null && flags.contains(flag);
+    }
+
+    static void applyTropicalFishVariant(final Entity entity, final List<EntityData> javaEntityData) {
+        final int packed = packedTropicalFishVariant(entity);
+        upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.TYPE_VARIANT), VersionedTypes.V26_1.entityDataTypes().varIntType, packed));
+    }
+
+    static int packedTropicalFishVariant(final Entity entity) {
+        return packedTropicalFishVariant(
+                actorInt(entity, ActorDataIDs.VARIANT),
+                actorInt(entity, ActorDataIDs.MARK_VARIANT),
+                actorInt(entity, ActorDataIDs.COLOR_INDEX),
+                actorInt(entity, ActorDataIDs.COLOR_2_INDEX));
+    }
+
+    static int packedTropicalFishVariant(final int shape, final int pattern, final int baseColor, final int patternColor) {
+        return (shape & 0xFF)
+                | ((pattern & 0xFF) << 8)
+                | ((baseColor & 0xFF) << 16)
+                | ((patternColor & 0xFF) << 24);
+    }
+
+    private static int actorInt(final Entity entity, final ActorDataIDs id) {
+        final EntityData data = entity.entityData().get(id);
+        return data != null ? readNumber(data).intValue() : 0;
+    }
+
+    static String wolfVariantName(final int bedrockId) {
+        return switch (bedrockId) {
+            case 0 -> "pale";
+            case 1 -> "ashen";
+            case 2 -> "black";
+            case 3 -> "chestnut";
+            case 4 -> "rusty";
+            case 5 -> "snowy";
+            case 6 -> "spotted";
+            case 7 -> "striped";
+            case 8 -> "woods";
+            default -> null;
+        };
+    }
+
+    static String catVariantName(final int bedrockId) {
+        return switch (bedrockId) {
+            case 0 -> "white";
+            case 1 -> "black"; // Bedrock tuxedo
+            case 2 -> "red";
+            case 3 -> "siamese";
+            case 4 -> "british_shorthair";
+            case 5 -> "calico";
+            case 6 -> "persian";
+            case 7 -> "ragdoll";
+            case 8 -> "tabby";
+            case 9 -> "all_black";
+            case 10 -> "jellie";
+            default -> null;
+        };
+    }
+
+    static String frogVariantName(final int bedrockId) {
+        return switch (bedrockId) {
+            case 0 -> "temperate";
+            case 1 -> "cold";
+            case 2 -> "warm";
+            default -> null;
+        };
+    }
+
+    static Integer javaVillagerProfession(final int bedrockProfession) {
+        final String name = switch (bedrockProfession) {
+            case 0 -> "none";
+            case 1 -> "farmer";
+            case 2 -> "fisherman";
+            case 3 -> "shepherd";
+            case 4 -> "fletcher";
+            case 5 -> "librarian";
+            case 6 -> "cartographer";
+            case 7 -> "cleric";
+            case 8 -> "armorer";
+            case 9 -> "weaponsmith";
+            case 10 -> "toolsmith";
+            case 11 -> "butcher";
+            case 12 -> "leatherworker";
+            case 13 -> "mason";
+            case 14 -> "nitwit";
+            default -> null;
+        };
+        return javaRegistryIndex("minecraft:villager_profession", name);
+    }
+
+    static Integer javaVillagerType(final int bedrockRegion) {
+        final String name = switch (bedrockRegion) {
+            case 0 -> "desert";
+            case 1 -> "jungle";
+            case 2 -> "plains";
+            case 3 -> "savanna";
+            case 4 -> "snow";
+            case 5 -> "swamp";
+            case 6 -> "taiga";
+            default -> null;
+        };
+        return javaRegistryIndex("minecraft:villager_type", name);
+    }
+
+    static void sendCopperGolemFlowerEquipment(final Entity entity, final Boolean hasFlower) {
+        if (hasFlower == null) {
+            return;
+        }
+        final UserConnection user = entity.user();
+        if (user == null) {
+            return;
+        }
+        final Integer poppyId = BedrockProtocol.MAPPINGS.getJavaItems().get("minecraft:poppy");
+        final Item flower = hasFlower && poppyId != null
+                ? new StructuredItem(poppyId, 1, ProtocolConstants.createStructuredDataContainer())
+                : StructuredItem.empty();
+        final PacketWrapper equipment = PacketWrapper.create(ClientboundPackets26_1.SET_EQUIPMENT, user);
+        equipment.write(Types.VAR_INT, entity.javaId());
+        equipment.write(Types.BYTE, (byte) EquipmentSlot.SADDLE.ordinal());
+        equipment.write(VersionedTypes.V26_1.item, flower);
+        equipment.send(BedrockProtocol.class);
     }
 
     private static Number readNumber(EntityData data) {

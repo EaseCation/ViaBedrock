@@ -132,6 +132,12 @@ public interface FeatureModule {
     }
 
     /**
+     * Called before entity trackers are replaced during a dimension change.
+     */
+    default void onDimensionChange(UserConnection user) {
+    }
+
+    /**
      * Called during dimension change to resolve the dimension key for the Java client.
      * The first non-null result from any module is used.
      *

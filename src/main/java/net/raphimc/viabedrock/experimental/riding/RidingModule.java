@@ -153,6 +153,18 @@ public class RidingModule implements FeatureModule {
     }
 
     @Override
+    public void onDimensionChange(final UserConnection user) {
+        final RidingTracker ridingTracker = user.get(RidingTracker.class);
+        if (ridingTracker != null) {
+            ridingTracker.resetForDimensionChange();
+        }
+        final JavaPassengerTracker passengerTracker = user.get(JavaPassengerTracker.class);
+        if (passengerTracker != null) {
+            passengerTracker.resetForDimensionChange();
+        }
+    }
+
+    @Override
     public void onEntityAdded(final UserConnection user, final Entity entity) {
         final RidingTracker tracker = user.get(RidingTracker.class);
         if (tracker != null) {

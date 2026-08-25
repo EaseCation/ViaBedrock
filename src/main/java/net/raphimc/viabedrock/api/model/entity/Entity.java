@@ -36,6 +36,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorFlags;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.DataItemType;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.SharedTypes_Legacy_LevelSoundEvent;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.BossEventOperationType;
+import net.raphimc.viabedrock.protocol.model.EntityProperties;
 import net.raphimc.viabedrock.protocol.model.Position3f;
 import net.raphimc.viabedrock.protocol.storage.BossBarStorage;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
@@ -66,9 +67,15 @@ public class Entity {
     protected Position3f rotation = Position3f.ZERO;
     protected boolean onGround;
     protected final Map<ActorDataIDs, EntityData> entityData = new EnumMap<>(ActorDataIDs.class);
+    protected EntityProperties entityProperties = EntityProperties.empty();
+    protected long entityDataFrame;
     protected String name;
     protected int age;
     protected boolean hasBossBar;
+
+    public UserConnection user() {
+        return this.user;
+    }
 
     public Entity(final UserConnection user, final long uniqueId, final long runtimeId, final String type, final int javaId, final UUID javaUuid, final EntityTypes1_21_11 javaType, final Integer customJavaTypeId) {
         this.user = user;
@@ -128,6 +135,9 @@ public class Entity {
             validData.add(Map.entry(dataId, data));
         }
         this.translateEntityDataBatch(validData, javaEntityData);
+        if (ViaBedrock.getConfig().shouldEnableExperimentalFeatures()) {
+            EntityMetadataRewriter.rewriteEntityProperties(this, javaEntityData);
+        }
         this.onEntityDataChanged();
         ExperimentalFeatures.dispatchEntityDataChanged(this.user, this, entityData);
     }
@@ -226,6 +236,22 @@ public class Entity {
 
     public Map<ActorDataIDs, EntityData> entityData() {
         return this.entityData;
+    }
+
+    public EntityProperties entityProperties() {
+        return this.entityProperties;
+    }
+
+    public void setEntityProperties(final EntityProperties entityProperties) {
+        this.entityProperties = Objects.requireNonNull(entityProperties, "entityProperties");
+    }
+
+    public long entityDataFrame() {
+        return this.entityDataFrame;
+    }
+
+    public void setEntityDataFrame(final long entityDataFrame) {
+        this.entityDataFrame = entityDataFrame;
     }
 
     public Set<ActorFlags> entityFlags() {

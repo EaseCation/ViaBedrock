@@ -153,4 +153,20 @@ class EntityPacketLayoutTest {
             buffer.release();
         }
     }
+
+    @Test
+    void entityInteractionRuntimeIdPreservesUnsigned64BitPattern() {
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            for (final long runtimeId : new long[]{0L, 127L, 128L, Long.MAX_VALUE, Long.MIN_VALUE, -1L}) {
+                buffer.clear();
+                BedrockTypes.UNSIGNED_VAR_LONG.writePrimitive(buffer, runtimeId);
+
+                assertEquals(runtimeId, BedrockTypes.UNSIGNED_VAR_LONG.readPrimitive(buffer));
+                assertFalse(buffer.isReadable());
+            }
+        } finally {
+            buffer.release();
+        }
+    }
 }

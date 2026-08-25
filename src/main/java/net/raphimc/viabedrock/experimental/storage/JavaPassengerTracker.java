@@ -27,7 +27,9 @@ import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPack
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 
 public class JavaPassengerTracker extends StoredObject {
 
@@ -70,6 +72,22 @@ public class JavaPassengerTracker extends StoredObject {
             sourcePassengers.put(vehicleJavaId, passengerJavaIds);
         }
         this.sendPassengers(vehicleJavaId);
+    }
+
+    public void resetForDimensionChange() {
+        final Set<Integer> vehicles = new LinkedHashSet<>(this.bedrockPassengers.keySet());
+        for (final Map<Integer, int[]> sourcePassengers : this.virtualPassengers.values()) {
+            vehicles.addAll(sourcePassengers.keySet());
+        }
+        this.bedrockPassengers.clear();
+        this.virtualPassengers.clear();
+        for (final int vehicleJavaId : vehicles) {
+            this.sendPassengers(vehicleJavaId);
+        }
+    }
+
+    boolean hasTrackedPassengers() {
+        return !this.bedrockPassengers.isEmpty() || !this.virtualPassengers.isEmpty();
     }
 
     public void clearSource(final String source) {

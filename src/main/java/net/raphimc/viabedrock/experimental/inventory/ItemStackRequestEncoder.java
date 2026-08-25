@@ -49,6 +49,8 @@ import java.util.List;
  */
 public final class ItemStackRequestEncoder {
 
+    static final int CREATIVE_DRAG_MARKER_SLOT = -1;
+
     private ItemStackRequestEncoder() {
     }
 
@@ -96,6 +98,10 @@ public final class ItemStackRequestEncoder {
         if (actions == null || actions.isEmpty()) {
             return EncodedRequest.empty();
         }
+        final EncodedRequest specialResult = encodeSpecialQuickMove(actions, tracker, emulateNetEase, protocol);
+        if (specialResult != null) {
+            return specialResult;
+        }
         final List<Action> stackActions = new ArrayList<>();
         final List<InventoryActionData> remaining = new ArrayList<>(actions);
         if (prependCreative(remaining, tracker, stackActions)) {
@@ -113,6 +119,33 @@ public final class ItemStackRequestEncoder {
             return EncodedRequest.empty();
         }
         return encodeActions(stackActions, tracker, emulateNetEase, protocol);
+    }
+
+    private static EncodedRequest encodeSpecialQuickMove(final List<InventoryActionData> actions,
+                                                               final InventoryTracker tracker,
+                                                               final boolean emulateNetEase, final int protocol) {
+        if (AnvilSimulator.isQuickMoveResult(actions)) {
+            return AnvilSimulator.encodeQuickMoveResult(tracker.user(), tracker, actions, emulateNetEase, protocol);
+        }
+        if (CartographySimulator.isQuickMoveResult(actions)) {
+            return CartographySimulator.encodeQuickMoveResult(tracker, actions, emulateNetEase, protocol);
+        }
+        if (GrindstoneSimulator.isQuickMoveResult(actions)) {
+            return GrindstoneSimulator.encodeQuickMoveResult(tracker, actions, emulateNetEase, protocol);
+        }
+        if (LoomSimulator.isQuickMoveResult(actions)) {
+            return LoomSimulator.encodeQuickMoveResult(tracker.user(), tracker, actions, emulateNetEase, protocol);
+        }
+        if (StonecutterSimulator.isQuickMoveResult(actions)) {
+            return StonecutterSimulator.encodeQuickMoveResult(tracker, actions, emulateNetEase, protocol);
+        }
+        if (SmithingSimulator.isQuickMoveResult(actions)) {
+            return SmithingSimulator.encodeQuickMoveResult(tracker, actions, emulateNetEase, protocol);
+        }
+        if (TradeSimulator.isQuickMoveResult(actions)) {
+            return TradeSimulator.encodeQuickMoveResult(tracker, actions, emulateNetEase, protocol);
+        }
+        return null;
     }
 
     public static EncodedRequest encodeAnvilApply(final InventoryTracker tracker, final String renameText,
@@ -331,6 +364,217 @@ public final class ItemStackRequestEncoder {
         return encodeActions(stackActions, tracker, emulateNetEase, protocol);
     }
 
+    static EncodedRequest encodeAnvilApplyToDestinations(
+            final InventoryTracker tracker, final String renameText, final int inputCount,
+            final int materialCount, final int takeCount, final List<InventoryActionData> outputActions) {
+        return encodeAnvilApplyToDestinations(tracker, renameText, inputCount, materialCount, takeCount,
+                outputActions, emulateNetEase(), encodeProtocol());
+    }
+
+    static EncodedRequest encodeAnvilApplyToDestinations(
+            final InventoryTracker tracker, final String renameText, final int inputCount,
+            final int materialCount, final int takeCount, final List<InventoryActionData> outputActions,
+            final boolean emulateNetEase, final int protocol) {
+        if (inputCount <= 0 || takeCount <= 0) return EncodedRequest.notSupported();
+        final List<Action> stackActions = new ArrayList<>();
+        final ItemStackRequestLayout.SlotInfo input = slotWithNetId(tracker, 0);
+        if (input == null) return EncodedRequest.notSupported();
+        final String filterString = FilterTextLayout.sanitizeAnvilName(renameText);
+        stackActions.add(Action.craftOptional(0, filterString.isEmpty() ? -1 : 0));
+        stackActions.add(Action.consume(inputCount, input));
+        if (materialCount > 0) {
+            final ItemStackRequestLayout.SlotInfo material = slotWithNetId(tracker, 1);
+            if (material == null) return EncodedRequest.notSupported();
+            stackActions.add(Action.consume(materialCount, material));
+        }
+        if (!addOutputTransfers(stackActions, tracker, takeCount, outputActions)) return EncodedRequest.notSupported();
+        final String[] filterStrings = filterString.isEmpty() ? new String[0] : new String[]{filterString};
+        return encodeActions(stackActions, tracker, emulateNetEase, protocol,
+                filterStrings, TextProcessingEventOrigin.AnvilText);
+    }
+
+    static EncodedRequest encodeCartographyApplyToDestinations(
+            final InventoryTracker tracker, final int inputCount, final int additionalCount,
+            final int takeCount, final List<InventoryActionData> outputActions) {
+        return encodeCartographyApplyToDestinations(tracker, inputCount, additionalCount, takeCount,
+                outputActions, emulateNetEase(), encodeProtocol());
+    }
+
+    static EncodedRequest encodeCartographyApplyToDestinations(
+            final InventoryTracker tracker, final int inputCount, final int additionalCount,
+            final int takeCount, final List<InventoryActionData> outputActions,
+            final boolean emulateNetEase, final int protocol) {
+        if (inputCount <= 0 || takeCount <= 0) return EncodedRequest.notSupported();
+        final List<Action> stackActions = new ArrayList<>();
+        final ItemStackRequestLayout.SlotInfo input = slotWithNetId(tracker, 0);
+        if (input == null) return EncodedRequest.notSupported();
+        stackActions.add(Action.craftOptional(0, -1));
+        stackActions.add(Action.consume(inputCount, input));
+        if (additionalCount > 0) {
+            final ItemStackRequestLayout.SlotInfo additional = slotWithNetId(tracker, 1);
+            if (additional == null) return EncodedRequest.notSupported();
+            stackActions.add(Action.consume(additionalCount, additional));
+        }
+        if (!addOutputTransfers(stackActions, tracker, takeCount, outputActions)) return EncodedRequest.notSupported();
+        return encodeActions(stackActions, tracker, emulateNetEase, protocol,
+                new String[0], TextProcessingEventOrigin.CartographyText);
+    }
+
+    static EncodedRequest encodeGrindstoneApplyToDestinations(
+            final InventoryTracker tracker, final int inputCount, final int additionalCount,
+            final int takeCount, final List<InventoryActionData> outputActions) {
+        return encodeGrindstoneApplyToDestinations(tracker, inputCount, additionalCount, takeCount,
+                outputActions, emulateNetEase(), encodeProtocol());
+    }
+
+    static EncodedRequest encodeGrindstoneApplyToDestinations(
+            final InventoryTracker tracker, final int inputCount, final int additionalCount,
+            final int takeCount, final List<InventoryActionData> outputActions,
+            final boolean emulateNetEase, final int protocol) {
+        if (inputCount <= 0 || takeCount <= 0) return EncodedRequest.notSupported();
+        final List<Action> stackActions = new ArrayList<>();
+        final ItemStackRequestLayout.SlotInfo input = slotWithNetId(tracker, 0);
+        if (input == null) return EncodedRequest.notSupported();
+        stackActions.add(Action.craftRepairAndDisenchant(0, 1, 0));
+        stackActions.add(Action.consume(inputCount, input));
+        if (additionalCount > 0) {
+            final ItemStackRequestLayout.SlotInfo additional = slotWithNetId(tracker, 1);
+            if (additional == null) return EncodedRequest.notSupported();
+            stackActions.add(Action.consume(additionalCount, additional));
+        }
+        if (!addOutputTransfers(stackActions, tracker, takeCount, outputActions)) return EncodedRequest.notSupported();
+        return encodeActions(stackActions, tracker, emulateNetEase, protocol);
+    }
+
+    static EncodedRequest encodeLoomApplyToDestinations(
+            final InventoryTracker tracker, final int bannerCount, final int dyeCount,
+            final int takeCount, final String patternId, final List<InventoryActionData> outputActions) {
+        return encodeLoomApplyToDestinations(tracker, bannerCount, dyeCount, takeCount, patternId,
+                outputActions, emulateNetEase(), encodeProtocol());
+    }
+
+    static EncodedRequest encodeLoomApplyToDestinations(
+            final InventoryTracker tracker, final int bannerCount, final int dyeCount,
+            final int takeCount, final String patternId, final List<InventoryActionData> outputActions,
+            final boolean emulateNetEase, final int protocol) {
+        if (bannerCount <= 0 || dyeCount <= 0 || takeCount <= 0) return EncodedRequest.notSupported();
+        final List<Action> stackActions = new ArrayList<>();
+        final ItemStackRequestLayout.SlotInfo banner = slotWithNetId(tracker, 0);
+        final ItemStackRequestLayout.SlotInfo dye = slotWithNetId(tracker, 1);
+        if (banner == null || dye == null) return EncodedRequest.notSupported();
+        stackActions.add(Action.craftLoom(patternId != null ? patternId : "", 1));
+        stackActions.add(Action.consume(bannerCount, banner));
+        stackActions.add(Action.consume(dyeCount, dye));
+        if (!addOutputTransfers(stackActions, tracker, takeCount, outputActions)) return EncodedRequest.notSupported();
+        return encodeActions(stackActions, tracker, emulateNetEase, protocol);
+    }
+
+    static EncodedRequest encodeStonecutterApplyToDestinations(
+            final InventoryTracker tracker, final int recipeNetworkId, final int inputCount,
+            final int takeCount, final List<InventoryActionData> outputActions) {
+        return encodeStonecutterApplyToDestinations(tracker, recipeNetworkId, inputCount, takeCount,
+                outputActions, emulateNetEase(), encodeProtocol());
+    }
+
+    static EncodedRequest encodeStonecutterApplyToDestinations(
+            final InventoryTracker tracker, final int recipeNetworkId, final int inputCount,
+            final int takeCount, final List<InventoryActionData> outputActions,
+            final boolean emulateNetEase, final int protocol) {
+        if (recipeNetworkId <= 0 || inputCount <= 0 || takeCount <= 0) return EncodedRequest.notSupported();
+        final List<Action> stackActions = new ArrayList<>();
+        final ItemStackRequestLayout.SlotInfo input = slotWithNetId(tracker, 0);
+        if (input == null) return EncodedRequest.notSupported();
+        stackActions.add(Action.craft(recipeNetworkId));
+        stackActions.add(Action.consume(inputCount, input));
+        if (!addOutputTransfers(stackActions, tracker, takeCount, outputActions)) return EncodedRequest.notSupported();
+        return encodeActions(stackActions, tracker, emulateNetEase, protocol);
+    }
+
+    static EncodedRequest encodeSmithingApplyToDestinations(
+            final InventoryTracker tracker, final int recipeNetworkId, final int takeCount,
+            final List<InventoryActionData> outputActions) {
+        return encodeSmithingApplyToDestinations(tracker, recipeNetworkId, takeCount,
+                outputActions, emulateNetEase(), encodeProtocol());
+    }
+
+    static EncodedRequest encodeSmithingApplyToDestinations(
+            final InventoryTracker tracker, final int recipeNetworkId, final int takeCount,
+            final List<InventoryActionData> outputActions,
+            final boolean emulateNetEase, final int protocol) {
+        if (recipeNetworkId <= 0 || takeCount <= 0) return EncodedRequest.notSupported();
+        final List<Action> stackActions = new ArrayList<>();
+        final ItemStackRequestLayout.SlotInfo equipment = occupiedSlot(tracker, 0);
+        if (equipment == null) return EncodedRequest.notSupported();
+        stackActions.add(Action.craft(recipeNetworkId));
+        stackActions.add(Action.consume(1, equipment));
+        final ItemStackRequestLayout.SlotInfo ingredient = occupiedSlot(tracker, 1);
+        if (ingredient != null) stackActions.add(Action.consume(1, ingredient));
+        final ItemStackRequestLayout.SlotInfo template = occupiedSlot(tracker, 2);
+        if (template != null) stackActions.add(Action.consume(1, template));
+        if (!addOutputTransfers(stackActions, tracker, takeCount, outputActions)) return EncodedRequest.notSupported();
+        return encodeActions(stackActions, tracker, emulateNetEase, protocol);
+    }
+
+    static EncodedRequest encodeTradeApplyToDestinations(
+            final InventoryTracker tracker, final int recipeNetworkId, final int buyACount,
+            final int buyBCount, final int takeCount, final List<InventoryActionData> outputActions) {
+        return encodeTradeApplyToDestinations(tracker, recipeNetworkId, buyACount, buyBCount, takeCount,
+                outputActions, emulateNetEase(), encodeProtocol());
+    }
+
+    static EncodedRequest encodeTradeApplyToDestinations(
+            final InventoryTracker tracker, final int recipeNetworkId, final int buyACount,
+            final int buyBCount, final int takeCount, final List<InventoryActionData> outputActions,
+            final boolean emulateNetEase, final int protocol) {
+        if (recipeNetworkId < 0x20000000 || takeCount <= 0) return EncodedRequest.notSupported();
+        final List<Action> stackActions = new ArrayList<>();
+        stackActions.add(Action.craft(recipeNetworkId));
+        if (buyACount > 0) {
+            final ItemStackRequestLayout.SlotInfo buyA = occupiedSlot(tracker, 0);
+            if (buyA == null) return EncodedRequest.notSupported();
+            stackActions.add(Action.consume(buyACount, buyA));
+        }
+        if (buyBCount > 0) {
+            final ItemStackRequestLayout.SlotInfo buyB = occupiedSlot(tracker, 1);
+            if (buyB == null) return EncodedRequest.notSupported();
+            stackActions.add(Action.consume(buyBCount, buyB));
+        }
+        if (!addOutputTransfers(stackActions, tracker, takeCount, outputActions)) return EncodedRequest.notSupported();
+        return encodeActions(stackActions, tracker, emulateNetEase, protocol);
+    }
+
+    private static boolean addOutputTransfers(final List<Action> stackActions, final InventoryTracker tracker,
+                                              final int takeCount, final List<InventoryActionData> outputActions) {
+        if (outputActions == null || outputActions.isEmpty()) return false;
+        BedrockItem generated = null;
+        for (final InventoryActionData action : outputActions) {
+            if (action.source().type() != InventorySourceType.NonImplementedFeatureTODO
+                    || action.fromItem().isEmpty()) continue;
+            if (generated != null) return false;
+            generated = action.fromItem();
+        }
+        if (generated == null || generated.isEmpty()) return false;
+        final ItemStackRequestLayout.SlotInfo createdOutput =
+                new ItemStackRequestLayout.SlotInfo(ContainerEnumName.CreatedOutputContainer, 50, 0);
+        int total = 0;
+        for (final InventoryActionData action : outputActions) {
+            if (action.source().type() != InventorySourceType.ContainerInventory
+                    || action.source().containerId() != ContainerID.CONTAINER_ID_INVENTORY.getValue()) {
+                continue;
+            }
+            if (!isDestinationIncrease(action)
+                    || !sameItemFamily(destinationItem(action), generated)) {
+                return false;
+            }
+            final int count = movedCount(action);
+            final ItemStackRequestLayout.SlotInfo destination = slotInfo(action, tracker);
+            if (destination == null || count <= 0 || total + count > takeCount) return false;
+            stackActions.add(Action.transfer(ItemStackRequestActionType.Take, count, createdOutput, destination));
+            total += count;
+        }
+        return total == takeCount;
+    }
+
     public static EncodedRequest encodeBeaconPayment(final InventoryTracker tracker, final int primaryEffect,
                                                      final int secondaryEffect) {
         return encodeBeaconPayment(tracker, primaryEffect, secondaryEffect, emulateNetEase(), encodeProtocol());
@@ -357,7 +601,10 @@ public final class ItemStackRequestEncoder {
             case Swap -> ItemStackRequestLayout.writeSwap(buffer, action.source, action.destination, emulateNetEase, protocol);
             case Drop -> ItemStackRequestLayout.writeDrop(buffer, action.count, action.source, false, emulateNetEase, protocol);
             case Consume -> ItemStackRequestLayout.writeConsume(buffer, action.count, action.source, emulateNetEase, protocol);
-            case CraftRecipe -> ItemStackRequestLayout.writeCraftRecipe(buffer, action.count, 1, emulateNetEase, protocol);
+            case CraftRecipe -> ItemStackRequestLayout.writeCraftRecipe(buffer, action.count, Math.max(1, action.timesCrafted), emulateNetEase, protocol);
+            case CraftRecipeAuto -> ItemStackRequestLayout.writeCraftRecipeAuto(
+                    buffer, action.count, Math.max(1, action.timesCrafted), Math.max(1, action.timesCrafted),
+                    action.ingredients, emulateNetEase, protocol);
             case CraftCreative -> ItemStackRequestLayout.writeCraftCreative(buffer, action.count, 1, emulateNetEase, protocol);
             case CraftRecipeOptional -> ItemStackRequestLayout.writeCraftRecipeOptional(
                     buffer, action.count, action.filterIndex, emulateNetEase, protocol);
@@ -457,18 +704,48 @@ public final class ItemStackRequestEncoder {
             if (!isCreative(action) || movedCount(action) <= 0) {
                 continue;
             }
+            if (creativeAction != null) {
+                return false;
+            }
             creativeAction = action;
-            creativeNetId = creativeNetId(tracker, destinationItem(action));
-            break;
+            final boolean strict = action.slot() == CREATIVE_DRAG_MARKER_SLOT;
+            creativeNetId = creativeNetId(tracker, destinationItem(action), strict);
         }
-        if (creativeAction == null) {
+        if (creativeAction == null || creativeNetId == null) {
             return false;
         }
-        if (creativeNetId == null) {
-            remaining.clear();
+        final boolean creativeDrag = creativeAction.slot() == CREATIVE_DRAG_MARKER_SLOT;
+        remaining.remove(creativeAction);
+        final ItemStackRequestLayout.SlotInfo source =
+                new ItemStackRequestLayout.SlotInfo(ContainerEnumName.CreatedOutputContainer, 50, 0);
+
+        if (creativeDrag) {
+            final List<InventoryActionData> destinations = new ArrayList<>();
+            final List<String> seenSlots = new ArrayList<>();
+            for (final InventoryActionData action : remaining) {
+                if (!isContainer(action)
+                        || action.source().containerId() != ContainerID.CONTAINER_ID_INVENTORY.getValue()
+                        || !isDestinationIncrease(action)
+                        || destinationItem(action).amount() != destinationItem(creativeAction).amount()
+                        || !sameItemFamily(sourceItem(action), destinationItem(creativeAction))) {
+                    return false;
+                }
+                final String key = action.source().containerId() + ":" + action.slot();
+                if (!seenSlots.add(key)) return false;
+                destinations.add(action);
+            }
+            if (destinations.isEmpty()) return false;
+            for (final InventoryActionData destination : destinations) {
+                final ItemStackRequestLayout.SlotInfo destSlot = slotInfo(destination, tracker);
+                if (destSlot == null) return false;
+                stackActions.add(Action.creative(creativeNetId));
+                stackActions.add(Action.transfer(ItemStackRequestActionType.Take,
+                        destination.toItem().amount(), source, destSlot));
+            }
+            remaining.removeAll(destinations);
             return true;
         }
-        remaining.remove(creativeAction);
+
         stackActions.add(Action.creative(creativeNetId));
         InventoryActionData destination = null;
         InventoryActionData drop = null;
@@ -484,7 +761,6 @@ public final class ItemStackRequestEncoder {
             if (destination != null) {
                 remaining.remove(destination);
             }
-            final ItemStackRequestLayout.SlotInfo source = new ItemStackRequestLayout.SlotInfo(ContainerEnumName.CreatedOutputContainer, 50, 0);
             stackActions.add(Action.drop(movedCount(drop), source));
             return true;
         }
@@ -493,17 +769,11 @@ public final class ItemStackRequestEncoder {
             return true;
         }
         remaining.remove(destination);
-        final ItemStackRequestLayout.SlotInfo source = new ItemStackRequestLayout.SlotInfo(ContainerEnumName.CreatedOutputContainer, 50, 0);
         final ItemStackRequestLayout.SlotInfo destSlot = slotInfo(destination, tracker);
         if (destSlot == null) {
             remaining.clear();
             return true;
         }
-        // MOT TransferItemActionProcessor.transferCreativeCreatedOutput overwrites
-        // dest, but dest netId is still validated. Occupied Java SET_CREATIVE /
-        // middle-click clone is from!=empty, to=new stack, so isDestinationIncrease
-        // misses it and CraftCreative never Takes. Destroy the old dest first.
-        // Ref: MOT CraftCreativeActionProcessor + TransferItemActionProcessor.
         if (needsCreativeReplaceDestroy(destination)) {
             stackActions.add(Action.destroy(destination.fromItem().amount(), destSlot));
         }
@@ -512,12 +782,18 @@ public final class ItemStackRequestEncoder {
     }
 
     private static Integer creativeNetId(final InventoryTracker tracker, final BedrockItem item) {
+        return creativeNetId(tracker, item, false);
+    }
+
+    private static Integer creativeNetId(final InventoryTracker tracker, final BedrockItem item,
+                                         final boolean exact) {
         if (tracker == null || tracker.user() == null || item == null || item.isEmpty()) {
             return null;
         }
         final net.raphimc.viabedrock.experimental.storage.CreativeContentCache cache =
                 tracker.user().get(net.raphimc.viabedrock.experimental.storage.CreativeContentCache.class);
-        return cache != null ? cache.findNetId(item) : null;
+        if (cache == null) return null;
+        return exact ? cache.findExactNetId(item) : cache.findNetId(item);
     }
 
     private static EncodedRequest encodeActions(final List<Action> stackActions, final InventoryTracker tracker,
@@ -551,16 +827,20 @@ public final class ItemStackRequestEncoder {
 
     private static boolean prependCraftRecipe(final List<InventoryActionData> remaining, final InventoryTracker tracker,
                                               final List<Action> stackActions) {
-        Integer recipeNetworkId = null;
+        BedrockItem output = null;
         for (int i = 0; i < remaining.size(); i++) {
             final InventoryActionData action = remaining.get(i);
             if (isCraftResultTodo(action)) {
-                recipeNetworkId = recipeNetworkId(tracker, action.fromItem().isEmpty() ? action.toItem() : action.fromItem());
+                output = action.fromItem().isEmpty() ? action.toItem() : action.fromItem();
                 remaining.remove(i);
                 break;
             }
         }
-        if (recipeNetworkId == null) {
+        if (output == null || output.isEmpty()) {
+            return false;
+        }
+        final MatchedCraft matched = matchCraft(tracker, output);
+        if (matched == null) {
             return false;
         }
         for (int i = 0; i < remaining.size(); ) {
@@ -570,26 +850,75 @@ public final class ItemStackRequestEncoder {
                 i++;
             }
         }
-        stackActions.add(Action.craft(recipeNetworkId));
+        stackActions.add(Action.craftAuto(matched.recipe.networkId(), matched.timesCrafted, matched.ingredients));
         return true;
     }
 
     private static Integer recipeNetworkId(final InventoryTracker tracker, final BedrockItem output) {
-        if (tracker == null || tracker.user() == null) {
+        final MatchedCraft matched = matchCraft(tracker, output);
+        return matched != null ? matched.recipe.networkId() : null;
+    }
+
+    private static MatchedCraft matchCraft(final InventoryTracker tracker, final BedrockItem output) {
+        if (tracker == null || tracker.user() == null || output == null || output.isEmpty()) {
             return null;
         }
         final RecipeRegistry registry = tracker.user().get(RecipeRegistry.class);
         if (registry == null) {
             return null;
         }
-        BedrockRecipe recipe = registry.matchRecipe(CraftingSimulator.getGridItems(false, tracker), false);
+        boolean is3x3 = false;
+        BedrockItem[] gridItems = CraftingSimulator.getGridItems(false, tracker);
+        BedrockRecipe recipe = registry.matchRecipe(gridItems, false);
         if (recipe == null) {
-            recipe = registry.matchRecipe(CraftingSimulator.getGridItems(true, tracker), true);
+            is3x3 = true;
+            gridItems = CraftingSimulator.getGridItems(true, tracker);
+            recipe = registry.matchRecipe(gridItems, true);
         }
-        if (recipe == null || output == null || output.isEmpty() || recipe.primaryOutput().isDifferent(output)) {
+        if (recipe == null) {
             return null;
         }
-        return recipe.networkId();
+        final int perCraft = Math.max(1, recipe.primaryOutput().amount());
+        final int timesCrafted;
+        if (recipe.extraOutputs() != null && !recipe.extraOutputs().isEmpty()) {
+            if (recipe.primaryOutput().isDifferent(output) || output.amount() != perCraft) {
+                return null;
+            }
+            timesCrafted = 1;
+        } else {
+            if (recipe.primaryOutput().identifier() != output.identifier()
+                    || recipe.primaryOutput().data() != output.data()
+                    || output.amount() % perCraft != 0) {
+                return null;
+            }
+            timesCrafted = Math.max(1, output.amount() / perCraft);
+        }
+        return new MatchedCraft(recipe, timesCrafted, autoCraftIngredients(gridItems, timesCrafted));
+    }
+
+    /**
+     * MOT {@code CraftRecipeAutoProcessor} counts one Consume per non-empty auto-craft
+     * ingredient and matches those descriptors against the later Consume actions.
+     * Emit one DEFAULT descriptor per occupied grid slot, never TAG type 3.
+     */
+    static List<BedrockItem> autoCraftIngredients(final BedrockItem[] gridItems, final int timesCrafted) {
+        final List<BedrockItem> ingredients = new ArrayList<>();
+        if (gridItems == null) {
+            return ingredients;
+        }
+        final int times = Math.max(1, timesCrafted);
+        for (final BedrockItem gridItem : gridItems) {
+            if (gridItem == null || gridItem.isEmpty()) {
+                continue;
+            }
+            final BedrockItem descriptor = gridItem.copy();
+            descriptor.setAmount(Math.min(gridItem.amount(), times));
+            ingredients.add(descriptor);
+        }
+        return ingredients;
+    }
+
+    private record MatchedCraft(BedrockRecipe recipe, int timesCrafted, List<BedrockItem> ingredients) {
     }
 
     private static Action takeNextDrop(final List<InventoryActionData> remaining, final InventoryTracker tracker) {
@@ -905,50 +1234,56 @@ public final class ItemStackRequestEncoder {
     }
 
     private record Action(ItemStackRequestActionType type, int count, int filterIndex, int timesCrafted,
-                          String patternId, ItemStackRequestLayout.SlotInfo source, ItemStackRequestLayout.SlotInfo destination) {
+                          String patternId, ItemStackRequestLayout.SlotInfo source, ItemStackRequestLayout.SlotInfo destination,
+                          List<BedrockItem> ingredients) {
         static Action transfer(final ItemStackRequestActionType type, final int count,
                                final ItemStackRequestLayout.SlotInfo source, final ItemStackRequestLayout.SlotInfo destination) {
-            return new Action(type, count, 0, 0, null, source, destination);
+            return new Action(type, count, 0, 0, null, source, destination, null);
         }
 
         static Action swap(final ItemStackRequestLayout.SlotInfo source, final ItemStackRequestLayout.SlotInfo destination) {
-            return new Action(ItemStackRequestActionType.Swap, 0, 0, 0, null, source, destination);
+            return new Action(ItemStackRequestActionType.Swap, 0, 0, 0, null, source, destination, null);
         }
 
         static Action drop(final int count, final ItemStackRequestLayout.SlotInfo source) {
-            return new Action(ItemStackRequestActionType.Drop, count, 0, 0, null, source, null);
+            return new Action(ItemStackRequestActionType.Drop, count, 0, 0, null, source, null, null);
         }
 
         static Action consume(final int count, final ItemStackRequestLayout.SlotInfo source) {
-            return new Action(ItemStackRequestActionType.Consume, count, 0, 0, null, source, null);
+            return new Action(ItemStackRequestActionType.Consume, count, 0, 0, null, source, null, null);
         }
 
         static Action craft(final int recipeNetworkId) {
-            return new Action(ItemStackRequestActionType.CraftRecipe, recipeNetworkId, 0, 0, null, null, null);
+            return new Action(ItemStackRequestActionType.CraftRecipe, recipeNetworkId, 0, 0, null, null, null, null);
+        }
+
+        static Action craftAuto(final int recipeNetworkId, final int timesCrafted, final List<BedrockItem> ingredients) {
+            return new Action(ItemStackRequestActionType.CraftRecipeAuto, recipeNetworkId, 0, timesCrafted, null, null, null,
+                    ingredients == null ? List.of() : List.copyOf(ingredients));
         }
 
         static Action craftOptional(final int recipeNetworkId, final int filteredStringIndex) {
-            return new Action(ItemStackRequestActionType.CraftRecipeOptional, recipeNetworkId, filteredStringIndex, 0, null, null, null);
+            return new Action(ItemStackRequestActionType.CraftRecipeOptional, recipeNetworkId, filteredStringIndex, 0, null, null, null, null);
         }
 
         static Action craftRepairAndDisenchant(final int recipeNetworkId, final int timesCrafted, final int repairCost) {
-            return new Action(ItemStackRequestActionType.CraftRepairAndDisenchant, recipeNetworkId, repairCost, timesCrafted, null, null, null);
+            return new Action(ItemStackRequestActionType.CraftRepairAndDisenchant, recipeNetworkId, repairCost, timesCrafted, null, null, null, null);
         }
 
         static Action craftLoom(final String patternId, final int timesCrafted) {
-            return new Action(ItemStackRequestActionType.CraftLoom, 0, 0, timesCrafted, patternId, null, null);
+            return new Action(ItemStackRequestActionType.CraftLoom, 0, 0, timesCrafted, patternId, null, null, null);
         }
 
         static Action creative(final int creativeNetId) {
-            return new Action(ItemStackRequestActionType.CraftCreative, creativeNetId, 0, 0, null, null, null);
+            return new Action(ItemStackRequestActionType.CraftCreative, creativeNetId, 0, 0, null, null, null, null);
         }
 
         static Action destroy(final int count, final ItemStackRequestLayout.SlotInfo source) {
-            return new Action(ItemStackRequestActionType.Destroy, count, 0, 0, null, source, null);
+            return new Action(ItemStackRequestActionType.Destroy, count, 0, 0, null, source, null, null);
         }
 
         static Action beaconPayment(final int primaryEffect, final int secondaryEffect) {
-            return new Action(ItemStackRequestActionType.ScreenBeaconPayment, primaryEffect, secondaryEffect, 0, null, null, null);
+            return new Action(ItemStackRequestActionType.ScreenBeaconPayment, primaryEffect, secondaryEffect, 0, null, null, null, null);
         }
     }
 

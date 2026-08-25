@@ -46,6 +46,7 @@ import net.raphimc.viabedrock.protocol.model.*;
 import net.raphimc.viabedrock.protocol.provider.SkinProvider;
 import net.raphimc.viabedrock.protocol.rewriter.GameTypeRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
+import net.raphimc.viabedrock.protocol.storage.EntityPropertyStorage;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
 import net.raphimc.viabedrock.protocol.storage.PlayerListStorage;
@@ -75,13 +76,15 @@ public class OtherPlayerPackets {
             final BedrockItem item = wrapper.read(itemRewriter.itemType()); // held item
             final GameType gameType = GameType.getByValue(wrapper.read(BedrockTypes.VAR_INT), GameType.Undefined); // game type
             final EntityData[] entityData = wrapper.read(BedrockTypes.ENTITY_DATA_ARRAY); // entity data
-            final EntityProperties entityProperties = wrapper.read(BedrockTypes.ENTITY_PROPERTIES); // entity properties
+            final EntityProperties entityProperties = EntityPropertyStorage.getOrCreate(wrapper.user())
+                    .resolve("minecraft:player", wrapper.read(BedrockTypes.ENTITY_PROPERTIES)); // entity properties
             final PlayerAbilities abilities = wrapper.read(BedrockTypes.PLAYER_ABILITIES); // abilities
             final EntityLink[] entityLinks = wrapper.read(BedrockTypes.ENTITY_LINK_ARRAY); // entity links
 
             final PlayerEntity entity = entityTracker.addEntity(new PlayerEntity(wrapper.user(), entityRuntimeId, entityTracker.getNextJavaEntityId(), uuid, abilities));
             entity.setPosition(position);
             entity.setRotation(rotation);
+            entity.setEntityProperties(entityProperties);
             entity.updateName(username);
 
             final SpectatorMenuProjection spectatorMenu = wrapper.user().get(SpectatorMenuProjection.class);

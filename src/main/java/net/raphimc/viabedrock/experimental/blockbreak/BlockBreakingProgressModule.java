@@ -22,6 +22,7 @@ import com.viaversion.viaversion.api.minecraft.BlockPosition;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ServerboundPackets26_1;
+import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.model.BlockState;
 import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
 import net.raphimc.viabedrock.api.util.InstantBreakBlocks;
@@ -130,6 +131,11 @@ public final class BlockBreakingProgressModule implements FeatureModule {
         }
     }
 
+    static boolean shouldAcknowledgeImmediately(final PlayerActionAction action, final boolean instantBreak) {
+        return action == PlayerActionAction.ABORT_DESTROY_BLOCK
+                || (action == PlayerActionAction.START_DESTROY_BLOCK && !instantBreak);
+    }
+
     private void handlePlayerAction(final PacketWrapper wrapper) {
         final PlayerActionAction action = PlayerActionAction.values()[wrapper.passthrough(Types.VAR_INT)];
         final BlockPosition position = wrapper.passthrough(Types.BLOCK_POSITION1_14);
@@ -161,7 +167,12 @@ public final class BlockBreakingProgressModule implements FeatureModule {
 
         switch (action) {
             case START_DESTROY_BLOCK -> this.startMining(user, clientPlayer, tracker, chunkTracker, position, direction, sequence);
-            case ABORT_DESTROY_BLOCK -> this.suspendMining(clientPlayer, tracker, position);
+            case ABORT_DESTROY_BLOCK -> {
+                this.suspendMining(clientPlayer, tracker, position);
+                if (shouldAcknowledgeImmediately(action, false)) {
+                    PacketFactory.sendJavaBlockChangedAck(user, sequence);
+                }
+            }
             case STOP_DESTROY_BLOCK -> this.finishMining(user, gameSession, clientPlayer, tracker, chunkTracker, position, direction, sequence);
             default -> throw new IllegalStateException("Unhandled mining action: " + action);
         }
@@ -179,7 +190,12 @@ public final class BlockBreakingProgressModule implements FeatureModule {
         clientPlayer.setBlockBreakingInfo(new ClientPlayerEntity.BlockBreakingInfo(position, direction));
         clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.StartDestroyBlock, position, direction.ordinal()));
 
-        if (this.isInstantBreak(user, chunkTracker, position)) {
+        final boolean instantBreak = this.isInstantBreak(user, chunkTracker, position);
+        if (shouldAcknowledgeImmediately(PlayerActionAction.START_DESTROY_BLOCK, instantBreak)) {
+            PacketFactory.sendJavaBlockChangedAck(user, sequence);
+        }
+        if (instantBreak) {
+            // Instant breaks still wait for the authoritative UPDATE_BLOCK before their ACK.
             this.finishMining(user, user.get(GameSessionStorage.class), clientPlayer, tracker, chunkTracker, position, direction, sequence);
         }
     }
@@ -203,10 +219,20 @@ public final class BlockBreakingProgressModule implements FeatureModule {
             clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.StopDestroyBlock));
             clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.CrackBlock, position, direction.ordinal()));
         } else {
-            clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.ContinueDestroyBlock, position, direction.ordinal()));
-            clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.PredictDestroyBlock, position, direction.ordinal()));
+            for (final PlayerActionType action : serverAuthoritativeCompletionActions(
+                    ViaBedrock.getConfig().shouldEmulateNetEaseClient())) {
+                clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(action, position, direction.ordinal()));
+            }
         }
         tracker.finishMining(position, sequence, chunkTracker.getJavaBlockState(position));
+    }
+
+    static List<PlayerActionType> serverAuthoritativeCompletionActions(final boolean emulateNetEase) {
+        // MOT stores AuthInput block actions in an EnumMap and processes Predict before Continue.
+        // Sending both would complete the block and immediately restart mining it.
+        return emulateNetEase
+                ? List.of(PlayerActionType.PredictDestroyBlock)
+                : List.of(PlayerActionType.ContinueDestroyBlock, PlayerActionType.PredictDestroyBlock);
     }
 
     private void handleSwing(final PacketWrapper wrapper) {
@@ -220,7 +246,6 @@ public final class BlockBreakingProgressModule implements FeatureModule {
             return;
         }
 
-        this.sendBedrockSwing(user, clientPlayer);
         final BlockBreakingProgressTracker tracker = user.get(BlockBreakingProgressTracker.class);
         final MiningTarget target = tracker.miningTarget();
         if (target != null && tracker.miningPhase() == MiningPhase.SUSPENDED) {
@@ -235,9 +260,12 @@ public final class BlockBreakingProgressModule implements FeatureModule {
             }
             return;
         }
-        if (!tracker.shouldSuppressMissedSwing()) {
-            clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.MissedSwing);
+        if (!tracker.shouldForwardStandaloneSwing()) {
+            return;
         }
+
+        this.sendBedrockSwing(user, clientPlayer);
+        clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.MissedSwing);
     }
 
     private void handleClientTickEnd(final PacketWrapper wrapper) {

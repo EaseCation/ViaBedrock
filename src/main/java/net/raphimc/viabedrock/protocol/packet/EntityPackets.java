@@ -59,6 +59,7 @@ import net.raphimc.viabedrock.protocol.model.*;
 import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
+import net.raphimc.viabedrock.protocol.storage.EntityPropertyStorage;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
@@ -98,7 +99,8 @@ public class EntityPackets {
                 attributes[i] = new EntityAttribute(name, currentValue, minValue, maxValue);
             }
             final EntityData[] entityData = wrapper.read(BedrockTypes.ENTITY_DATA_ARRAY); // entity data
-            final EntityProperties entityProperties = wrapper.read(BedrockTypes.ENTITY_PROPERTIES); // entity properties
+            final EntityProperties entityProperties = EntityPropertyStorage.getOrCreate(wrapper.user())
+                    .resolve(type, wrapper.read(BedrockTypes.ENTITY_PROPERTIES)); // entity properties
             final EntityLink[] entityLinks = wrapper.read(BedrockTypes.ENTITY_LINK_ARRAY); // entity links
 
             final int javaSpawnData;
@@ -160,6 +162,7 @@ public class EntityPackets {
             }
             entity.setPosition(position);
             entity.setRotation(rotation);
+            entity.setEntityProperties(entityProperties);
 
             wrapper.write(Types.VAR_INT, entity.javaId()); // entity id
             wrapper.write(Types.UUID, entity.javaUuid()); // uuid
@@ -586,8 +589,8 @@ public class EntityPackets {
 
             final long entityRuntimeId = wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // entity runtime id
             final EntityData[] entityData = wrapper.read(BedrockTypes.ENTITY_DATA_ARRAY); // entity data
-            final EntityProperties entityProperties = wrapper.read(BedrockTypes.ENTITY_PROPERTIES); // entity properties
-            wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // tick
+            final EntityProperties rawEntityProperties = wrapper.read(BedrockTypes.ENTITY_PROPERTIES); // entity properties
+            final long entityDataFrame = wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // tick
 
             final Entity entity = entityTracker.getEntityByRid(entityRuntimeId);
             if (entity == null) {
@@ -595,6 +598,10 @@ public class EntityPackets {
                 return;
             }
 
+            final EntityProperties entityProperties = EntityPropertyStorage.getOrCreate(wrapper.user())
+                    .resolve(entity.type(), rawEntityProperties);
+            entity.setEntityProperties(entityProperties);
+            entity.setEntityDataFrame(entityDataFrame);
             final List<EntityData> javaEntityData = new ArrayList<>();
             entity.updateEntityData(entityData, javaEntityData);
             wrapper.write(Types.VAR_INT, entity.javaId()); // entity id

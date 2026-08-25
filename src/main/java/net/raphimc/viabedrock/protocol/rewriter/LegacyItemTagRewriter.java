@@ -35,9 +35,22 @@ final class LegacyItemTagRewriter {
 
     static void apply(final StructuredDataContainer data, final CompoundTag tag) {
         final PotionContents potionContents = potionContents(tag);
-        if (potionContents != null) {
-            data.set(StructuredDataKey.POTION_CONTENTS1_21_2, potionContents);
+        if (potionContents == null) {
+            return;
         }
+
+        final PotionContents current = data.get(StructuredDataKey.POTION_CONTENTS1_21_2);
+        if (current == null) {
+            data.set(StructuredDataKey.POTION_CONTENTS1_21_2, potionContents);
+            return;
+        }
+
+        data.set(StructuredDataKey.POTION_CONTENTS1_21_2, new PotionContents(
+                tag.contains("Potion") ? potionContents.potion() : current.potion(),
+                tag.contains("CustomPotionColor") ? potionContents.customColor() : current.customColor(),
+                tag.contains("custom_potion_effects") ? potionContents.customEffects() : current.customEffects(),
+                current.customName()
+        ));
     }
 
     static PotionContents potionContents(final CompoundTag tag) {

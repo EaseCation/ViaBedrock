@@ -29,6 +29,7 @@ import com.viaversion.viaversion.libs.fastutil.longs.LongArrayList;
 import com.viaversion.viaversion.libs.fastutil.longs.LongList;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ServerboundPackets26_1;
+import io.netty.channel.Channel;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.model.BlockState;
 import net.raphimc.viabedrock.api.model.container.Container;
@@ -93,6 +94,8 @@ import net.raphimc.viabedrock.protocol.model.BedrockItem;
 import net.raphimc.viabedrock.protocol.model.EntityAttribute;
 import net.raphimc.viabedrock.protocol.model.EntityLink;
 import net.raphimc.viabedrock.protocol.model.Position3f;
+import net.raphimc.viabedrock.protocol.packet.EntityInteractionPacketSender;
+import net.raphimc.viabedrock.protocol.packet.ItemStackResponseLayout;
 import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
 import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
@@ -263,6 +266,23 @@ public class ExperimentalFeatures {
                 module.onPlayerIdentitiesUpdated(user, identities);
             } catch (final Throwable e) {
                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error in module onPlayerIdentitiesUpdated", e);
+            }
+        }
+    }
+
+    public static void dispatchDimensionChange(final UserConnection user) {
+        final EntityTracker entityTracker = user.get(EntityTracker.class);
+        if (entityTracker != null && entityTracker.getClientPlayer() != null) {
+            final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
+            clientPlayer.deferredEntityActions().clear();
+            clientPlayer.setUsingItem(false);
+            restorePromotedOffhand(user, clientPlayer);
+        }
+        for (final FeatureModule module : MODULES) {
+            try {
+                module.onDimensionChange(user);
+            } catch (final Throwable e) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Error in module onDimensionChange", e);
             }
         }
     }
@@ -455,11 +475,6 @@ public class ExperimentalFeatures {
                                                final ItemUseHandContext handContext) {
         final BedrockItem selectedItem = handContext.item();
         final boolean emulateNetEase = ViaBedrock.getConfig().shouldEmulateNetEaseClient();
-        if (ItemUseSemantics.rejectNetEaseOffhandUse(emulateNetEase, !handContext.isMainHand(), isShield(itemRewriter, selectedItem))) {
-            PacketFactory.sendJavaContainerSetContent(user, user.get(InventoryTracker.class).getInventoryContainer());
-            syncJavaUsingItem(user, clientPlayer);
-            return;
-        }
         if (ItemUseSemantics.emulateShieldAsSneak(emulateNetEase, isShield(itemRewriter, selectedItem))) {
             if (ItemUseSemantics.ignoreDuplicateUseStart(clientPlayer.isUsingItem(), matchesUseItem(handContext, clientPlayer))) {
                 return;
@@ -505,10 +520,24 @@ public class ExperimentalFeatures {
         if (ItemUseSemantics.ignoreDuplicateUseStart(clientPlayer.isUsingItem(), matchesUseItem(handContext, clientPlayer))) {
             return;
         }
-        clientPlayer.startUsingItem(handContext.hand(), handContext.containerId(), handContext.containerSlot(), handContext.transactionHotbarSlot(), selectedItem);
+        final ItemUseHandContext motHandContext = motContextForOffhandUse(user, clientPlayer, handContext, itemRewriter);
+        if (motHandContext == null) {
+            PacketFactory.sendJavaContainerSetContent(user, user.get(InventoryTracker.class).getInventoryContainer());
+            PacketFactory.sendJavaContainerSetContent(user, user.get(InventoryTracker.class).getOffhandContainer());
+            syncJavaUsingItem(user, clientPlayer);
+            return;
+        }
+        // Keep the Java hand for the use animation. MOT slots come from the
+        // silent F-swap so CLICK_AIR / RELEASE see the stack in the main hand.
+        clientPlayer.startUsingItem(
+                handContext.hand(),
+                motHandContext.containerId(),
+                motHandContext.containerSlot(),
+                motHandContext.transactionHotbarSlot(),
+                selectedItem);
         clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StartUsingItem);
         if (shouldAttachAuthInputItemInteraction(itemRewriter, selectedItem)) {
-            clientPlayer.setAuthInputItemInteraction(createUseItemTransaction(handContext, clientPlayer));
+            clientPlayer.setAuthInputItemInteraction(createUseItemTransaction(motHandContext, clientPlayer));
         }
         if (ItemUseSemantics.suppressStartSprintingWhileUsingItem(emulateNetEase, true)) {
             clientPlayer.authInputData().remove(PlayerAuthInputPacket_InputData.StartSprinting);
@@ -521,7 +550,7 @@ public class ExperimentalFeatures {
             clientPlayer.setSprinting(false);
         }
         if (shouldSendStandaloneUseTransaction(itemRewriter, selectedItem)) {
-            sendUseItemTransaction(user, inventoryTransactionRewriter, handContext, clientPlayer);
+            sendUseItemTransaction(user, inventoryTransactionRewriter, motHandContext, clientPlayer);
         }
     }
 
@@ -651,7 +680,8 @@ public class ExperimentalFeatures {
         }
 
         final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
-        final ItemUseHandContext handContext = ItemUseHandContext.resolve(user.get(InventoryTracker.class), hand);
+        final ItemUseHandContext handContext = ItemUseHandContext.resolve(
+                user.get(InventoryTracker.class), hand, clientPlayer.isOffhandPromoted());
         final ChunkTracker chunkTracker = user.get(ChunkTracker.class);
         final InventoryTransactionRewriter inventoryTransactionRewriter = user.get(InventoryTransactionRewriter.class);
 
@@ -690,7 +720,7 @@ public class ExperimentalFeatures {
         sendItemUseOnBlock(
                 user,
                 clientPlayer,
-                ItemUseHandContext.resolve(user.get(InventoryTracker.class), hand),
+                ItemUseHandContext.resolve(user.get(InventoryTracker.class), hand, clientPlayer.isOffhandPromoted()),
                 user.get(InventoryTransactionRewriter.class),
                 user.get(ChunkTracker.class),
                 position,
@@ -825,18 +855,369 @@ public class ExperimentalFeatures {
     }
 
     /**
+     * MOT only consumes {@code getItemInHand()}. Promote a Java offhand stack
+     * with a silent F-swap so CLICK_AIR / CLICK_BLOCK see it in the main hand.
+     * Shield stays sneak-emulation and is not swapped.
+     */
+    private static ItemUseHandContext motContextForOffhandUse(final UserConnection user, final ClientPlayerEntity clientPlayer,
+                                                              final ItemUseHandContext handContext, final ItemRewriter itemRewriter) {
+        if (!ItemUseSemantics.promoteOffhandUse(
+                ViaBedrock.getConfig().shouldEmulateNetEaseClient(),
+                !handContext.isMainHand(),
+                isShield(itemRewriter, handContext.item()))) {
+            return handContext;
+        }
+        if (handContext.item() == null || handContext.item().isEmpty()) {
+            return null;
+        }
+        return promoteOffhandContext(user, clientPlayer);
+    }
+
+    /**
+     * MOT transaction type 3 also compares and consumes the selected main-hand
+     * stack. Entity interaction allows an empty offhand, so it intentionally does
+     * not apply the item-use empty-stack guard above.
+     */
+    public static ItemUseHandContext motContextForEntityInteraction(final UserConnection user,
+                                                                    final ClientPlayerEntity clientPlayer,
+                                                                    final InteractionHand hand) {
+        final ItemUseHandContext handContext = ItemUseHandContext.resolve(user.get(InventoryTracker.class), hand);
+        if (!ViaBedrock.getConfig().shouldEmulateNetEaseClient() || hand == InteractionHand.MAIN_HAND) {
+            return handContext;
+        }
+        if (!ViaBedrock.getConfig().shouldEnableExperimentalFeatures()) {
+            return null;
+        }
+        return promoteOffhandContext(user, clientPlayer);
+    }
+
+    private static ItemUseHandContext promoteOffhandContext(final UserConnection user, final ClientPlayerEntity clientPlayer) {
+        if (clientPlayer.isOffhandPromotionPending()) {
+            return null;
+        }
+        if (clientPlayer.isOffhandPromoted()) {
+            // A new action may reuse a promotion whose previous restore is pending.
+            clientPlayer.markOffhandPromoted();
+            return ItemUseHandContext.resolve(user.get(InventoryTracker.class), InteractionHand.MAIN_HAND);
+        }
+        final ClientAuthInventoryModule.SwapHandsResult swap = ClientAuthInventoryModule.tryHandleSwapHandsTracked(user, false);
+        if (!swap.submitted()) {
+            return null;
+        }
+        if (swap.requestId() == null) {
+            // Legacy TYPE_NORMAL has no ITEM_STACK_RESPONSE ledger. The MOT
+            // transaction is already applied, so treat it as immediately promoted.
+            clientPlayer.markOffhandPromoted();
+            return ItemUseHandContext.resolve(user.get(InventoryTracker.class), InteractionHand.MAIN_HAND);
+        }
+        clientPlayer.markOffhandPromotionPending(swap.requestId());
+        return null;
+    }
+
+    public static void restorePromotedOffhand(final UserConnection user, final ClientPlayerEntity clientPlayer) {
+        if (!clientPlayer.scheduleOffhandRestore()) {
+            return;
+        }
+
+        final Channel channel = user.getChannel();
+        if (channel == null) {
+            clientPlayer.markOffhandRestoreSubmissionFailed();
+            return;
+        }
+
+        try {
+            channel.eventLoop().execute(() -> {
+                if (!clientPlayer.isOffhandRestoreScheduled()) {
+                    return;
+                }
+
+                final InventoryTracker inventoryTracker = user.get(InventoryTracker.class);
+                if (inventoryTracker == null) {
+                    clientPlayer.markOffhandRestoreSubmissionFailed();
+                    return;
+                }
+                final BedrockItem promotedMainHand = inventoryTracker.getInventoryContainer().getSelectedHotbarItem();
+                final BedrockItem promotedOffhand = inventoryTracker.getOffhandContainer().getItem(0);
+                // Capture before ClickSimulator/applyMirrorUpdates can replace or mutate the slots.
+                clientPlayer.captureOffhandRestoreIdentity(promotedMainHand, promotedOffhand);
+                final ClientAuthInventoryModule.SwapHandsResult restore;
+                try {
+                    restore = ClientAuthInventoryModule.tryHandleSwapHandsTracked(user, false);
+                } catch (final RuntimeException e) {
+                    clientPlayer.markOffhandRestoreSubmissionFailed();
+                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to restore promoted offhand", e);
+                    return;
+                }
+
+                if (!restore.submitted()) {
+                    clientPlayer.markOffhandRestoreSubmissionFailed();
+                    return;
+                }
+                if (restore.requestId() != null) {
+                    clientPlayer.markOffhandRestoreRequestSent(restore.requestId());
+                    return;
+                }
+
+                // A legacy transaction or an empty action list has no response ledger entry.
+                // Ordered emission is not confirmation, so never drain the deferred queue here.
+                abandonOffhandRestoreAndResync(user, clientPlayer, inventoryTracker,
+                        "Reverse hand swap emitted no tracked ItemStackRequest response");
+            });
+        } catch (final RuntimeException e) {
+            clientPlayer.markOffhandRestoreSubmissionFailed();
+            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to schedule promoted offhand restore", e);
+        }
+    }
+
+    public static void retryPromotedOffhandRestore(final UserConnection user, final ClientPlayerEntity clientPlayer) {
+        if (clientPlayer.shouldRetryOffhandRestore()) {
+            restorePromotedOffhand(user, clientPlayer);
+        }
+    }
+
+    public static void handleItemStackResponse(final UserConnection user,
+                                               final ItemStackResponseLayout.DecodedResponse decoded) {
+        final EntityTracker entityTracker = user.get(EntityTracker.class);
+        final InventoryTracker inventoryTracker = user.get(InventoryTracker.class);
+        if (entityTracker == null || inventoryTracker == null) {
+            return;
+        }
+        final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
+        if (clientPlayer == null) {
+            return;
+        }
+        if (clientPlayer.isOffhandPromotionPending()) {
+            handleOffhandPromotionResponse(user, clientPlayer, inventoryTracker, decoded);
+            return;
+        }
+        if (!clientPlayer.isOffhandRestoring()) {
+            return;
+        }
+        final Integer requestId = clientPlayer.offhandRestoreRequestId();
+        if (requestId == null || inventoryTracker.peekPendingItemStackRequest(requestId) != null) {
+            return;
+        }
+
+        final Boolean accepted = restoreResponseAccepted(decoded, requestId);
+        if (Boolean.FALSE.equals(accepted)) {
+            if (!promotedHandsMatch(inventoryTracker, clientPlayer)) {
+                abandonOffhandRestoreAndResync(user, clientPlayer, inventoryTracker,
+                        "Rejected reverse hand swap did not roll the mirror back to the promoted layout");
+                return;
+            }
+            if (clientPlayer.markOffhandRestoreRejected(requestId)) {
+                retryPromotedOffhandRestore(user, clientPlayer);
+            }
+            return;
+        }
+        if (!Boolean.TRUE.equals(accepted) || !restoredHandsMatch(inventoryTracker, clientPlayer)) {
+            abandonOffhandRestoreAndResync(user, clientPlayer, inventoryTracker,
+                    accepted == null
+                            ? "Reverse hand swap left the pending ledger without a matching response"
+                            : "Reverse hand swap was accepted but the inventory mirror did not restore");
+            return;
+        }
+        if (clientPlayer.markOffhandRestoreConfirmed(requestId)) {
+            scheduleDeferredEntityFlush(user, clientPlayer);
+        }
+    }
+
+    private static void handleOffhandPromotionResponse(final UserConnection user,
+                                                       final ClientPlayerEntity clientPlayer,
+                                                       final InventoryTracker inventoryTracker,
+                                                       final ItemStackResponseLayout.DecodedResponse decoded) {
+        final Integer requestId = clientPlayer.offhandPromotionRequestId();
+        if (requestId == null || inventoryTracker.peekPendingItemStackRequest(requestId) != null) {
+            return;
+        }
+        final Boolean accepted = restoreResponseAccepted(decoded, requestId);
+        if (Boolean.TRUE.equals(accepted)) {
+            if (clientPlayer.markOffhandPromotionConfirmed(requestId)) {
+                // Flush queued ATTACK/INTERACT now that MOT has the promoted
+                // main-hand. Stay PROMOTED so a follow-up USE_ITEM can still
+                // remap OFF_HAND; restore happens when that use ends.
+                EntityInteractionPacketSender.flushDeferred(user, clientPlayer);
+            }
+            return;
+        }
+        if (Boolean.FALSE.equals(accepted)) {
+            clientPlayer.markOffhandPromotionRejected(requestId);
+            PacketFactory.sendJavaContainerSetContent(user, inventoryTracker.getInventoryContainer());
+            PacketFactory.sendJavaContainerSetContent(user, inventoryTracker.getOffhandContainer());
+            return;
+        }
+        clientPlayer.markOffhandPromotionRejected(requestId);
+        PacketFactory.sendJavaContainerSetContent(user, inventoryTracker.getInventoryContainer());
+        PacketFactory.sendJavaContainerSetContent(user, inventoryTracker.getOffhandContainer());
+        ViaBedrock.getPlatform().getLogger().log(Level.WARNING,
+                "Offhand promotion left the pending ledger without a matching ItemStackResponse; resynced Java inventory");
+    }
+
+    static Boolean restoreResponseAccepted(final ItemStackResponseLayout.DecodedResponse decoded, final int requestId) {
+        if (decoded == null) {
+            return null;
+        }
+        for (final ItemStackResponseLayout.DecodedEntry entry : decoded.entries()) {
+            if (entry.requestId() == requestId) {
+                return entry.ok();
+            }
+        }
+        for (final int decodedRequestId : decoded.requestIds()) {
+            if (decodedRequestId == requestId) {
+                return !decoded.anyRejected();
+            }
+        }
+        if (!decoded.entries().isEmpty() || decoded.requestIds().length != 0) {
+            return null;
+        }
+        return decoded.entryCount() == 1 ? !decoded.anyRejected() : null;
+    }
+
+    private static boolean promotedHandsMatch(final InventoryTracker inventoryTracker,
+                                              final ClientPlayerEntity clientPlayer) {
+        return clientPlayer.promotedHandsMatch(
+                inventoryTracker.getInventoryContainer().getSelectedHotbarItem(),
+                inventoryTracker.getOffhandContainer().getItem(0));
+    }
+
+    private static boolean restoredHandsMatch(final InventoryTracker inventoryTracker,
+                                              final ClientPlayerEntity clientPlayer) {
+        return clientPlayer.restoredHandsMatch(
+                inventoryTracker.getInventoryContainer().getSelectedHotbarItem(),
+                inventoryTracker.getOffhandContainer().getItem(0));
+    }
+
+    private static void scheduleDeferredEntityFlush(final UserConnection user,
+                                                    final ClientPlayerEntity clientPlayer) {
+        final Channel channel = user.getChannel();
+        if (channel == null) {
+            clientPlayer.deferredEntityActions().clear();
+            return;
+        }
+        try {
+            channel.eventLoop().execute(() -> flushDeferredEntityActions(user, clientPlayer));
+        } catch (final RuntimeException e) {
+            clientPlayer.deferredEntityActions().clear();
+            ViaBedrock.getPlatform().getLogger().log(Level.WARNING,
+                    "Failed to schedule deferred entity action flush", e);
+        }
+    }
+
+    private static void flushDeferredEntityActions(final UserConnection user,
+                                                   final ClientPlayerEntity clientPlayer) {
+        try {
+            clientPlayer.completeOffhandRestoreFlush();
+            EntityInteractionPacketSender.flushDeferred(user, clientPlayer);
+        } catch (final RuntimeException e) {
+            ViaBedrock.getPlatform().getLogger().log(Level.WARNING,
+                    "Failed to flush deferred entity actions", e);
+        }
+    }
+
+    private static void abandonOffhandRestoreAndResync(final UserConnection user,
+                                                       final ClientPlayerEntity clientPlayer,
+                                                       final InventoryTracker inventoryTracker,
+                                                       final String reason) {
+        clientPlayer.deferredEntityActions().clear();
+        clientPlayer.abandonOffhandRestore();
+        PacketFactory.sendJavaContainerSetContent(user, inventoryTracker.getInventoryContainer());
+        PacketFactory.sendJavaContainerSetContent(user, inventoryTracker.getOffhandContainer());
+        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, reason + "; discarded deferred hand actions and resynced Java inventory");
+    }
+
+    private static void registerHandSensitivePacketGates(final BedrockProtocol protocol) {
+        final ServerboundPackets26_1[] packets = {
+                ServerboundPackets26_1.CONTAINER_CLICK,
+                ServerboundPackets26_1.SET_CREATIVE_MODE_SLOT,
+                ServerboundPackets26_1.PICK_ITEM_FROM_BLOCK,
+                ServerboundPackets26_1.PICK_ITEM_FROM_ENTITY,
+                ServerboundPackets26_1.EDIT_BOOK
+        };
+        for (final ServerboundPackets26_1 packet : packets) {
+            ProtocolUtil.prependServerbound(protocol, packet, ExperimentalFeatures::gateHandSensitiveInventoryPacket);
+        }
+        ProtocolUtil.prependServerbound(protocol, ServerboundPackets26_1.CONTAINER_CLOSE,
+                wrapper -> gateHandSensitiveInventoryPacket(wrapper, true));
+        ProtocolUtil.prependServerbound(protocol, ServerboundPackets26_1.SWING, wrapper -> {
+            final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
+            final ClientPlayerEntity clientPlayer = entityTracker == null ? null : entityTracker.getClientPlayer();
+            if (clientPlayer == null || clientPlayer.canProcessHandSensitiveAction(InteractionHand.MAIN_HAND, false, false)) {
+                return;
+            }
+            wrapper.clearPacket();
+            wrapper.cancel();
+            retryPromotedOffhandRestore(wrapper.user(), clientPlayer);
+        });
+    }
+
+    private static void gateHandSensitiveInventoryPacket(final PacketWrapper wrapper) {
+        gateHandSensitiveInventoryPacket(wrapper, false);
+    }
+
+    private static void gateHandSensitiveInventoryPacket(final PacketWrapper wrapper, final boolean cursorReturn) {
+        final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
+        final ClientPlayerEntity clientPlayer = entityTracker == null ? null : entityTracker.getClientPlayer();
+        if (clientPlayer == null || clientPlayer.canProcessHandSensitiveAction(InteractionHand.MAIN_HAND, false, false)) {
+            return;
+        }
+        if (cursorReturn) {
+            final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
+            if (inventoryTracker == null || inventoryTracker.getHudContainer().getItem(0).isEmpty()) {
+                return;
+            }
+        }
+        wrapper.clearPacket();
+        wrapper.cancel();
+        retryPromotedOffhandRestore(wrapper.user(), clientPlayer);
+    }
+
+    private static boolean canProcessHandSensitiveAction(final UserConnection user, final PacketWrapper wrapper,
+                                                         final ClientPlayerEntity clientPlayer, final InteractionHand hand,
+                                                         final boolean allowOriginalOffhandUseContinuation,
+                                                         final boolean allowPromotedOffhandReuse, final int sequence) {
+        if (clientPlayer.canProcessHandSensitiveAction(
+                hand, allowOriginalOffhandUseContinuation, allowPromotedOffhandReuse)) {
+            return true;
+        }
+
+        wrapper.clearPacket();
+        wrapper.cancel();
+        if (sequence > 0) {
+            PacketFactory.sendJavaBlockChangedAck(user, sequence);
+        }
+        retryPromotedOffhandRestore(user, clientPlayer);
+        return false;
+    }
+
+    /**
+     * Java inventory is not swapped, so match the original offhand stack by item.
+     * MOT packets still use the snapshot's main-hand hotbar slot.
+     */
+    private static ItemUseHandContext motPacketContext(final ItemUseHandContext javaContext, final ClientPlayerEntity clientPlayer) {
+        if (!clientPlayer.isOffhandPromoted() || clientPlayer.itemUseSnapshot() == null) {
+            return javaContext;
+        }
+        final ItemUseSnapshot snapshot = clientPlayer.itemUseSnapshot();
+        return new ItemUseHandContext(
+                InteractionHand.MAIN_HAND,
+                snapshot.containerId(),
+                snapshot.containerSlot(),
+                snapshot.transactionHotbarSlot(),
+                snapshot.item().copy()
+        );
+    }
+
+    /**
      * Builds and sends the CLICK_BLOCK ItemUseTransaction (preceded/followed by Start/StopItemUseOn) that a
      * Bedrock client emits when interacting with a block. Shared by the USE_ITEM_ON handler and the empty
      * bucket / glass bottle fluid branch of USE_ITEM.
      */
-    private static void sendItemUseOnBlock(final UserConnection user, final ClientPlayerEntity clientPlayer, final ItemUseHandContext handContext, final InventoryTransactionRewriter inventoryTransactionRewriter, final ChunkTracker chunkTracker, final BlockPosition position, final int faceInt, final BlockFace face, final Position3f clickPosition, final boolean insideBlock, final int sequence) {
-        final BlockPosition expectedPos = insideBlock ? position : position.getRelative(face);
-        // sequence 0 means there is no Java block-change to acknowledge (e.g. item frame entity interaction). Registering
-        // a pending ack for it would leave a phantom sequence-0 ack that flushExpired emits after the timeout.
-        if (sequence > 0) {
-            user.get(BlockPlacementAckTracker.class).addPendingAck(expectedPos, sequence);
-        }
+    static BlockPosition blockPlacementAckPosition(final BlockPosition clickedPosition, final BlockFace face,
+                                                   final boolean clickedBlockReplaceable) {
+        return clickedBlockReplaceable ? clickedPosition : clickedPosition.getRelative(face);
+    }
 
+    private static void sendItemUseOnBlock(final UserConnection user, final ClientPlayerEntity clientPlayer, final ItemUseHandContext handContext, final InventoryTransactionRewriter inventoryTransactionRewriter, final ChunkTracker chunkTracker, final BlockPosition position, final int faceInt, final BlockFace face, final Position3f clickPosition, final boolean insideBlock, final int sequence) {
         // MOT USE_ITEM CLICK_BLOCK always setUsingItem(false) (Player.java:4528).
         // Java Fabric keeps sending USE_ITEM_ON / item-frame / overlay / empty-bucket
         // while chewing or drawing. Skip the whole CLICK_BLOCK (and 28/29) unless
@@ -845,6 +1226,9 @@ public class ExperimentalFeatures {
                 ViaBedrock.getConfig().shouldEmulateNetEaseClient(),
                 clientPlayer.isUsingItem(),
                 clientPlayer.isShieldSneakEmulated())) {
+            if (sequence > 0) {
+                PacketFactory.sendJavaBlockChangedAck(user, sequence);
+            }
             return;
         }
 
@@ -888,6 +1272,14 @@ public class ExperimentalFeatures {
         );
         transactionPacket.write(inventoryTransactionRewriter.getInventoryTransactionType(), inventoryTransaction);
         transactionPacket.sendToServer(BedrockProtocol.class);
+
+        // sequence 0 means there is no Java block-change to acknowledge (for example item frames).
+        // Only track operations that actually emitted CLICK_BLOCK; skipped uses were acknowledged above.
+        if (sequence > 0) {
+            final boolean clickedBlockReplaceable = ItemUseAirClickTarget.isReplaceable(airClickWorld(user), position);
+            user.get(BlockPlacementAckTracker.class).addPendingAck(
+                    blockPlacementAckPosition(position, face, clickedBlockReplaceable), sequence);
+        }
 
         // Bedrock sends a stop item use on after the transaction packet
         if (sendItemUseOnActions) {
@@ -982,7 +1374,22 @@ public class ExperimentalFeatures {
 
     private static boolean matchesUseItem(final ItemUseHandContext handContext, final ClientPlayerEntity clientPlayer) {
         final ItemUseSnapshot snapshot = clientPlayer.itemUseSnapshot();
-        return snapshot != null && snapshot.matches(
+        if (snapshot == null) {
+            return false;
+        }
+        if (clientPlayer.isOffhandPromoted()) {
+            return ItemUseSemantics.matchesUseItem(
+                            ViaBedrock.getConfig().shouldEmulateNetEaseClient(),
+                            snapshot.item().identifier(),
+                            snapshot.item().data(),
+                            snapshot.item().blockRuntimeId(),
+                            snapshot.item().tag(),
+                            handContext.item() == null ? null : handContext.item().identifier(),
+                            handContext.item() == null ? null : handContext.item().data(),
+                            handContext.item() == null ? null : handContext.item().blockRuntimeId(),
+                            handContext.item() == null ? null : handContext.item().tag());
+        }
+        return snapshot.matches(
                 handContext.hand(),
                 handContext.containerId(),
                 handContext.containerSlot(),
@@ -1007,12 +1414,14 @@ public class ExperimentalFeatures {
 
     private static void stopUsingItem(final UserConnection user, final ClientPlayerEntity clientPlayer) {
         if (!clientPlayer.isUsingItem()) {
+            restorePromotedOffhand(user, clientPlayer);
             return;
         }
         if (clientPlayer.isShieldSneakEmulated() && !clientPlayer.inputFlags().contains(InputFlag.SHIFT)) {
             clientPlayer.setSneaking(false);
             clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.SneakReleasedRaw, PlayerAuthInputPacket_InputData.StopSneaking);
         }
+        restorePromotedOffhand(user, clientPlayer);
         clientPlayer.setUsingItem(false);
         syncJavaUsingItem(user, clientPlayer);
     }
@@ -1120,19 +1529,30 @@ public class ExperimentalFeatures {
 
         MultilineNametagTracker.registerHandlers(protocol);
         ScriptDebugTextTracker.registerHandlers(protocol);
+        registerHandSensitivePacketGates(protocol);
 
         ProtocolUtil.prependServerbound(protocol, ServerboundPackets26_1.PLAYER_ACTION, wrapper -> {
             final InventoryTransactionRewriter inventoryTransactionRewriter = wrapper.user().get(InventoryTransactionRewriter.class);
             final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
+            final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
 
             final PlayerActionAction action = PlayerActionAction.values()[wrapper.passthrough(Types.VAR_INT)]; // action
             wrapper.passthrough(Types.BLOCK_POSITION1_14); // block position
             wrapper.passthrough(Types.UNSIGNED_BYTE); // face
             final int sequence = wrapper.passthrough(Types.VAR_INT); // sequence number
 
+            // Mining, drops, F/Q swaps, and riptide all consume the selected main-hand
+            // mirror. Keep them behind the same promotion boundary as entity actions.
+            if (action != PlayerActionAction.RELEASE_USE_ITEM
+                    && !canProcessHandSensitiveAction(wrapper.user(), wrapper, clientPlayer,
+                    InteractionHand.MAIN_HAND, false, false, sequence)) {
+                return;
+            }
+
             if (action == PlayerActionAction.RELEASE_USE_ITEM) {
-                final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
-                final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
+                if (!canProcessHandSensitiveAction(wrapper.user(), wrapper, clientPlayer, null, true, false, sequence)) {
+                    return;
+                }
 
                 wrapper.clearPacket();
                 wrapper.cancel();
@@ -1156,7 +1576,11 @@ public class ExperimentalFeatures {
                     return;
                 }
 
-                final ItemUseHandContext handContext = ItemUseHandContext.resolve(inventoryTracker, clientPlayer.usingItemHand());
+                // After a silent offhand promote the tracker main hand holds the
+                // used stack. Java still reports OFF_HAND for the animation.
+                final ItemUseHandContext handContext = ItemUseHandContext.resolve(
+                        inventoryTracker,
+                        clientPlayer.isOffhandPromoted() ? InteractionHand.MAIN_HAND : clientPlayer.usingItemHand());
                 final BedrockItem selectedItem = handContext.item();
                 if (!matchesUseItem(handContext, clientPlayer)) {
                     cancelUsingItem(wrapper.user(), inventoryTransactionRewriter, clientPlayer);
@@ -1167,8 +1591,9 @@ public class ExperimentalFeatures {
                         selectedItem,
                         clientPlayer.usingItemTicks()
                 );
+                final ItemUseHandContext motHandContext = motPacketContext(handContext, clientPlayer);
                 if (isCrossbow(wrapper.user().get(ItemRewriter.class), selectedItem) && clientPlayer.usingItemTicks() >= CROSSBOW_CHARGE_TICKS) {
-                    finishCrossbowCharge(wrapper.user(), inventoryTransactionRewriter, handContext, clientPlayer);
+                    finishCrossbowCharge(wrapper.user(), inventoryTransactionRewriter, motHandContext, clientPlayer);
                     stopUsingItem(wrapper.user(), clientPlayer);
                     return;
                 }
@@ -1185,13 +1610,17 @@ public class ExperimentalFeatures {
                         releaseAction == ItemReleaseInventoryTransaction_ActionType.Use)) {
                     return;
                 }
-                stopUsingItem(wrapper.user(), clientPlayer);
                 if (ItemUseSemantics.emulateShieldAsSneak(ViaBedrock.getConfig().shouldEmulateNetEaseClient(), isShield(wrapper.user().get(ItemRewriter.class), selectedItem))) {
+                    stopUsingItem(wrapper.user(), clientPlayer);
                     return;
                 }
 
-                sendReleaseItemTransaction(wrapper.user(), inventoryTransactionRewriter, handContext, clientPlayer, releaseAction);
+                sendReleaseItemTransaction(wrapper.user(), inventoryTransactionRewriter, motHandContext, clientPlayer, releaseAction);
+                stopUsingItem(wrapper.user(), clientPlayer);
             } else if (action == PlayerActionAction.DROP_ITEM || action == PlayerActionAction.DROP_ALL_ITEMS) {
+                if (!canProcessHandSensitiveAction(wrapper.user(), wrapper, clientPlayer, InteractionHand.MAIN_HAND, false, false, sequence)) {
+                    return;
+                }
                 // MOT 860 SAI drops TYPE_NORMAL InventoryTransaction. Q/Ctrl-Q must
                 // travel as ITEM_STACK_REQUEST Drop, matching inventory-window drops.
                 // Ref: MOT Player.java isInventorySAIGateActive; DropActionProcessor.
@@ -1211,7 +1640,9 @@ public class ExperimentalFeatures {
             }
 
             final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
-            final ItemUseHandContext handContext = ItemUseHandContext.resolve(inventoryTracker, clientPlayer.usingItemHand());
+            final ItemUseHandContext handContext = ItemUseHandContext.resolve(
+                    inventoryTracker,
+                    clientPlayer.isOffhandPromoted() ? InteractionHand.MAIN_HAND : clientPlayer.usingItemHand());
             final BedrockItem selectedItem = handContext.item();
             if (!matchesUseItem(handContext, clientPlayer) || !isContinuousUseItem(itemRewriter, selectedItem)) {
                 cancelUsingItem(wrapper.user(), wrapper.user().get(InventoryTransactionRewriter.class), clientPlayer);
@@ -1223,7 +1654,7 @@ public class ExperimentalFeatures {
                 if (clientPlayer.isCrossbowChargeFinishSent()) {
                     return;
                 }
-                finishCrossbowCharge(wrapper.user(), wrapper.user().get(InventoryTransactionRewriter.class), handContext, clientPlayer);
+                finishCrossbowCharge(wrapper.user(), wrapper.user().get(InventoryTransactionRewriter.class), motPacketContext(handContext, clientPlayer), clientPlayer);
                 clientPlayer.setCrossbowChargeFinishSent(true);
                 return;
             }
@@ -1273,17 +1704,13 @@ public class ExperimentalFeatures {
 
             // Mark as using item and send StartUsingItem flag in the current tick's PlayerAuthInput
             final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
-            final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
-            final ItemUseHandContext handContext = ItemUseHandContext.resolve(inventoryTracker, hand);
-            final BedrockItem selectedItem = handContext.item();
-            if (ItemUseSemantics.rejectNetEaseOffhandUse(ViaBedrock.getConfig().shouldEmulateNetEaseClient(), !handContext.isMainHand(), isShield(itemRewriter, selectedItem))) {
-                wrapper.cancel();
-                PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getInventoryContainer());
-                if (sequence > 0) {
-                    PacketFactory.sendJavaBlockChangedAck(wrapper.user(), sequence);
-                }
+            if (!canProcessHandSensitiveAction(wrapper.user(), wrapper, clientPlayer, hand, true, true, sequence)) {
                 return;
             }
+            final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
+            final ItemUseHandContext handContext = ItemUseHandContext.resolve(
+                    inventoryTracker, hand, clientPlayer.isOffhandPromoted());
+            final BedrockItem selectedItem = handContext.item();
             if (ItemUseSemantics.dropDuplicateAirClickAfterUseOn(
                     ViaBedrock.getConfig().shouldEmulateNetEaseClient(),
                     itemRewriter.bedrockIdentifier(selectedItem),
@@ -1307,28 +1734,45 @@ public class ExperimentalFeatures {
                 return;
             }
 
+            final ItemUseHandContext motHandContext = motContextForOffhandUse(wrapper.user(), clientPlayer, handContext, itemRewriter);
+            if (motHandContext == null) {
+                wrapper.cancel();
+                PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getInventoryContainer());
+                PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getOffhandContainer());
+                if (sequence > 0) {
+                    PacketFactory.sendJavaBlockChangedAck(wrapper.user(), sequence);
+                }
+                return;
+            }
+
             // Java USE_ITEM for empty buckets/bottles, filled buckets, boats and lily pads is an air click.
             // MOT only runs onActivate from CLICK_BLOCK, so resolve the looked-at block here.
             // Same-tick USE_ITEM_ON already cancelled above via dropDuplicateAirClickAfterUseOn.
-            if (trySendAirClickAsBlockUse(wrapper.user(), clientPlayer, handContext, itemRewriter, inventoryTransactionRewriter, yaw, pitch, sequence)) {
+            if (trySendAirClickAsBlockUse(wrapper.user(), clientPlayer, motHandContext, itemRewriter, inventoryTransactionRewriter, yaw, pitch, sequence)) {
+                restorePromotedOffhand(wrapper.user(), clientPlayer);
                 wrapper.cancel();
                 return;
             }
 
-            if (isChargedCrossbow(itemRewriter, selectedItem) && handContext.isMainHand()) {
+            if (isChargedCrossbow(itemRewriter, selectedItem) && motHandContext.isMainHand()) {
                 if (!ItemUseSemantics.crossbowFireReady(
                         ViaBedrock.getConfig().shouldEmulateNetEaseClient(),
                         true,
                         clientPlayer.ticksSinceCrossbowChargeFinish())) {
+                    restorePromotedOffhand(wrapper.user(), clientPlayer);
                     wrapper.cancel();
                     if (sequence > 0) {
                         PacketFactory.sendJavaBlockChangedAck(wrapper.user(), sequence);
                     }
                     return;
                 }
-                sendSelectedHotbarSlot(wrapper.user(), handContext, clientPlayer);
+                sendSelectedHotbarSlot(wrapper.user(), motHandContext, clientPlayer);
             }
-            wrapper.write(inventoryTransactionRewriter.getInventoryTransactionType(), createUseItemTransaction(handContext, clientPlayer));
+            // Send now, then restore. Writing the wrapper and restoring first
+            // would let MOT see the original main hand before this USE_ITEM.
+            sendUseItemTransaction(wrapper.user(), inventoryTransactionRewriter, motHandContext, clientPlayer, false);
+            restorePromotedOffhand(wrapper.user(), clientPlayer);
+            wrapper.cancel();
             if (sequence > 0) {
                 PacketFactory.sendJavaBlockChangedAck(wrapper.user(), sequence);
             }
@@ -1371,19 +1815,13 @@ public class ExperimentalFeatures {
             // causing the placed block to flicker (disappear then reappear).
             final int sequence = wrapper.read(Types.VAR_INT);
 
-            final ItemUseHandContext handContext = ItemUseHandContext.resolve(inventoryTracker, hand);
-            final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
-            final BedrockItem selectedItem = handContext.item();
-            if (ItemUseSemantics.rejectNetEaseOffhandUse(ViaBedrock.getConfig().shouldEmulateNetEaseClient(), !handContext.isMainHand(), isShield(itemRewriter, selectedItem))) {
-                // MOT CLICK_BLOCK always uses inventory.getItemInHand() after equipItem.
-                // An offhand Place would therefore consume the main-hand stack.
-                PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getInventoryContainer());
-                PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getOffhandContainer());
-                if (sequence > 0) {
-                    PacketFactory.sendJavaBlockChangedAck(wrapper.user(), sequence);
-                }
+            if (!canProcessHandSensitiveAction(wrapper.user(), wrapper, clientPlayer, hand, true, true, sequence)) {
                 return;
             }
+            final ItemUseHandContext handContext = ItemUseHandContext.resolve(
+                    inventoryTracker, hand, clientPlayer.isOffhandPromoted());
+            final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
+            final BedrockItem selectedItem = handContext.item();
             // MOT CLICK_BLOCK always setUsingItem(false). Keep eating/drawing from
             // being cancelled by a later Java USE_ITEM_ON at the same crosshair.
             // Ref: MOT Player.java case 2 / actionType 0.
@@ -1408,7 +1846,17 @@ public class ExperimentalFeatures {
                 return;
             }
 
-            sendItemUseOnBlock(wrapper.user(), clientPlayer, handContext, inventoryTransactionRewriter, chunkTracker, position, faceInt, face, clickPosition, insideBlock, sequence);
+            final ItemUseHandContext motHandContext = motContextForOffhandUse(wrapper.user(), clientPlayer, handContext, itemRewriter);
+            if (motHandContext == null) {
+                PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getInventoryContainer());
+                PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getOffhandContainer());
+                if (sequence > 0) {
+                    PacketFactory.sendJavaBlockChangedAck(wrapper.user(), sequence);
+                }
+                return;
+            }
+            sendItemUseOnBlock(wrapper.user(), clientPlayer, motHandContext, inventoryTransactionRewriter, chunkTracker, position, faceInt, face, clickPosition, insideBlock, sequence);
+            restorePromotedOffhand(wrapper.user(), clientPlayer);
             clientPlayer.markUseOnThisTick();
         });
         protocol.registerClientbound(ClientboundBedrockPackets.INVENTORY_TRANSACTION, null, wrapper -> {

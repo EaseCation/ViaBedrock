@@ -22,9 +22,12 @@ import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemStackRequestActionType;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.TextProcessingEventOrigin;
+import net.raphimc.viabedrock.protocol.model.BedrockItem;
 import net.raphimc.viabedrock.protocol.model.FullContainerName;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 import net.raphimc.viabedrock.protocol.types.model.ContainerSlotTypeLayout;
+
+import java.util.List;
 
 /**
  * Wire-layout helpers for Bedrock ITEM_STACK_REQUEST (packet 0x93).
@@ -193,6 +196,46 @@ public final class ItemStackRequestLayout {
         if (!emulateNetEase || protocol >= 712) {
             buffer.writeByte(timesCrafted);
         }
+    }
+
+    public static void writeCraftRecipeAuto(final ByteBuf buffer, final int recipeNetworkId, final int numberOfRequestedCrafts,
+                                            final int timesCrafted, final List<BedrockItem> ingredients,
+                                            final boolean emulateNetEase, final int protocol) {
+        writeActionType(buffer, ItemStackRequestActionType.CraftRecipeAuto, emulateNetEase, protocol);
+        BedrockTypes.UNSIGNED_VAR_INT.write(buffer, recipeNetworkId);
+        if (!emulateNetEase || protocol >= 712) {
+            buffer.writeByte(numberOfRequestedCrafts);
+        }
+        if (!emulateNetEase || protocol >= 448) {
+            buffer.writeByte(timesCrafted);
+        }
+        if (!emulateNetEase || protocol >= 557) {
+            final List<BedrockItem> descriptors = ingredients == null ? List.of() : ingredients;
+            if (protocol >= UNSIGNED_ACTION_TYPE_PROTOCOL) {
+                BedrockTypes.UNSIGNED_VAR_INT.write(buffer, descriptors.size());
+            } else {
+                buffer.writeByte(descriptors.size());
+            }
+            for (final BedrockItem ingredient : descriptors) {
+                writeDefaultIngredientDescriptor(buffer, ingredient, emulateNetEase, protocol);
+            }
+        }
+    }
+
+    static void writeDefaultIngredientDescriptor(final ByteBuf buffer, final BedrockItem ingredient,
+                                                 final boolean emulateNetEase, final int protocol) {
+        if (protocol >= UNSIGNED_ACTION_TYPE_PROTOCOL) {
+            throw new UnsupportedOperationException("v2168 auto-craft descriptors are not emitted");
+        }
+        if (ingredient == null || ingredient.isEmpty()) {
+            buffer.writeByte(0); // INVALID
+            BedrockTypes.VAR_INT.write(buffer, 0);
+            return;
+        }
+        buffer.writeByte(1); // DEFAULT
+        buffer.writeShortLE(ingredient.identifier());
+        buffer.writeShortLE(ingredient.data());
+        BedrockTypes.VAR_INT.write(buffer, ingredient.amount());
     }
 
     public static void writeCraftCreative(final ByteBuf buffer, final int creativeItemNetworkId, final int timesCrafted,

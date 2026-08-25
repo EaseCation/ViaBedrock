@@ -336,6 +336,7 @@ public class InventoryPackets {
                 container = resized;
             }
             if (container != null && container.setItems(items)) {
+                inventoryTracker.incrementAuthoritativeInventoryGeneration(container);
                 PacketFactory.writeJavaContainerSetContent(wrapper, container);
             } else {
                 wrapper.cancel();
@@ -356,6 +357,7 @@ public class InventoryPackets {
             final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
             final Container container = inventoryTracker.getContainerClientbound(containerId, containerName, storageItem);
             if (container != null && container.setItem(slot, item)) {
+                inventoryTracker.incrementAuthoritativeInventoryGeneration(container);
                 if (container.type() == ContainerType.HUD && slot == 0) { // cursor item
                     wrapper.setPacketType(ClientboundPackets26_1.SET_CURSOR_ITEM);
                 } else {
@@ -377,6 +379,7 @@ public class InventoryPackets {
             final ItemStackResponseLayout.DecodedResponse decoded = ItemStackResponseLayout.decode(wrapper);
             PacketLeftoverLayout.discardUnreadInput(wrapper);
             ClientAuthInventoryModule.handleItemStackResponse(wrapper.user(), decoded);
+            ExperimentalFeatures.handleItemStackResponse(wrapper.user(), decoded);
         });
         protocol.registerClientbound(ClientboundBedrockPackets.CONTAINER_SET_DATA, ClientboundPackets26_1.CONTAINER_SET_DATA, wrapper -> {
             final int containerId = wrapper.read(Types.BYTE); // container id
@@ -720,10 +723,14 @@ public class InventoryPackets {
         });
         protocol.registerServerbound(ServerboundPackets26_1.SET_CARRIED_ITEM, ServerboundBedrockPackets.MOB_EQUIPMENT, wrapper -> {
             final short slot = wrapper.read(Types.SHORT); // slot
-            // Nukkit's MobEquipmentProcessor always calls setUsingItem(false). Changing hotbar
-            // mid-eat would cancel the using-state that the first CLICK_AIR just started.
+            // Nukkit's MobEquipmentProcessor always calls setUsingItem(false), and the silent
+            // reverse F-swap restores the currently selected slot. Pin it through item use or
+            // offhand promotion so neither the use state nor the promoted slot can be corrupted.
             final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
-            if (ViaBedrock.getConfig().shouldEmulateNetEaseClient() && clientPlayer != null && clientPlayer.isUsingItem()) {
+            if (clientPlayer != null && shouldBlockNetEaseHotbarChange(
+                    ViaBedrock.getConfig().shouldEmulateNetEaseClient(),
+                    clientPlayer.isUsingItem(),
+                    clientPlayer.isOffhandPromoted())) {
                 wrapper.cancel();
                 wrapper.user().get(InventoryTracker.class).getInventoryContainer().sendSelectedHotbarSlotToClient();
                 return;
@@ -1008,6 +1015,12 @@ public class InventoryPackets {
             return Math.max(0, number.intValue());
         }
         return 0;
+    }
+
+    static boolean shouldBlockNetEaseHotbarChange(final boolean emulateNetEaseClient,
+                                                     final boolean usingItem,
+                                                     final boolean offhandPromoted) {
+        return emulateNetEaseClient && (usingItem || offhandPromoted);
     }
 
     private static void sendModalFormCancel(final UserConnection user, final int formId, final ModalFormCancelReason reason) {

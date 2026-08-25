@@ -9,6 +9,7 @@
  */
 package net.raphimc.viabedrock.experimental.inventory;
 
+import com.viaversion.nbt.tag.CompoundTag;
 import com.viaversion.viaversion.api.minecraft.BlockPosition;
 import io.netty.channel.embedded.EmbeddedChannel;
 import net.raphimc.viabedrock.api.model.container.ChestContainer;
@@ -76,6 +77,44 @@ class ItemStackResponseWritebackTest {
         ClientAuthInventoryModule.applyStackResponse(this.tracker, ok());
         assertEquals(7, this.tracker.getInventoryContainer().getItem(0).netId());
         assertEquals(64, this.tracker.getInventoryContainer().getItem(0).amount());
+    }
+
+    @Test
+    void responseAppliesFilteredNameAndAbsoluteDurability() {
+        final BedrockItem item = item(276, 7, 1);
+        final CompoundTag tag = new CompoundTag();
+        final CompoundTag display = new CompoundTag();
+        display.putString("Name", "Old name");
+        display.putString("Keep", "value");
+        tag.put("display", display);
+        item.setTag(tag);
+        item.setData(3);
+
+        ClientAuthInventoryModule.applyStackResponseItemData(item,
+                new ItemStackResponseLayout.DecodedSlot(0, 0, 1, 7,
+                        "Raw name", "Filtered name", 17));
+
+        assertEquals(17, item.data());
+        assertEquals("Filtered name", item.tag().getCompoundTag("display").getString("Name"));
+        assertEquals("value", item.tag().getCompoundTag("display").getString("Keep"));
+    }
+
+    @Test
+    void responseCanClearCustomNameWithoutDiscardingOtherDisplayData() {
+        final BedrockItem item = item(276, 7, 1);
+        final CompoundTag tag = new CompoundTag();
+        final CompoundTag display = new CompoundTag();
+        display.putString("Name", "Old name");
+        display.putString("Keep", "value");
+        tag.put("display", display);
+        item.setTag(tag);
+
+        ClientAuthInventoryModule.applyStackResponseItemData(item,
+                new ItemStackResponseLayout.DecodedSlot(0, 0, 1, 7, "", "", 0));
+
+        assertEquals(0, item.data());
+        assertEquals(null, item.tag().getCompoundTag("display").getString("Name"));
+        assertEquals("value", item.tag().getCompoundTag("display").getString("Keep"));
     }
 
     @Test

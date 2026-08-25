@@ -17,8 +17,8 @@
  */
 package net.raphimc.viabedrock.experimental.inventory;
 
-import com.viaversion.viaversion.connection.UserConnectionImpl;
 import io.netty.channel.embedded.EmbeddedChannel;
+import net.raphimc.viabedrock.test.StubUserConnection;
 import net.raphimc.viabedrock.experimental.model.inventory.BedrockRecipe;
 import net.raphimc.viabedrock.experimental.model.inventory.InventoryActionData;
 import net.raphimc.viabedrock.experimental.storage.RecipeRegistry;
@@ -42,7 +42,7 @@ class CraftingSimulatorStackLimitsTest {
     private static final int INGREDIENT_ID = 3;
 
     private final EmbeddedChannel channel = new EmbeddedChannel();
-    private final UserConnectionImpl user = new UserConnectionImpl(this.channel);
+    private final StubUserConnection user = new StubUserConnection(this.channel);
     private final InventoryTracker tracker = new InventoryTracker(this.user);
     private final RecipeRegistry recipes = new RecipeRegistry(this.user);
 
@@ -92,6 +92,57 @@ class CraftingSimulatorStackLimitsTest {
 
         assertNull(CraftingSimulator.simulateCraftQuickMove(false, this.tracker, ignored -> 1));
         assertEquals(1, this.tracker.getHudContainer().getItem(28).amount());
+    }
+
+    @Test
+    void quickMoveRepeatsUntilGridOrInventoryRoomIsExhausted() {
+        this.prepareRecipe(1);
+        this.tracker.getHudContainer().setItemSilent(28, item(INGREDIENT_ID, 8));
+
+        final List<InventoryActionData> actions = CraftingSimulator.simulateCraftQuickMove(false, this.tracker, ignored -> 64);
+        assertEquals(8, inventoryActions(actions).stream().mapToInt(action -> action.toItem().amount() - action.fromItem().amount()).sum());
+        final InventoryActionData gridChange = actions.stream()
+                .filter(action -> action.source().type() == InventorySourceType.ContainerInventory)
+                .filter(action -> action.source().containerId() == ContainerID.CONTAINER_ID_PLAYER_ONLY_UI.getValue())
+                .filter(action -> action.slot() == 28)
+                .findFirst()
+                .orElseThrow();
+        assertEquals(8, gridChange.fromItem().amount());
+        assertTrue(gridChange.toItem().isEmpty());
+    }
+
+    @Test
+    void extraOutputsForceSingleCraftEvenWhenGridHasMore() {
+        this.prepareRecipe(1);
+        this.recipes.clear();
+        this.tracker.getHudContainer().setItemSilent(28, item(INGREDIENT_ID, 8));
+        this.recipes.addRecipe(new BedrockRecipe(
+                "test:armor",
+                BedrockRecipe.RecipeType.SHAPELESS,
+                0,
+                0,
+                List.of(new BedrockRecipe.RecipeIngredient(
+                        INGREDIENT_ID,
+                        BedrockRecipe.RecipeIngredient.ANY_DAMAGE,
+                        1
+                )),
+                item(OUTPUT_ID, 1),
+                List.of(item(OUTPUT_ID, 1)),
+                "crafting_table",
+                0,
+                1,
+                false
+        ));
+
+        final List<InventoryActionData> actions = CraftingSimulator.simulateCraftQuickMove(false, this.tracker, ignored -> 64);
+        assertEquals(1, inventoryActions(actions).stream().mapToInt(action -> action.toItem().amount() - action.fromItem().amount()).sum());
+        final InventoryActionData gridChange = actions.stream()
+                .filter(action -> action.source().type() == InventorySourceType.ContainerInventory)
+                .filter(action -> action.source().containerId() == ContainerID.CONTAINER_ID_PLAYER_ONLY_UI.getValue())
+                .filter(action -> action.slot() == 28)
+                .findFirst()
+                .orElseThrow();
+        assertEquals(7, gridChange.toItem().amount());
     }
 
     @Test

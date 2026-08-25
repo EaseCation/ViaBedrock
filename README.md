@@ -102,17 +102,17 @@ Here is an overview of the current and planned features in ViaBedrock.
 - [x] Player spawning
 - [x] Entity spawning
 - [x] Entity interactions
-- [ ] Entity metadata
+- [x] Entity metadata
 - [x] Entity attributes
-- [ ] Entity mounting
+- [x] Entity mounting
 - [x] Player abilities
 - [x] Movement
-- [ ] Client-Authoritative Inventory
-- [ ] Server-Authoritative Inventory
-- [ ] Item data
-- [ ] Block breaking
-- [ ] Block placing
-- [ ] Item use
+- [x] Client-Authoritative Inventory
+- [x] Server-Authoritative Inventory
+- [x] Item data
+- [x] Block breaking
+- [x] Block placing
+- [x] Item use
 - [x] Respawning and dimension switching
 - [x] Form GUIs
 - [x] Scoreboard

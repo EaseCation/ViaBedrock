@@ -22,7 +22,11 @@ import io.netty.buffer.Unpooled;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemStackRequestActionType;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.TextProcessingEventOrigin;
+import net.raphimc.viabedrock.protocol.model.BedrockItem;
+import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -193,6 +197,29 @@ class ItemStackRequestLayoutTest {
             assertEquals(ItemStackRequestActionType.CraftLoom.getValue(), buffer.readUnsignedByte());
             assertEquals("bricks", net.raphimc.viabedrock.protocol.types.BedrockTypes.STRING.read(buffer));
             assertEquals(1, buffer.readUnsignedByte());
+            assertFalse(buffer.isReadable());
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
+    void netease860CraftRecipeAutoWritesDefaultDescriptorsAndRequestedCraftCount() {
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            ItemStackRequestLayout.writeCraftRecipeAuto(
+                    buffer, 42, 8, 8,
+                    List.of(new BedrockItem(12, (short) 3, (byte) 8)),
+                    true, 860);
+            assertEquals(ItemStackRequestActionType.CraftRecipeAuto.getValue(), buffer.readUnsignedByte());
+            assertEquals(42, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+            assertEquals(8, buffer.readUnsignedByte());
+            assertEquals(8, buffer.readUnsignedByte());
+            assertEquals(1, buffer.readUnsignedByte());
+            assertEquals(1, buffer.readUnsignedByte());
+            assertEquals(12, buffer.readShortLE());
+            assertEquals(3, buffer.readShortLE());
+            assertEquals(8, (int) BedrockTypes.VAR_INT.read(buffer));
             assertFalse(buffer.isReadable());
         } finally {
             buffer.release();

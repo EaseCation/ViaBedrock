@@ -157,6 +157,13 @@ public class ClientPlayerPackets {
         );
     }
 
+    static boolean isSelectedHandPlayerAction(final PlayerActionAction action) {
+        return action == PlayerActionAction.DROP_ITEM
+                || action == PlayerActionAction.DROP_ALL_ITEMS
+                || action == PlayerActionAction.SWAP_ITEM_WITH_OFFHAND
+                || action == PlayerActionAction.STAB;
+    }
+
     private static void finishBlockBreak(final UserConnection user, final GameSessionStorage gameSession, final ClientPlayerEntity clientPlayer, final ChunkTracker chunkTracker, final BlockPosition position, final Direction direction) {
         // MOT PredictDestroy already aborts then completes; StopDestroy also aborts.
         // A same-tick Abort(face=0) is redundant and can leave lastBlockAction=Abort.
@@ -184,6 +191,12 @@ public class ClientPlayerPackets {
                 return;
             }
             wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // entity runtime id
+            final ClientPlayerEntity respawningPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
+            if (respawningPlayer != null) {
+                respawningPlayer.deferredEntityActions().clear();
+                respawningPlayer.setUsingItem(false);
+                ExperimentalFeatures.restorePromotedOffhand(wrapper.user(), respawningPlayer);
+            }
 
             switch (state) {
                 case ReadyToSpawn -> {
@@ -471,6 +484,15 @@ public class ClientPlayerPackets {
             final Direction direction = Direction.values()[wrapper.read(Types.UNSIGNED_BYTE)]; // face
             final int sequence = wrapper.read(Types.VAR_INT); // sequence number
 
+            if (isSelectedHandPlayerAction(action)
+                    && !clientPlayer.canProcessHandSensitiveAction(InteractionHand.MAIN_HAND, false)) {
+                ExperimentalFeatures.retryPromotedOffhandRestore(wrapper.user(), clientPlayer);
+                if (sequence > 0) {
+                    PacketFactory.sendJavaBlockChangedAck(wrapper.user(), sequence);
+                }
+                return;
+            }
+
             final boolean isMining = action == PlayerActionAction.START_DESTROY_BLOCK || action == PlayerActionAction.ABORT_DESTROY_BLOCK || action == PlayerActionAction.STOP_DESTROY_BLOCK;
             if (isMining && (gameSession.isImmutableWorld() || !clientPlayer.abilities().getBooleanValue(AbilitiesIndex.Mine))) {
                 // TODO: Prevent breaking and cancel any packets that would be sent (swing, player action)
@@ -547,10 +569,15 @@ public class ClientPlayerPackets {
         });
         protocol.registerServerbound(ServerboundPackets26_1.ATTACK, ServerboundBedrockPackets.INVENTORY_TRANSACTION, wrapper -> {
             final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
-            final InventoryContainer inventoryContainer = wrapper.user().get(InventoryTracker.class).getInventoryContainer();
+            final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
             final int entityId = wrapper.read(Types.VAR_INT); // entity id
             final Entity entity = entityTracker.getEntityByJid(entityId);
             if (entity == null) {
+                if (!clientPlayer.canProcessHandSensitiveAction(InteractionHand.MAIN_HAND, false)) {
+                    ExperimentalFeatures.retryPromotedOffhandRestore(wrapper.user(), clientPlayer);
+                    wrapper.cancel();
+                    return;
+                }
                 if (!ExperimentalFeatures.tryHandleItemFrameAttack(wrapper.user(), entityId)) {
                     ExperimentalFeatures.tryHandleCustomBlockOverlayAttack(wrapper.user(), entityId);
                 }
@@ -558,20 +585,26 @@ public class ClientPlayerPackets {
                 return;
             }
 
-            wrapper.write(BedrockTypes.VAR_INT, 0); // legacy request id
-            wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, ComplexInventoryTransaction_Type.ItemUseOnEntityTransaction.getValue()); // transaction type
-            wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, 0); // actions count
-            wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG, entity.runtimeId()); // entity runtime id
-            wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, ItemUseOnActorInventoryTransaction_ActionType.Attack.getValue()); // action type
-            wrapper.write(BedrockTypes.VAR_INT, (int) inventoryContainer.getSelectedHotbarSlot()); // hotbar slot
-            wrapper.write(wrapper.user().get(ItemRewriter.class).itemType(), inventoryContainer.getSelectedHotbarItem()); // held item
-            wrapper.write(BedrockTypes.POSITION_3F, entityTracker.getClientPlayer().position()); // player position
-            // Java ATTACK has no click vector. MOT attack ignores clickPos; write the look-dir unit
-            // vector so the field is not a literal ZERO (vanilla-like telemetry / future AC).
-            wrapper.write(BedrockTypes.POSITION_3F, attackClickPosition(entityTracker.getClientPlayer())); // click position
+            final Position3f clickPosition = attackClickPosition(clientPlayer);
+            if (!clientPlayer.canProcessHandSensitiveAction(InteractionHand.MAIN_HAND, false)) {
+                EntityInteractionPacketSender.enqueueDeferred(clientPlayer, entity,
+                        ItemUseOnActorInventoryTransaction_ActionType.Attack.getValue(), clickPosition, true);
+                // The Java client emits a separate SWING after ATTACK. Suppress it while the
+                // promoted layout is active; the deferred sender emits one after confirmation.
+                clientPlayer.cancelNextSwingPacket();
+                wrapper.cancel();
+                return;
+            }
+            EntityInteractionPacketSender.flushDeferred(wrapper.user(), clientPlayer);
 
-            entityTracker.getClientPlayer().sendSwingPacketToServer();
-            entityTracker.getClientPlayer().cancelNextSwingPacket();
+            final InventoryContainer inventoryContainer = wrapper.user().get(InventoryTracker.class).getInventoryContainer();
+            EntityInteractionPacketSender.write(wrapper, entity.runtimeId(),
+                    ItemUseOnActorInventoryTransaction_ActionType.Attack.getValue(),
+                    (int) inventoryContainer.getSelectedHotbarSlot(), inventoryContainer.getSelectedHotbarItem(),
+                    clientPlayer.position(), clickPosition);
+
+            clientPlayer.sendSwingPacketToServer();
+            clientPlayer.cancelNextSwingPacket();
         });
         protocol.registerServerbound(ServerboundPackets26_1.INTERACT, ServerboundBedrockPackets.INVENTORY_TRANSACTION, wrapper -> {
             final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
@@ -579,6 +612,12 @@ public class ClientPlayerPackets {
             final InteractionHand hand = InteractionHand.values()[wrapper.read(Types.VAR_INT)]; // hand
             final Entity entity = entityTracker.getEntityByJid(entityId);
             if (entity == null) {
+                final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
+                if (!clientPlayer.canProcessHandSensitiveAction(hand, false)) {
+                    ExperimentalFeatures.retryPromotedOffhandRestore(wrapper.user(), clientPlayer);
+                    wrapper.cancel();
+                    return;
+                }
                 // Item frames and custom-block overlays are fake Java entities over real Bedrock blocks.
                 // Translate the right-click into the block interaction the server expects.
                 if (!ExperimentalFeatures.tryHandleItemFrameInteract(wrapper.user(), entityId, hand)) {
@@ -591,31 +630,50 @@ public class ClientPlayerPackets {
                 wrapper.cancel();
                 return;
             }
-            // MOT entity INTERACT equalsFast against main hand, then getItemInHand().
-            // Forwarding an offhand stack would consume/resync the selected hotbar item.
-            if (hand != InteractionHand.MAIN_HAND && ViaBedrock.getConfig().shouldEmulateNetEaseClient()) {
+
+            final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
+            final Vector3d location = wrapper.read(Types.LOW_PRECISION_VECTOR); // location
+            final Position3f clickPosition = entity.position().add(
+                    (float) location.x(), (float) location.y(), (float) location.z());
+            wrapper.read(Types.BOOLEAN); // using secondary action
+
+            if (!clientPlayer.canProcessHandSensitiveAction(hand, false)) {
+                if (hand == InteractionHand.MAIN_HAND) {
+                    EntityInteractionPacketSender.enqueueDeferred(clientPlayer, entity,
+                            ItemUseOnActorInventoryTransaction_ActionType.Interact.getValue(), clickPosition);
+                }
+                wrapper.cancel();
+                return;
+            }
+            if (!clientPlayer.isOffhandPromoted()) {
+                EntityInteractionPacketSender.flushDeferred(wrapper.user(), clientPlayer);
+            }
+
+            // MOT transaction type 3 equips hotbarSlot, compares itemInHand with
+            // getItemInHand(), and passes that main-hand stack to Entity.onInteract.
+            final ItemUseHandContext handContext = ExperimentalFeatures.motContextForEntityInteraction(
+                    wrapper.user(), clientPlayer, hand);
+            if (handContext == null) {
                 wrapper.cancel();
                 final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
                 PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getInventoryContainer());
                 PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getOffhandContainer());
                 return;
             }
-            final ItemUseHandContext handContext = ItemUseHandContext.resolve(wrapper.user().get(InventoryTracker.class), hand);
 
             // TODO: Bedrock client sends INTERACT packet when hovered entity changes. Might be used by anticheats
+            EntityInteractionPacketSender.write(wrapper, entity.runtimeId(),
+                    ItemUseOnActorInventoryTransaction_ActionType.Interact.getValue(),
+                    handContext.entityTransactionHotbarSlot(wrapper.user().get(InventoryTracker.class)
+                            .getInventoryContainer().getSelectedHotbarSlot()),
+                    handContext.item(), clientPlayer.position(), clickPosition);
 
-            wrapper.write(BedrockTypes.VAR_INT, 0); // legacy request id
-            wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, ComplexInventoryTransaction_Type.ItemUseOnEntityTransaction.getValue()); // transaction type
-            wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, 0); // actions count
-            wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG, entity.runtimeId()); // entity runtime id
-            wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, ItemUseOnActorInventoryTransaction_ActionType.Interact.getValue()); // action type
-            wrapper.write(BedrockTypes.VAR_INT, handContext.entityTransactionHotbarSlot(
-                    wrapper.user().get(InventoryTracker.class).getInventoryContainer().getSelectedHotbarSlot())); // hotbar slot
-            wrapper.write(wrapper.user().get(ItemRewriter.class).itemType(), handContext.item()); // held item
-            wrapper.write(BedrockTypes.POSITION_3F, entityTracker.getClientPlayer().position()); // player position
-            final Vector3d location = wrapper.read(Types.LOW_PRECISION_VECTOR); // location
-            wrapper.write(BedrockTypes.POSITION_3F, entity.position().add((float) location.x(), (float) location.y(), (float) location.z())); // click position
-            wrapper.read(Types.BOOLEAN); // using secondary action
+            if (hand == InteractionHand.OFF_HAND && clientPlayer.isOffhandPromoted()) {
+                // Preserve wire order: promote swap, type-3 interaction, restore swap.
+                wrapper.sendToServer(BedrockProtocol.class);
+                wrapper.cancel();
+                ExperimentalFeatures.restorePromotedOffhand(wrapper.user(), clientPlayer);
+            }
         });
         protocol.registerServerbound(ServerboundPackets26_1.MOVE_PLAYER_STATUS_ONLY, null, wrapper -> {
             wrapper.cancel();
@@ -659,6 +717,7 @@ public class ClientPlayerPackets {
             final boolean prevOnGround = clientPlayer.prevOnGround();
             final Set<InputFlag> prevInputFlags = clientPlayer.prevInputFlags();
             clientPlayer.tick();
+            clientPlayer.deferredEntityActions().discardExpired(clientPlayer.age());
             final boolean immobile = clientPlayer.isInputMovementLocked() || clientPlayer.hasEntityFlag(ActorFlags.NOAI);
 
             // MOT PlayerJumpEvent is START_JUMPING only. Emitting it every grounded
@@ -677,8 +736,11 @@ public class ClientPlayerPackets {
             if (!clientPlayer.isInitiallySpawned() || clientPlayer.isDead()) {
                 wrapper.cancel();
                 discardPendingAuthInput(clientPlayer);
+                clientPlayer.deferredEntityActions().clear();
                 return;
             }
+            ExperimentalFeatures.retryPromotedOffhandRestore(wrapper.user(), clientPlayer);
+            EntityInteractionPacketSender.flushDeferred(wrapper.user(), clientPlayer);
 
             final PlayerAuthInputPacket_InputData crawlingTransition = wrapper.user()
                     .get(JavaPlayerStateStorage.class)
@@ -875,8 +937,12 @@ public class ClientPlayerPackets {
             final GameSessionStorage gameSession = wrapper.user().get(GameSessionStorage.class);
             final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
             final InteractionHand hand = InteractionHand.values()[wrapper.read(Types.VAR_INT)]; // hand
-            if (hand != InteractionHand.MAIN_HAND || clientPlayer.checkCancelSwingPacket()) {
+            final boolean cancelSwing = clientPlayer.checkCancelSwingPacket();
+            if (hand != InteractionHand.MAIN_HAND || cancelSwing || clientPlayer.isOffhandPromoted()) {
                 wrapper.cancel();
+                if (clientPlayer.isOffhandPromoted()) {
+                    ExperimentalFeatures.retryPromotedOffhandRestore(wrapper.user(), clientPlayer);
+                }
                 return;
             }
 

@@ -25,9 +25,11 @@ import io.netty.buffer.Unpooled;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 class BedrockItemTypeEmptyPaletteTest {
 
@@ -122,6 +124,40 @@ class BedrockItemTypeEmptyPaletteTest {
     }
 
     @Test
+    void taglessLegacySlotRetainsRestrictionsAndBlockingTicks() {
+        final Int2ObjectOpenHashMap<IntSortedSet> palettes = new Int2ObjectOpenHashMap<>();
+        final BedrockItemType type = new BedrockItemType(355, palettes, true);
+        final BedrockItem written = restrictedBlockingItem();
+
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            type.write(buffer, written);
+            final BedrockItem read = type.read(buffer);
+            assertTaglessRestrictionsAndBlockingTicks(read);
+            assertFalse(buffer.isReadable());
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
+    void taglessNetworkDescriptorRetainsRestrictionsAndBlockingTicks() {
+        final Int2ObjectOpenHashMap<IntSortedSet> palettes = new Int2ObjectOpenHashMap<>();
+        final NetworkItemStackDescriptorType type = new NetworkItemStackDescriptorType(355, palettes, true);
+        final BedrockItem written = restrictedBlockingItem();
+
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            type.write(buffer, written);
+            final BedrockItem read = type.read(buffer);
+            assertTaglessRestrictionsAndBlockingTicks(read);
+            assertFalse(buffer.isReadable());
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
     void populatedPaletteRemapsUnknownRuntimeDuringLegacySlotDecode() {
         final IntSortedSet valid = new IntLinkedOpenHashSet();
         valid.add(42);
@@ -141,5 +177,21 @@ class BedrockItemTypeEmptyPaletteTest {
         } finally {
             buffer.release();
         }
+    }
+
+    private static BedrockItem restrictedBlockingItem() {
+        final BedrockItem item = new BedrockItem(355, (short) 0, (byte) 1);
+        item.setNetId(7);
+        item.setCanPlace(new String[]{"minecraft:stone", "minecraft:dirt"});
+        item.setCanBreak(new String[]{"minecraft:oak_log"});
+        item.setBlockingTicks(42L);
+        return item;
+    }
+
+    private static void assertTaglessRestrictionsAndBlockingTicks(final BedrockItem item) {
+        assertNull(item.tag());
+        assertArrayEquals(new String[]{"minecraft:stone", "minecraft:dirt"}, item.canPlace());
+        assertArrayEquals(new String[]{"minecraft:oak_log"}, item.canBreak());
+        assertEquals(42L, item.blockingTicks());
     }
 }

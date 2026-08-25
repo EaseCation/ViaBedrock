@@ -87,29 +87,75 @@ public final class CartographySimulator {
     }
 
     public static boolean isTakeResult(final List<InventoryActionData> actions) {
-        return hasTodoMarker(actions, TODO_CARTOGRAPHY_RESULT);
+        return hasTodoMarker(actions, TODO_CARTOGRAPHY_RESULT) && hasCursorTakeResult(actions);
     }
 
-    public static boolean sendTakeResult(final UserConnection user, final InventoryTracker tracker) {
+    static boolean isQuickMoveResult(final List<InventoryActionData> actions) {
+        return CartographySimulator.isQuickMoveResult(actions, TODO_CARTOGRAPHY_RESULT);
+    }
+
+    static boolean isQuickMoveResult(final List<InventoryActionData> actions, final int marker) {
+        return hasTodoMarker(actions, marker) && hasPlayerInventoryTakeResult(actions);
+    }
+
+    static int resultAmount(final List<InventoryActionData> actions, final int marker) {
+        if (actions == null) return -1;
+        for (final InventoryActionData action : actions) {
+            if (action.source().type() == InventorySourceType.NonImplementedFeatureTODO
+                    && action.source().containerId() == marker
+                    && !action.fromItem().isEmpty()) {
+                return action.fromItem().amount();
+            }
+        }
+        return -1;
+    }
+
+    static int destinationAmount(final List<InventoryActionData> actions) {
+        if (actions == null) return -1;
+        int total = 0;
+        for (final InventoryActionData action : actions) {
+            if (action.source().type() != InventorySourceType.ContainerInventory
+                    || action.source().containerId() != ContainerID.CONTAINER_ID_INVENTORY.getValue()
+                    || action.toItem().isEmpty()) {
+                continue;
+            }
+            final int before = action.fromItem().isEmpty() ? 0 : action.fromItem().amount();
+            if (action.toItem().amount() <= before) continue;
+            total += action.toItem().amount() - before;
+        }
+        return total;
+    }
+
+    static ItemStackRequestEncoder.EncodedRequest encodeQuickMoveResult(
+            final InventoryTracker tracker, final List<InventoryActionData> actions,
+            final boolean emulateNetEase, final int protocol) {
         final Container container = tracker.getCurrentContainer();
-        if (!isCartography(container)) {
-            return false;
+        if (!isCartography(container) || !isQuickMoveResult(actions)) {
+            return ItemStackRequestEncoder.EncodedRequest.notSupported();
         }
         final BedrockItem input = container.getItem(0);
         if (input == null || input.isEmpty()) {
-            return false;
+            return ItemStackRequestEncoder.EncodedRequest.notSupported();
         }
         final BedrockItem additional = container.getItem(1);
         final int additionalCount = additional != null && !additional.isEmpty() ? Math.min(1, additional.amount()) : 0;
-        final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encodeCartographyApply(
-                tracker, 1, additionalCount, 1);
-        if (encoded.unsupported() || encoded.isEmpty()) {
-            return false;
+        final int takeCount = destinationAmount(actions);
+        if (takeCount <= 0) return ItemStackRequestEncoder.EncodedRequest.notSupported();
+        return ItemStackRequestEncoder.encodeCartographyApplyToDestinations(tracker, 1, additionalCount, takeCount, actions, emulateNetEase, protocol);
+    }
+
+    public static ItemStackRequestEncoder.EncodedRequest encodeTakeResult(final InventoryTracker tracker) {
+        final Container container = tracker.getCurrentContainer();
+        if (!isCartography(container)) {
+            return ItemStackRequestEncoder.EncodedRequest.notSupported();
         }
-        final PacketWrapper request = PacketWrapper.create(ServerboundBedrockPackets.ITEM_STACK_REQUEST, user);
-        request.write(Types.REMAINING_BYTES, encoded.payload());
-        request.sendToServer(BedrockProtocol.class);
-        return true;
+        final BedrockItem input = container.getItem(0);
+        if (input == null || input.isEmpty()) {
+            return ItemStackRequestEncoder.EncodedRequest.notSupported();
+        }
+        final BedrockItem additional = container.getItem(1);
+        final int additionalCount = additional != null && !additional.isEmpty() ? Math.min(1, additional.amount()) : 0;
+        return ItemStackRequestEncoder.encodeCartographyApply(tracker, 1, additionalCount, 1);
     }
 
     static boolean hasTodoMarker(final List<InventoryActionData> actions, final int marker) {
@@ -119,6 +165,31 @@ public final class CartographySimulator {
         for (final InventoryActionData action : actions) {
             if (action.source().type() == InventorySourceType.NonImplementedFeatureTODO
                     && action.source().containerId() == marker) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static boolean hasCursorTakeResult(final List<InventoryActionData> actions) {
+        if (actions == null) return false;
+        for (final InventoryActionData action : actions) {
+            if (action.source().type() == InventorySourceType.ContainerInventory
+                    && action.source().containerId() == ContainerID.CONTAINER_ID_PLAYER_ONLY_UI.getValue()
+                    && action.slot() == 0 && action.fromItem().isEmpty() && !action.toItem().isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static boolean hasPlayerInventoryTakeResult(final List<InventoryActionData> actions) {
+        if (actions == null) return false;
+        for (final InventoryActionData action : actions) {
+            if (action.source().type() == InventorySourceType.ContainerInventory
+                    && action.source().containerId() == ContainerID.CONTAINER_ID_INVENTORY.getValue()
+                    && !action.toItem().isEmpty()
+                    && action.toItem().amount() > action.fromItem().amount()) {
                 return true;
             }
         }

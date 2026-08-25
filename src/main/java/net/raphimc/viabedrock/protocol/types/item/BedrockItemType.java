@@ -66,19 +66,19 @@ public class BedrockItemType extends Type<BedrockItem> {
         final ByteBuf userData = buffer.readSlice(BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
         try {
             final short marker = userData.readShortLE();
-            if (marker == 0) {
-                return item;
-            } else if (marker != -1) { // Bedrock client crashes if marker isn't -1
-                throw new IllegalStateException("Expected -1 marker but got " + marker);
-            }
-            final byte version = userData.readByte();
-            if (version == 1) {
-                item.setTag((CompoundTag) BedrockTypes.TAG_LE.read(userData));
-                item.setCanPlace(BedrockTypes.UTF8_STRING_ARRAY.read(userData));
-                item.setCanBreak(BedrockTypes.UTF8_STRING_ARRAY.read(userData));
-                if (item.identifier() == this.blockingId) {
-                    item.setBlockingTicks(userData.readLongLE());
+            if (marker == -1) {
+                final byte version = userData.readByte();
+                if (version != 1) {
+                    return item;
                 }
+                item.setTag((CompoundTag) BedrockTypes.TAG_LE.read(userData));
+            } else if (marker != 0) { // Bedrock client crashes if marker isn't -1 or 0
+                throw new IllegalStateException("Expected -1 or 0 marker but got " + marker);
+            }
+            item.setCanPlace(BedrockTypes.UTF8_STRING_ARRAY.read(userData));
+            item.setCanBreak(BedrockTypes.UTF8_STRING_ARRAY.read(userData));
+            if (item.identifier() == this.blockingId) {
+                item.setBlockingTicks(userData.readLongLE());
             }
         } catch (IndexOutOfBoundsException ignored) {
             // Bedrock client stops reading at whatever point and loads whatever it has read successfully

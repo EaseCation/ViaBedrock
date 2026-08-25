@@ -87,27 +87,39 @@ public final class SmithingSimulator {
     }
 
     public static boolean isTakeResult(final List<InventoryActionData> actions) {
-        return CartographySimulator.hasTodoMarker(actions, TODO_SMITHING_RESULT);
+        return CartographySimulator.hasTodoMarker(actions, TODO_SMITHING_RESULT)
+                && CartographySimulator.hasCursorTakeResult(actions);
     }
 
-    public static boolean sendTakeResult(final UserConnection user, final InventoryTracker tracker) {
+    static boolean isQuickMoveResult(final List<InventoryActionData> actions) {
+        return CartographySimulator.isQuickMoveResult(actions, TODO_SMITHING_RESULT);
+    }
+
+    static ItemStackRequestEncoder.EncodedRequest encodeQuickMoveResult(
+            final InventoryTracker tracker, final List<InventoryActionData> actions,
+            final boolean emulateNetEase, final int protocol) {
+        final Container container = tracker.getCurrentContainer();
+        if (!isSmithing(container) || !isQuickMoveResult(actions)) {
+            return ItemStackRequestEncoder.EncodedRequest.notSupported();
+        }
+        final int recipeNetworkId = recipeNetworkId(tracker, container);
+        final int takeCount = CartographySimulator.destinationAmount(actions);
+        if (recipeNetworkId <= 0 || takeCount <= 0) {
+            return ItemStackRequestEncoder.EncodedRequest.notSupported();
+        }
+        return ItemStackRequestEncoder.encodeSmithingApplyToDestinations(tracker, recipeNetworkId, takeCount, actions, emulateNetEase, protocol);
+    }
+
+    public static ItemStackRequestEncoder.EncodedRequest encodeTakeResult(final InventoryTracker tracker) {
         final Container container = tracker.getCurrentContainer();
         if (!isSmithing(container)) {
-            return false;
+            return ItemStackRequestEncoder.EncodedRequest.notSupported();
         }
         final int recipeNetworkId = recipeNetworkId(tracker, container);
         if (recipeNetworkId <= 0) {
-            return false;
+            return ItemStackRequestEncoder.EncodedRequest.notSupported();
         }
-        final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encodeSmithingApply(
-                tracker, recipeNetworkId);
-        if (encoded.unsupported() || encoded.isEmpty()) {
-            return false;
-        }
-        final PacketWrapper request = PacketWrapper.create(ServerboundBedrockPackets.ITEM_STACK_REQUEST, user);
-        request.write(Types.REMAINING_BYTES, encoded.payload());
-        request.sendToServer(BedrockProtocol.class);
-        return true;
+        return ItemStackRequestEncoder.encodeSmithingApply(tracker, recipeNetworkId);
     }
 
     private static int recipeNetworkId(final InventoryTracker tracker, final Container container) {

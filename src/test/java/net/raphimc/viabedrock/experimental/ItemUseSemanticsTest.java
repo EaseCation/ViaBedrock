@@ -215,7 +215,15 @@ class ItemUseSemanticsTest {
         assertTrue(ItemUseSemantics.sendStandaloneSpinAttackPlayerAction(false));
         assertTrue(ItemUseSemantics.rejectNetEaseOffhandUse(true, true, false));
         assertFalse(ItemUseSemantics.rejectNetEaseOffhandUse(true, true, true));
+        assertTrue(ItemUseSemantics.promoteOffhandUse(true, true, false));
+        assertFalse(ItemUseSemantics.promoteOffhandUse(true, true, true));
+        assertFalse(ItemUseSemantics.promoteOffhandUse(false, true, false));
+        assertFalse(ItemUseSemantics.promoteOffhandUse(true, false, false));
+        assertTrue(ItemUseSemantics.isBowAmmo("minecraft:spectral_arrow"));
+        assertTrue(ItemUseSemantics.isBowAmmo("minecraft:tipped_arrow"));
+        assertTrue(ItemUseSemantics.isRegularArrow("minecraft:spectral_arrow"));
         assertFalse(ItemUseSemantics.canStartBow(true, true, false, false));
+        assertTrue(ItemUseSemantics.canStartBow(true, true, false, true));
         assertTrue(ItemUseSemantics.canStartBow(true, true, true, false));
         assertFalse(ItemUseSemantics.canStartConsumable(true, "minecraft:apple", true, false, false));
         assertTrue(ItemUseSemantics.canStartConsumable(true, "minecraft:golden_apple", true, false, false));

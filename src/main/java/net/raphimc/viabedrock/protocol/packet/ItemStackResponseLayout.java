@@ -214,16 +214,14 @@ public final class ItemStackResponseLayout {
             } else {
                 stackNetworkId = wrapper.read(BedrockTypes.VAR_INT);
             }
-            if (usesCustomName(emulateNetEase, protocol)) {
-                wrapper.read(BedrockTypes.STRING);
-            }
-            if (usesFilteredCustomName(emulateNetEase, protocol)) {
-                wrapper.read(BedrockTypes.STRING);
-            }
-            if (usesDurabilityCorrection(emulateNetEase, protocol)) {
-                wrapper.read(BedrockTypes.VAR_INT);
-            }
-            slots.add(new DecodedSlot(slot, hotbarSlot, count, stackNetworkId));
+            final String customName = usesCustomName(emulateNetEase, protocol)
+                    ? wrapper.read(BedrockTypes.STRING) : null;
+            final String filteredCustomName = usesFilteredCustomName(emulateNetEase, protocol)
+                    ? wrapper.read(BedrockTypes.STRING) : null;
+            final Integer durabilityCorrection = usesDurabilityCorrection(emulateNetEase, protocol)
+                    ? wrapper.read(BedrockTypes.VAR_INT) : null;
+            slots.add(new DecodedSlot(slot, hotbarSlot, count, stackNetworkId,
+                    customName, filteredCustomName, durabilityCorrection));
         }
         return List.copyOf(slots);
     }
@@ -242,16 +240,14 @@ public final class ItemStackResponseLayout {
             } else {
                 stackNetworkId = BedrockTypes.VAR_INT.read(buffer);
             }
-            if (usesCustomName(emulateNetEase, protocol)) {
-                BedrockTypes.STRING.read(buffer);
-            }
-            if (usesFilteredCustomName(emulateNetEase, protocol)) {
-                BedrockTypes.STRING.read(buffer);
-            }
-            if (usesDurabilityCorrection(emulateNetEase, protocol)) {
-                BedrockTypes.VAR_INT.read(buffer);
-            }
-            slots.add(new DecodedSlot(slot, hotbarSlot, count, stackNetworkId));
+            final String customName = usesCustomName(emulateNetEase, protocol)
+                    ? BedrockTypes.STRING.read(buffer) : null;
+            final String filteredCustomName = usesFilteredCustomName(emulateNetEase, protocol)
+                    ? BedrockTypes.STRING.read(buffer) : null;
+            final Integer durabilityCorrection = usesDurabilityCorrection(emulateNetEase, protocol)
+                    ? BedrockTypes.VAR_INT.read(buffer) : null;
+            slots.add(new DecodedSlot(slot, hotbarSlot, count, stackNetworkId,
+                    customName, filteredCustomName, durabilityCorrection));
         }
         return List.copyOf(slots);
     }
@@ -259,6 +255,14 @@ public final class ItemStackResponseLayout {
     public static void writeOkEntry(final ByteBuf buffer, final boolean emulateNetEase, final int protocol,
                                     final int requestId, final int containerWireId, final int slot,
                                     final int count, final int stackNetworkId) {
+        writeOkEntry(buffer, emulateNetEase, protocol, requestId, containerWireId, slot,
+                count, stackNetworkId, "", "", 0);
+    }
+
+    public static void writeOkEntry(final ByteBuf buffer, final boolean emulateNetEase, final int protocol,
+                                    final int requestId, final int containerWireId, final int slot,
+                                    final int count, final int stackNetworkId, final String customName,
+                                    final String filteredCustomName, final int durabilityCorrection) {
         buffer.writeByte(RESULT_OK);
         BedrockTypes.VAR_INT.write(buffer, requestId);
         if (usesOptionalContainerEntries(emulateNetEase, protocol)) {
@@ -284,13 +288,13 @@ public final class ItemStackResponseLayout {
             BedrockTypes.VAR_INT.write(buffer, stackNetworkId);
         }
         if (usesCustomName(emulateNetEase, protocol)) {
-            BedrockTypes.STRING.write(buffer, "");
+            BedrockTypes.STRING.write(buffer, customName != null ? customName : "");
         }
         if (usesFilteredCustomName(emulateNetEase, protocol)) {
-            BedrockTypes.STRING.write(buffer, "");
+            BedrockTypes.STRING.write(buffer, filteredCustomName != null ? filteredCustomName : "");
         }
         if (usesDurabilityCorrection(emulateNetEase, protocol)) {
-            BedrockTypes.VAR_INT.write(buffer, 0);
+            BedrockTypes.VAR_INT.write(buffer, durabilityCorrection);
         }
     }
 
@@ -318,7 +322,11 @@ public final class ItemStackResponseLayout {
         return 975;
     }
 
-    public record DecodedSlot(int slot, int hotbarSlot, int count, int stackNetworkId) {
+    public record DecodedSlot(int slot, int hotbarSlot, int count, int stackNetworkId,
+                              String customName, String filteredCustomName, Integer durabilityCorrection) {
+        public DecodedSlot(final int slot, final int hotbarSlot, final int count, final int stackNetworkId) {
+            this(slot, hotbarSlot, count, stackNetworkId, null, null, null);
+        }
     }
 
     public record DecodedContainer(FullContainerName container, List<DecodedSlot> slots) {

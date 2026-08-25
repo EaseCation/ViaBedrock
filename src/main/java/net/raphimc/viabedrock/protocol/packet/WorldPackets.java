@@ -220,6 +220,7 @@ public class WorldPackets {
             final ClientPlayerEntity clientPlayer = oldEntityTracker.getClientPlayer();
             wrapper.user().get(JavaPlayerStateStorage.class).reset();
             wrapper.user().get(SpectatorCameraTracker.class).onDimensionChange();
+            ExperimentalFeatures.dispatchDimensionChange(wrapper.user());
             oldEntityTracker.prepareForRespawn();
             final EntityTracker newEntityTracker = new EntityTracker(wrapper.user());
             newEntityTracker.addEntity(clientPlayer);
@@ -591,13 +592,20 @@ public class WorldPackets {
                 PacketFactory.sendJavaBlockEntityData(wrapper.user(), entry.getKey(), entry.getValue());
             }
 
-            // 批量主层更新全部发出后，才能确认其中对应的破坏 sequence。
+            // 批量主层更新全部发出后，才能确认其中对应的破坏/放置 sequence。
             final BlockBreakingProgressTracker breakTracker = wrapper.user().get(BlockBreakingProgressTracker.class);
-            if (breakTracker != null) {
-                for (BlockPosition position : updatedStandardBlocks) {
-                    final Integer seq = breakTracker.consumeAck(position);
-                    if (seq != null) {
-                        PacketFactory.sendJavaBlockChangedAck(wrapper.user(), seq);
+            final BlockPlacementAckTracker placementTracker = wrapper.user().get(BlockPlacementAckTracker.class);
+            for (BlockPosition position : updatedStandardBlocks) {
+                if (breakTracker != null) {
+                    final Integer breakSeq = breakTracker.consumeAck(position);
+                    if (breakSeq != null) {
+                        PacketFactory.sendJavaBlockChangedAck(wrapper.user(), breakSeq);
+                    }
+                }
+                if (placementTracker != null) {
+                    final Integer placeSeq = placementTracker.consumeAck(position);
+                    if (placeSeq != null) {
+                        PacketFactory.sendJavaBlockChangedAck(wrapper.user(), placeSeq);
                     }
                 }
             }

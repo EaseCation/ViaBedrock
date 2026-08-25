@@ -39,6 +39,77 @@ class ItemUseAirClickTargetTest {
     private static final int WATER = 2;
     private static final int POWDER_SNOW = 3;
     private static final int FLOWING_WATER = 4;
+    private static final int SNOW_LAYER_PARTIAL = 5;
+    private static final int SNOW_LAYER_FULL = 6;
+    private static final int FULL_SNOW = 7;
+    private static final int SHORT_GRASS = 8;
+    private static final int FERN = 9;
+    private static final int TALL_GRASS = 10;
+    private static final int LARGE_FERN = 11;
+    private static final int DOUBLE_PLANT_GRASS = 12;
+    private static final int DOUBLE_PLANT_FLOWER = 13;
+
+    @Test
+    void motReplaceableIdentifiersMatchPlacementTargetSemantics() {
+        assertTrue(ItemUseAirClickTarget.isMotReplaceableIdentifier("tallgrass"));
+        assertTrue(ItemUseAirClickTarget.isMotReplaceableIdentifier("glow_lichen"));
+        assertTrue(ItemUseAirClickTarget.isMotReplaceableIdentifier("fire"));
+        assertEquals(false, ItemUseAirClickTarget.isMotReplaceableIdentifier("double_plant"));
+        assertEquals(false, ItemUseAirClickTarget.isMotReplaceableIdentifier("powder_snow"));
+        assertEquals(false, ItemUseAirClickTarget.isMotReplaceableIdentifier("stone"));
+    }
+
+    @Test
+    void modernGrassIdentifiersRemainReplaceable() {
+        assertTrue(ItemUseAirClickTarget.isMotReplaceableIdentifier("short_grass"));
+        assertTrue(ItemUseAirClickTarget.isMotReplaceableIdentifier("fern"));
+        assertTrue(ItemUseAirClickTarget.isMotReplaceableIdentifier("tall_grass"));
+        assertTrue(ItemUseAirClickTarget.isMotReplaceableIdentifier("large_fern"));
+    }
+
+    @Test
+    void blockStateReplacementMatchesMotSnowSemantics() {
+        final BlockPosition position = new BlockPosition(0, 65, 2);
+        final Map<BlockPosition, Integer> layer0 = new HashMap<>();
+        final ItemUseAirClickTarget.WorldView world = world(layer0, Map.of());
+
+        layer0.put(position, POWDER_SNOW);
+        assertEquals(false, ItemUseAirClickTarget.isReplaceable(world, position));
+
+        layer0.put(position, SNOW_LAYER_PARTIAL);
+        assertTrue(ItemUseAirClickTarget.isReplaceable(world, position));
+        assertTrue(ItemUseAirClickTarget.isSnowLayer(world, position));
+
+        layer0.put(position, SNOW_LAYER_FULL);
+        assertEquals(false, ItemUseAirClickTarget.isReplaceable(world, position));
+        assertEquals(false, ItemUseAirClickTarget.isSnowLayer(world, position));
+
+        layer0.put(position, FULL_SNOW);
+        assertEquals(false, ItemUseAirClickTarget.isReplaceable(world, position));
+        assertEquals(false, ItemUseAirClickTarget.isSnowLayer(world, position));
+    }
+
+    @Test
+    void blockStateReplacementMatchesMotDoublePlantSemantics() {
+        final BlockPosition position = new BlockPosition(0, 65, 2);
+        final Map<BlockPosition, Integer> layer0 = new HashMap<>();
+        final ItemUseAirClickTarget.WorldView world = world(layer0, Map.of());
+
+        layer0.put(position, DOUBLE_PLANT_GRASS);
+        assertTrue(ItemUseAirClickTarget.isReplaceable(world, position));
+
+        layer0.put(position, DOUBLE_PLANT_FLOWER);
+        assertEquals(false, ItemUseAirClickTarget.isReplaceable(world, position));
+    }
+
+    @Test
+    void placementAckUsesReplaceabilityInsteadOfInsideBlockFlag() {
+        final BlockPosition clicked = new BlockPosition(10, 64, 10);
+
+        assertEquals(clicked, ExperimentalFeatures.blockPlacementAckPosition(clicked, BlockFace.TOP, true));
+        assertEquals(new BlockPosition(10, 65, 10),
+                ExperimentalFeatures.blockPlacementAckPosition(clicked, BlockFace.TOP, false));
+    }
 
     @Test
     void emptyBucketPicksUpWaterSourceAndPowderSnow() {
@@ -79,6 +150,28 @@ class ItemUseAirClickTargetTest {
         assertEquals(new BlockPosition(0, 65, 2), hit.pos());
         assertEquals(BlockFace.NORTH, hit.face());
         assertEquals(false, hit.insideBlock());
+    }
+
+    @Test
+    void filledBucketStopsAtPowderSnow() {
+        final Map<BlockPosition, Integer> layer0 = new HashMap<>();
+        final BlockPosition powderSnow = new BlockPosition(0, 65, 2);
+        layer0.put(powderSnow, POWDER_SNOW);
+        final ItemUseAirClickTarget.Hit hit = ItemUseAirClickTarget.raytracePlaceClick(
+                world(layer0, Map.of()), eye(0.5F, 65.62F, 0.5F), 0F, 0F, 5.0D, "minecraft:water_bucket", null);
+        assertNotNull(hit);
+        assertEquals(powderSnow, hit.pos());
+    }
+
+    @Test
+    void filledBucketStopsAtFullHeightSnowLayer() {
+        final Map<BlockPosition, Integer> layer0 = new HashMap<>();
+        final BlockPosition snowLayer = new BlockPosition(0, 65, 2);
+        layer0.put(snowLayer, SNOW_LAYER_FULL);
+        final ItemUseAirClickTarget.Hit hit = ItemUseAirClickTarget.raytracePlaceClick(
+                world(layer0, Map.of()), eye(0.5F, 65.62F, 0.5F), 0F, 0F, 5.0D, "minecraft:water_bucket", null);
+        assertNotNull(hit);
+        assertEquals(snowLayer, hit.pos());
     }
 
     @Test
@@ -129,6 +222,11 @@ class ItemUseAirClickTargetTest {
             case WATER -> new BlockState("water", Map.of("liquid_depth", "0"));
             case FLOWING_WATER -> new BlockState("flowing_water", Map.of("liquid_depth", "0"));
             case POWDER_SNOW -> new BlockState("powder_snow", Map.of());
+            case SNOW_LAYER_PARTIAL -> new BlockState("snow_layer", Map.of("height", "6"));
+            case SNOW_LAYER_FULL -> new BlockState("snow_layer", Map.of("height", "7"));
+            case FULL_SNOW -> new BlockState("snow", Map.of());
+            case DOUBLE_PLANT_GRASS -> new BlockState("double_plant", Map.of("double_plant_type", "grass"));
+            case DOUBLE_PLANT_FLOWER -> new BlockState("double_plant", Map.of("double_plant_type", "sunflower"));
             default -> new BlockState("air", Map.of());
         };
     }

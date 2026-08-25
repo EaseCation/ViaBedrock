@@ -74,6 +74,14 @@ public class CreativeContentCache extends StoredObject {
         return fallback;
     }
 
+    public Integer findExactNetId(final BedrockItem item) {
+        if (item == null || item.isEmpty()) return null;
+        for (final Entry entry : this.entries) {
+            if (!entry.item().isDifferent(item)) return entry.netId();
+        }
+        return null;
+    }
+
     private static boolean sameCreativeIdentity(final BedrockItem cached, final BedrockItem requested) {
         return cached.identifier() == requested.identifier() && cached.data() == requested.data();
     }

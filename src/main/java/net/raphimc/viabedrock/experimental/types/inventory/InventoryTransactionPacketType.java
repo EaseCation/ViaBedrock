@@ -74,7 +74,7 @@ public class InventoryTransactionPacketType extends Type<BedrockInventoryTransac
                     InventoryTransactionLayout.readClientCooldownState(buffer)
             );
             case ItemUseOnEntityTransaction -> new InventoryTransactionData.UseItemOnEntityTransactionData(
-                    BedrockTypes.VAR_LONG.read(buffer),
+                    readEntityRuntimeId(buffer),
                     ItemUseOnActorInventoryTransaction_ActionType.getByValue(BedrockTypes.UNSIGNED_VAR_INT.read(buffer)),
                     BedrockTypes.VAR_INT.read(buffer),
                     itemRewriter.itemType().read(buffer),
@@ -90,6 +90,14 @@ public class InventoryTransactionPacketType extends Type<BedrockInventoryTransac
         };
 
         return new BedrockInventoryTransaction(legacyRequestId, List.of(legacySlots), List.of(actions), type, transactionData);
+    }
+
+    static long readEntityRuntimeId(final ByteBuf buffer) {
+        return BedrockTypes.UNSIGNED_VAR_LONG.read(buffer);
+    }
+
+    static void writeEntityRuntimeId(final ByteBuf buffer, final long runtimeId) {
+        BedrockTypes.UNSIGNED_VAR_LONG.write(buffer, runtimeId);
     }
 
     @Override
@@ -118,7 +126,7 @@ public class InventoryTransactionPacketType extends Type<BedrockInventoryTransac
             }
             case ItemUseOnEntityTransaction -> {
                 InventoryTransactionData.UseItemOnEntityTransactionData data = (InventoryTransactionData.UseItemOnEntityTransactionData) bedrockInventoryTransaction.transactionData();
-                BedrockTypes.VAR_LONG.write(buffer, data.entityRuntimeId());
+                writeEntityRuntimeId(buffer, data.entityRuntimeId());
                 BedrockTypes.UNSIGNED_VAR_INT.write(buffer, data.actionType().getValue());
                 BedrockTypes.VAR_INT.write(buffer, data.hotbarSlot());
                 itemRewriter.itemType().write(buffer, data.itemInHand());

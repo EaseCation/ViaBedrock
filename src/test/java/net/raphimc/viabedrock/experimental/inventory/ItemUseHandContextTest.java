@@ -48,6 +48,27 @@ class ItemUseHandContextTest {
     }
 
     @Test
+    void promotedOffhandKeepsJavaHandButUsesSwappedMainSlot() {
+        final BedrockItem promotedItem = new BedrockItem(2);
+        final ItemUseHandContext mainContext = ItemUseHandContext.create(
+                InteractionHand.MAIN_HAND,
+                (byte) 0,
+                6,
+                promotedItem,
+                (byte) 119,
+                new BedrockItem(1)
+        );
+
+        final ItemUseHandContext context = ItemUseHandContext.promotedOffhand(mainContext);
+
+        assertEquals(InteractionHand.OFF_HAND, context.hand());
+        assertEquals(0, context.containerId());
+        assertEquals(6, context.containerSlot());
+        assertEquals(6, context.transactionHotbarSlot());
+        assertSame(promotedItem, context.item());
+    }
+
+    @Test
     void resolvesOffhandToPrivateProtocolMarker() {
         final BedrockItem offhandItem = new BedrockItem(2);
         final ItemUseHandContext context = ItemUseHandContext.create(

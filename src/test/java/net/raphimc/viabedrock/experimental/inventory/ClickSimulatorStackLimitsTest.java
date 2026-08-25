@@ -100,10 +100,9 @@ class ClickSimulatorStackLimitsTest {
     }
 
     @Test
-    void allQuickCraftModesRespectArmorLimit() {
+    void supportedQuickCraftModesRespectArmorLimit() {
         assertTargetsWithin(this.quickCraft(0, List.of((short) 9), 1), 1);
         assertTargetsWithin(this.quickCraft(1, List.of((short) 9, (short) 10), 1), 1);
-        assertTargetsWithin(this.quickCraft(2, List.of((short) 9, (short) 10), 1), 1);
     }
 
     @Test

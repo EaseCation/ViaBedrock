@@ -23,6 +23,27 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class EntityMetadataRewriterTest {
 
     @Test
+    void convertsMotAreaEffectCloudWaitTimeToJavaWaitingFlag() {
+        assertFalse(EntityMetadataRewriter.areaEffectCloudWaiting(0));
+        assertTrue(EntityMetadataRewriter.areaEffectCloudWaiting(1));
+        assertTrue(EntityMetadataRewriter.areaEffectCloudWaiting(20));
+    }
+
+    @Test
+    void convertsMotAreaEffectCloudParticlesAndColorToJavaPayloads() {
+        assertEquals(new EntityMetadataRewriter.AreaEffectCloudParticle(
+                        "minecraft:entity_effect", 0xFF336699, null),
+                EntityMetadataRewriter.areaEffectCloudParticle(34, 0x336699));
+        assertEquals(new EntityMetadataRewriter.AreaEffectCloudParticle(
+                        "minecraft:entity_effect", 0x20336699, null),
+                EntityMetadataRewriter.areaEffectCloudParticle(35, 0xFF336699));
+        assertEquals(new EntityMetadataRewriter.AreaEffectCloudParticle(
+                        "minecraft:instant_effect", 0xFF336699, 1F),
+                EntityMetadataRewriter.areaEffectCloudParticle(36, 0x336699));
+        assertEquals(null, EntityMetadataRewriter.areaEffectCloudParticle(99, 0x336699));
+    }
+
+    @Test
     void mapsSkeletonRangedAttackAndVindicatorAngerToAggressiveMobFlag() {
         assertEquals(0x04, EntityMetadataRewriter.mobFlags(
                 EntityTypes1_21_11.SKELETON, EnumSet.of(ActorFlags.FACING_TARGET_TO_RANGE_ATTACK)));
@@ -115,6 +136,30 @@ class EntityMetadataRewriterTest {
         assertFalse(EntityMetadataRewriter.shouldHideHostNametag("Title\nSubtitle", false));
         assertFalse(EntityMetadataRewriter.shouldHideHostNametag(null, true));
         assertFalse(EntityMetadataRewriter.shouldHideHostNametag("", true));
+    }
+
+    @Test
+    void mapsMotSnifferFlagsToJavaStateOrder() {
+        assertEquals(Integer.valueOf(6), Integer.valueOf(EntityMetadataRewriter.snifferState(EnumSet.of(ActorFlags.getByValue(111)))));
+        assertEquals(Integer.valueOf(5), Integer.valueOf(EntityMetadataRewriter.snifferState(EnumSet.of(ActorFlags.DIGGING))));
+        assertEquals(Integer.valueOf(2), Integer.valueOf(EntityMetadataRewriter.snifferState(EnumSet.of(ActorFlags.getByValue(110)))));
+        assertEquals(Integer.valueOf(1), Integer.valueOf(EntityMetadataRewriter.snifferState(EnumSet.of(ActorFlags.getByValue(112)))));
+        assertEquals(Integer.valueOf(0), Integer.valueOf(EntityMetadataRewriter.snifferState(EnumSet.noneOf(ActorFlags.class))));
+    }
+
+    @Test
+    void packsTropicalFishFromBedrockVariantFields() {
+        assertEquals(Integer.valueOf(0x04030201), Integer.valueOf(EntityMetadataRewriter.packedTropicalFishVariant(1, 2, 3, 4)));
+    }
+
+    @Test
+    void mapsBedrockCatWolfAndFrogIdsToJavaNames() {
+        assertEquals("white", EntityMetadataRewriter.catVariantName(0));
+        assertEquals("jellie", EntityMetadataRewriter.catVariantName(10));
+        assertEquals("pale", EntityMetadataRewriter.wolfVariantName(0));
+        assertEquals("woods", EntityMetadataRewriter.wolfVariantName(8));
+        assertEquals("temperate", EntityMetadataRewriter.frogVariantName(0));
+        assertEquals("warm", EntityMetadataRewriter.frogVariantName(2));
     }
 
     @Test

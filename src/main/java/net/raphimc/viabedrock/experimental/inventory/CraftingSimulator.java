@@ -122,32 +122,40 @@ public class CraftingSimulator {
 
         final List<InventoryActionData> actions = new ArrayList<>();
 
+        final int timesCrafted = timesCraftable(is3x3, tracker, recipe, primaryOutput, maxStackSize);
+        if (timesCrafted <= 0) {
+            return null;
+        }
+
         // ACTION 1: per grid slot consumption (-5 USE_INGREDIENT + explicit grid SlotChange decrement)
-        addGridConsumption(actions, is3x3, tracker);
+        addGridConsumption(actions, is3x3, tracker, timesCrafted);
+
+        final BedrockItem craftedOutput = primaryOutput.copy();
+        craftedOutput.setAmount(primaryOutput.amount() * timesCrafted);
 
         // ACTION 2: SOURCE_TODO(-4) — set primaryOutput
         actions.add(new InventoryActionData(
                 new InventorySource(InventorySourceType.NonImplementedFeatureTODO, TODO_CRAFTING_RESULT, InventorySource_InventorySourceFlags.NoFlag),
-                0, primaryOutput, BedrockItem.empty()
+                0, craftedOutput, BedrockItem.empty()
         ));
 
         // ACTION 3: Place result in inventory (find target slot)
-        int remaining = primaryOutput.amount();
+        int remaining = craftedOutput.amount();
 
         // Round 1: fill existing stacks in main inventory (9-35) then hotbar (0-8)
         for (int invSlot = 9; invSlot <= 35 && remaining > 0; invSlot++) {
-            remaining = tryMergeIntoSlot(actions, tracker, invSlot, primaryOutput, remaining, maxStackSize);
+            remaining = tryMergeIntoSlot(actions, tracker, invSlot, craftedOutput, remaining, maxStackSize);
         }
         for (int invSlot = 0; invSlot <= 8 && remaining > 0; invSlot++) {
-            remaining = tryMergeIntoSlot(actions, tracker, invSlot, primaryOutput, remaining, maxStackSize);
+            remaining = tryMergeIntoSlot(actions, tracker, invSlot, craftedOutput, remaining, maxStackSize);
         }
 
         // Round 2: fill empty slots in main inventory (9-35) then hotbar (0-8)
         for (int invSlot = 9; invSlot <= 35 && remaining > 0; invSlot++) {
-            remaining = tryPlaceIntoEmptySlot(actions, tracker, invSlot, primaryOutput, remaining, maxStackSize);
+            remaining = tryPlaceIntoEmptySlot(actions, tracker, invSlot, craftedOutput, remaining, maxStackSize);
         }
         for (int invSlot = 0; invSlot <= 8 && remaining > 0; invSlot++) {
-            remaining = tryPlaceIntoEmptySlot(actions, tracker, invSlot, primaryOutput, remaining, maxStackSize);
+            remaining = tryPlaceIntoEmptySlot(actions, tracker, invSlot, craftedOutput, remaining, maxStackSize);
         }
 
         if (remaining > 0) {
@@ -209,32 +217,39 @@ public class CraftingSimulator {
 
     /**
      * For each non-empty crafting grid slot, emits the pair of actions a real Bedrock client sends when
-     * crafting consumes one item from that slot:
+     * crafting consumes items from that slot:
      *   1. SOURCE_TODO(-5 USE_INGREDIENT) with slot = grid-relative index (0-based), fromItem empty,
-     *      toItem the consumed ingredient (count 1) — this feeds the server's CraftingTransaction inputs.
+     *      toItem the consumed ingredient — this feeds the server's CraftingTransaction inputs.
      *   2. A ContainerInventory SlotChange on the HUD/UI container (id 124) at the absolute grid slot,
-     *      decrementing the stack by 1 (or clearing it) — the actual grid mutation the server validates.
+     *      decrementing the stack (or clearing it) — the actual grid mutation the server validates.
      */
     private static void addGridConsumption(final List<InventoryActionData> actions, final boolean is3x3, final InventoryTracker tracker) {
+        addGridConsumption(actions, is3x3, tracker, 1);
+    }
+
+    private static void addGridConsumption(final List<InventoryActionData> actions, final boolean is3x3,
+                                           final InventoryTracker tracker, final int timesCrafted) {
         final var hudContainer = tracker.getHudContainer();
         final int startSlot = is3x3 ? 32 : 28;
         final int gridSize = is3x3 ? 9 : 4;
+        final int consumeCount = Math.max(1, timesCrafted);
         for (int i = 0; i < gridSize; i++) {
             final int hudSlot = startSlot + i;
             final BedrockItem gridItem = hudContainer.getItem(hudSlot);
             if (gridItem.isEmpty()) continue;
 
+            final int consumed = Math.min(gridItem.amount(), consumeCount);
             final BedrockItem ingredient = gridItem.copy();
-            ingredient.setAmount(1);
+            ingredient.setAmount(consumed);
             actions.add(new InventoryActionData(
                     new InventorySource(InventorySourceType.NonImplementedFeatureTODO, TODO_USE_INGREDIENT, InventorySource_InventorySourceFlags.NoFlag),
                     i, BedrockItem.empty(), ingredient
             ));
 
             final BedrockItem newGrid;
-            if (gridItem.amount() > 1) {
+            if (gridItem.amount() > consumed) {
                 newGrid = gridItem.copy();
-                newGrid.setAmount(gridItem.amount() - 1);
+                newGrid.setAmount(gridItem.amount() - consumed);
             } else {
                 newGrid = BedrockItem.empty();
             }
@@ -243,6 +258,62 @@ public class CraftingSimulator {
                     hudSlot, gridItem.copy(), newGrid
             ));
         }
+    }
+
+    /**
+     * Java Shift-click crafts as many times as the current grid and inventory room allow.
+     * MOT extra-output recipes reject {@code timesCrafted != 1}, so those stay at one craft.
+     */
+    static int timesCraftable(final boolean is3x3, final InventoryTracker tracker, final BedrockRecipe recipe,
+                              final BedrockItem primaryOutput, final int maxStackSize) {
+        if (recipe == null || primaryOutput == null || primaryOutput.isEmpty() || maxStackSize <= 0) {
+            return 0;
+        }
+        if (recipe.extraOutputs() != null && !recipe.extraOutputs().isEmpty()) {
+            return 1;
+        }
+        final int perCraft = Math.max(1, primaryOutput.amount());
+        int times = Integer.MAX_VALUE;
+        for (final BedrockItem gridItem : getGridItems(is3x3, tracker)) {
+            if (gridItem == null || gridItem.isEmpty()) {
+                continue;
+            }
+            times = Math.min(times, gridItem.amount());
+        }
+        if (times == Integer.MAX_VALUE || times <= 0) {
+            return 0;
+        }
+        int remainingCapacity = 0;
+        remainingCapacity += remainingMergeCapacity(tracker, primaryOutput, maxStackSize, 9, 35);
+        remainingCapacity += remainingMergeCapacity(tracker, primaryOutput, maxStackSize, 0, 8);
+        remainingCapacity += remainingEmptyCapacity(tracker, maxStackSize, 9, 35);
+        remainingCapacity += remainingEmptyCapacity(tracker, maxStackSize, 0, 8);
+        times = Math.min(times, remainingCapacity / perCraft);
+        return Math.max(0, times);
+    }
+
+    private static int remainingMergeCapacity(final InventoryTracker tracker, final BedrockItem output,
+                                              final int maxStackSize, final int from, final int to) {
+        int remaining = 0;
+        for (int slot = from; slot <= to; slot++) {
+            final BedrockItem target = tracker.getInventoryContainer().getItem(slot);
+            if (target.isEmpty() || target.isDifferent(output) || target.amount() >= maxStackSize) {
+                continue;
+            }
+            remaining += maxStackSize - target.amount();
+        }
+        return remaining;
+    }
+
+    private static int remainingEmptyCapacity(final InventoryTracker tracker, final int maxStackSize,
+                                              final int from, final int to) {
+        int remaining = 0;
+        for (int slot = from; slot <= to; slot++) {
+            if (tracker.getInventoryContainer().getItem(slot).isEmpty()) {
+                remaining += maxStackSize;
+            }
+        }
+        return remaining;
     }
 
     private static InventoryActionData cursorAction(final BedrockItem from, final BedrockItem to) {

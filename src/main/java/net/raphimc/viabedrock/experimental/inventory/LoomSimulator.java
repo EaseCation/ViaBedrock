@@ -93,33 +93,51 @@ public final class LoomSimulator {
     }
 
     public static boolean isTakeResult(final List<InventoryActionData> actions) {
-        return CartographySimulator.hasTodoMarker(actions, TODO_LOOM_RESULT);
+        return CartographySimulator.hasTodoMarker(actions, TODO_LOOM_RESULT)
+                && CartographySimulator.hasCursorTakeResult(actions);
     }
 
-    public static boolean sendTakeResult(final UserConnection user, final InventoryTracker tracker) {
+    static boolean isQuickMoveResult(final List<InventoryActionData> actions) {
+        return CartographySimulator.isQuickMoveResult(actions, TODO_LOOM_RESULT);
+    }
+
+    static ItemStackRequestEncoder.EncodedRequest encodeQuickMoveResult(
+            final UserConnection user, final InventoryTracker tracker, final List<InventoryActionData> actions,
+            final boolean emulateNetEase, final int protocol) {
         final Container container = tracker.getCurrentContainer();
-        if (!isLoom(container)) {
-            return false;
+        if (!isLoom(container) || !isQuickMoveResult(actions)) {
+            return ItemStackRequestEncoder.EncodedRequest.notSupported();
         }
         final BedrockItem banner = container.getItem(0);
         final BedrockItem dye = container.getItem(1);
         if (banner == null || banner.isEmpty() || dye == null || dye.isEmpty()) {
-            return false;
+            return ItemStackRequestEncoder.EncodedRequest.notSupported();
+        }
+        final ItemRewriter itemRewriter = user.get(ItemRewriter.class);
+        final String patternId = patternId(container.getItem(2), itemRewriter);
+        final int takeCount = CartographySimulator.destinationAmount(actions);
+        if (patternId == null || takeCount <= 0) {
+            return ItemStackRequestEncoder.EncodedRequest.notSupported();
+        }
+        return ItemStackRequestEncoder.encodeLoomApplyToDestinations(tracker, 1, 1, takeCount, patternId, actions, emulateNetEase, protocol);
+    }
+
+    public static ItemStackRequestEncoder.EncodedRequest encodeTakeResult(final UserConnection user, final InventoryTracker tracker) {
+        final Container container = tracker.getCurrentContainer();
+        if (!isLoom(container)) {
+            return ItemStackRequestEncoder.EncodedRequest.notSupported();
+        }
+        final BedrockItem banner = container.getItem(0);
+        final BedrockItem dye = container.getItem(1);
+        if (banner == null || banner.isEmpty() || dye == null || dye.isEmpty()) {
+            return ItemStackRequestEncoder.EncodedRequest.notSupported();
         }
         final ItemRewriter itemRewriter = user.get(ItemRewriter.class);
         final String patternId = patternId(container.getItem(2), itemRewriter);
         if (patternId == null) {
-            return false;
+            return ItemStackRequestEncoder.EncodedRequest.notSupported();
         }
-        final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encodeLoomApply(
-                tracker, 1, 1, 1, patternId);
-        if (encoded.unsupported() || encoded.isEmpty()) {
-            return false;
-        }
-        final PacketWrapper request = PacketWrapper.create(ServerboundBedrockPackets.ITEM_STACK_REQUEST, user);
-        request.write(Types.REMAINING_BYTES, encoded.payload());
-        request.sendToServer(BedrockProtocol.class);
-        return true;
+        return ItemStackRequestEncoder.encodeLoomApply(tracker, 1, 1, 1, patternId);
     }
 
     static String patternId(final BedrockItem patternItem, final ItemRewriter itemRewriter) {

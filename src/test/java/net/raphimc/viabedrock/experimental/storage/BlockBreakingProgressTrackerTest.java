@@ -12,12 +12,14 @@ package net.raphimc.viabedrock.experimental.storage;
 import com.viaversion.viaversion.api.minecraft.BlockPosition;
 import com.viaversion.viaversion.connection.UserConnectionImpl;
 import io.netty.channel.embedded.EmbeddedChannel;
+import net.raphimc.viabedrock.protocol.data.enums.Direction;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BlockBreakingProgressTrackerTest {
@@ -28,6 +30,26 @@ class BlockBreakingProgressTrackerTest {
     @AfterEach
     void closeChannel() {
         this.channel.finishAndReleaseAll();
+    }
+
+    @Test
+    void forwardsOnlyStandaloneSwings() {
+        final BlockPosition position = new BlockPosition(1, 64, 2);
+
+        assertTrue(this.tracker.shouldForwardStandaloneSwing());
+
+        this.tracker.startMining(position, Direction.NORTH);
+        assertFalse(this.tracker.shouldForwardStandaloneSwing());
+
+        this.tracker.suspendMining(position);
+        assertFalse(this.tracker.shouldForwardStandaloneSwing());
+
+        this.tracker.finishMining(position, 0, 1234);
+        assertFalse(this.tracker.shouldForwardStandaloneSwing());
+        for (int i = 0; i < 5; i++) {
+            this.tracker.tick();
+        }
+        assertTrue(this.tracker.shouldForwardStandaloneSwing());
     }
 
     @Test

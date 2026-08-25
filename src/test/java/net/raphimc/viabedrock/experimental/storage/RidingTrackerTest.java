@@ -10,20 +10,59 @@
 package net.raphimc.viabedrock.experimental.storage;
 
 import com.viaversion.viaversion.api.minecraft.entities.EntityTypes1_21_11;
+import com.viaversion.viaversion.libs.fastutil.longs.LongArrayList;
+import io.netty.channel.embedded.EmbeddedChannel;
 import org.junit.jupiter.api.Test;
 
+import net.raphimc.viabedrock.protocol.model.EntityLink;
 import net.raphimc.viabedrock.protocol.model.Position3f;
+import net.raphimc.viabedrock.test.StubUserConnection;
 import net.raphimc.viabedrock.protocol.packet.EntityPacketLayout;
 
 import static net.raphimc.viabedrock.experimental.storage.RidingTracker.LocalRidingMode.BOAT_PREDICTED;
 import static net.raphimc.viabedrock.experimental.storage.RidingTracker.LocalRidingMode.PASSENGER_ONLY;
 import static net.raphimc.viabedrock.experimental.storage.RidingTracker.LocalRidingMode.VIRTUAL_INPUT_ONLY;
 import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RidingTrackerTest {
+
+    @Test
+    void preservesMotControllerAcrossDuplicateAndOutOfOrderLinks() {
+        final LongArrayList passengers = new LongArrayList();
+
+        RidingTracker.updatePassengerOrder(passengers, 22L, (byte) 2);
+        RidingTracker.updatePassengerOrder(passengers, 11L, (byte) 1);
+        assertArrayEquals(new long[]{11L, 22L}, passengers.toLongArray());
+
+        RidingTracker.updatePassengerOrder(passengers, 22L, (byte) 2);
+        RidingTracker.updatePassengerOrder(passengers, 11L, (byte) 1);
+        assertArrayEquals(new long[]{11L, 22L}, passengers.toLongArray());
+
+        RidingTracker.updatePassengerOrder(passengers, 22L, (byte) 1);
+        assertArrayEquals(new long[]{22L, 11L}, passengers.toLongArray());
+    }
+
+    @Test
+    void dimensionResetClearsTrackedRidingRelations() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final StubUserConnection user = new StubUserConnection(channel);
+            final RidingTracker tracker = new RidingTracker(user);
+            user.put(tracker);
+
+            tracker.handleLink(new EntityLink(100L, 200L, (byte) 1, true, false, 0F));
+            assertTrue(tracker.hasTrackedRidingState());
+
+            tracker.resetForDimensionChange();
+            assertFalse(tracker.hasTrackedRidingState());
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
 
     @Test
     void forwardsDirectionalInputForControllableMinecarts() {

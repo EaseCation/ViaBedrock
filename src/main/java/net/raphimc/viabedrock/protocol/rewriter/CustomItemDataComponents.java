@@ -18,6 +18,8 @@
 package net.raphimc.viabedrock.protocol.rewriter;
 
 import com.viaversion.nbt.tag.CompoundTag;
+import com.viaversion.nbt.tag.ListTag;
+import com.viaversion.nbt.tag.StringTag;
 import com.viaversion.viaversion.api.minecraft.Holder;
 import com.viaversion.viaversion.api.minecraft.SoundEvent;
 import com.viaversion.viaversion.api.minecraft.data.StructuredDataContainer;
@@ -26,15 +28,47 @@ import com.viaversion.viaversion.api.minecraft.item.Item;
 import com.viaversion.viaversion.api.minecraft.item.data.Consumable1_21_2;
 import com.viaversion.viaversion.api.minecraft.item.data.FoodProperties1_21_2;
 import net.raphimc.viabedrock.api.resourcepack.definition.ItemDefinitions.ItemUseDefinition;
+import net.raphimc.viabedrock.protocol.model.BedrockItem;
 
 final class CustomItemDataComponents {
 
     static final String BEDROCK_IDENTIFIER_KEY = "viabedrock:bedrock_identifier";
+    static final String BEDROCK_ITEM_SHADOW_KEY = "viabedrock:bedrock_item";
+    static final int BEDROCK_ITEM_SHADOW_VERSION = 1;
 
     static void applyPaperFallbackIdentity(final Item item, final String bedrockIdentifier) {
         final StructuredDataContainer data = item.dataContainer();
         final CompoundTag existingCustomData = data.get(StructuredDataKey.CUSTOM_DATA);
         data.set(StructuredDataKey.CUSTOM_DATA, createPaperFallbackIdentity(existingCustomData, bedrockIdentifier));
+    }
+
+    static void applyBedrockItemShadow(final Item item, final String bedrockIdentifier, final BedrockItem bedrockItem) {
+        final StructuredDataContainer data = item.dataContainer();
+        final CompoundTag existingCustomData = data.get(StructuredDataKey.CUSTOM_DATA);
+        final CompoundTag customData = existingCustomData != null ? existingCustomData.copy() : new CompoundTag();
+        final CompoundTag shadow = new CompoundTag();
+        shadow.putInt("version", BEDROCK_ITEM_SHADOW_VERSION);
+        shadow.putString("identifier", bedrockIdentifier);
+        shadow.putInt("data", bedrockItem.data());
+        shadow.putInt("block_runtime_id", bedrockItem.blockRuntimeId());
+        if (bedrockItem.tag() != null) {
+            shadow.put("tag", bedrockItem.tag().copy());
+        }
+        shadow.put("can_place", stringList(bedrockItem.canPlace()));
+        shadow.put("can_break", stringList(bedrockItem.canBreak()));
+        shadow.putLong("blocking_ticks", bedrockItem.blockingTicks());
+        customData.put(BEDROCK_ITEM_SHADOW_KEY, shadow);
+        data.set(StructuredDataKey.CUSTOM_DATA, customData);
+    }
+
+    private static ListTag<StringTag> stringList(final String[] values) {
+        final ListTag<StringTag> list = new ListTag<>(StringTag.class);
+        for (String value : values) {
+            if (value != null) {
+                list.add(new StringTag(value));
+            }
+        }
+        return list;
     }
 
     static void applyConsumable(final Item item, final ItemUseDefinition itemUse, final boolean experimentalFeaturesEnabled) {

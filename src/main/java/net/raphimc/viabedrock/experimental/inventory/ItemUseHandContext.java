@@ -51,6 +51,25 @@ public record ItemUseHandContext(
         );
     }
 
+    public static ItemUseHandContext resolve(final InventoryTracker inventoryTracker, final InteractionHand hand,
+                                             final boolean offhandPromoted) {
+        final ItemUseHandContext context = resolve(
+                inventoryTracker,
+                hand == InteractionHand.OFF_HAND && offhandPromoted ? InteractionHand.MAIN_HAND : hand
+        );
+        return hand == InteractionHand.OFF_HAND && offhandPromoted ? promotedOffhand(context) : context;
+    }
+
+    static ItemUseHandContext promotedOffhand(final ItemUseHandContext mainHandContext) {
+        return new ItemUseHandContext(
+                InteractionHand.OFF_HAND,
+                mainHandContext.containerId(),
+                mainHandContext.containerSlot(),
+                mainHandContext.transactionHotbarSlot(),
+                mainHandContext.item()
+        );
+    }
+
     static ItemUseHandContext create(final InteractionHand hand, final byte mainContainerId, final int mainSlot, final BedrockItem mainItem, final byte offhandContainerId, final BedrockItem offhandItem) {
         return switch (hand) {
             case MAIN_HAND -> new ItemUseHandContext(hand, mainContainerId, mainSlot, mainSlot, mainItem);

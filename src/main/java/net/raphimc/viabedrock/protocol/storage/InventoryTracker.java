@@ -50,6 +50,7 @@ import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.logging.Level;
@@ -112,8 +113,10 @@ public class InventoryTracker extends StoredObject {
      */
     private boolean suppressNextBedrockPlayerInventoryOpen;
     private final Map<Integer, PendingItemStackRequest> pendingItemStackRequests = new LinkedHashMap<>();
+    private final IdentityHashMap<Container, Long> authoritativeInventoryGenerations = new IdentityHashMap<>();
     private NpcDialogueState currentNpcDialogue = null;
     private int nextItemStackRequestId = -1;
+    private long authoritativeInventoryGeneration;
 
     public InventoryTracker(final UserConnection user) {
         this(user, PACKET_FACTORY_CLOSE_SINK, CLIENT_AUTH_CLOSE_PREPARATION);
@@ -331,6 +334,26 @@ public class InventoryTracker extends StoredObject {
     private static boolean matchesCloseContainerId(final Container container, final byte containerId) {
         return container.containerId() == containerId || container.bedrockCloseContainerId() == containerId;
     }
+
+    public long authoritativeInventoryGeneration() {
+        return this.authoritativeInventoryGeneration;
+    }
+
+    public long authoritativeInventoryGeneration(final Container container) {
+        if (container == null) {
+            return 0L;
+        }
+        return this.authoritativeInventoryGenerations.computeIfAbsent(container, ignored -> 0L);
+    }
+
+    /** Advances only after an inbound Bedrock inventory slot/content update was applied. */
+    public void incrementAuthoritativeInventoryGeneration(final Container container) {
+        this.authoritativeInventoryGeneration++;
+        if (container != null) {
+            this.authoritativeInventoryGenerations.merge(container, 1L, Long::sum);
+        }
+    }
+
 
     public void rememberPendingItemStackRequest(final int requestId, final net.raphimc.viabedrock.experimental.inventory.InventorySnapshot snapshot) {
         if (requestId == 0 || snapshot == null) {

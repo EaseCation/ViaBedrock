@@ -34,6 +34,13 @@ import java.util.function.Function;
  */
 public final class ItemUseAirClickTarget {
 
+    private static final Set<String> MOT_REPLACEABLE_BLOCKS = Set.of(
+            "air", "bubble_column", "bush", "deadbush", "fern", "fire", "firefly_bush",
+            "flowing_lava", "flowing_water", "glow_lichen", "large_fern", "lava", "light_block",
+            "nether_sprouts", "seagrass", "short_dry_grass", "short_grass",
+            "soul_fire", "tall_dry_grass", "tall_grass", "tallgrass", "vine", "water"
+    );
+
     public static final double REACH_SURVIVAL = 4.5D;
     public static final double REACH_CREATIVE = 5.0D;
 
@@ -172,7 +179,11 @@ public final class ItemUseAirClickTarget {
 
     static boolean isSnowLayer(final WorldView world, final BlockPosition pos) {
         final BlockState state = world.blockState(world.blockStateId(0, pos));
-        return state != null && ("snow_layer".equals(state.identifier()) || "snow".equals(state.identifier()));
+        if (state == null || !"snow_layer".equals(state.identifier())) {
+            return false;
+        }
+        final String height = state.properties().get("height");
+        return height != null && !"7".equals(height);
     }
 
     static boolean isAir(final WorldView world, final BlockPosition pos) {
@@ -185,7 +196,27 @@ public final class ItemUseAirClickTarget {
     }
 
     static boolean isReplaceable(final WorldView world, final BlockPosition pos) {
-        return isAir(world, pos) || isLiquid(world, pos) || isSnowLayer(world, pos) || isPowderSnow(world, pos);
+        final int id = world.blockStateId(0, pos);
+        if (id == world.airId()) {
+            return true;
+        }
+        final BlockState state = world.blockState(id);
+        if (state == null) {
+            return false;
+        }
+        if ("double_plant".equals(state.identifier())) {
+            final String type = state.properties().get("double_plant_type");
+            return "grass".equals(type) || "fern".equals(type);
+        }
+        if ("snow_layer".equals(state.identifier())) {
+            final String height = state.properties().get("height");
+            return height != null && !"7".equals(height);
+        }
+        return isMotReplaceableIdentifier(state.identifier());
+    }
+
+    static boolean isMotReplaceableIdentifier(final String identifier) {
+        return identifier != null && MOT_REPLACEABLE_BLOCKS.contains(identifier);
     }
 
     private record Step(int crossedAxis, int crossedStep, double entryT, BlockFace face) {

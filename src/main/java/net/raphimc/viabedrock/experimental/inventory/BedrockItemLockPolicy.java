@@ -23,7 +23,6 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventorySourceType;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
 
-import java.util.Arrays;
 import java.util.List;
 
 public final class BedrockItemLockPolicy {
@@ -104,10 +103,7 @@ public final class BedrockItemLockPolicy {
     private static boolean sameItem(final BedrockItem first, final BedrockItem second) {
         return first != null && second != null
                 && !first.isEmpty() && !second.isEmpty()
-                && !first.isDifferent(second)
-                && Arrays.equals(first.canPlace(), second.canPlace())
-                && Arrays.equals(first.canBreak(), second.canBreak())
-                && first.blockingTicks() == second.blockingTicks();
+                && !first.isDifferent(second);
     }
 
     private static byte lockMode(final BedrockItem item) {

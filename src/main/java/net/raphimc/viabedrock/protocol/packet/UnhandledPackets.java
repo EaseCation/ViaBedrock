@@ -17,6 +17,7 @@
  */
 package net.raphimc.viabedrock.protocol.packet;
 
+import com.viaversion.nbt.tag.CompoundTag;
 import com.viaversion.viaversion.api.Via;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.protocol.packet.State;
@@ -29,11 +30,14 @@ import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.provider.NettyPipelineProvider;
+import net.raphimc.viabedrock.protocol.storage.EntityPropertyStorage;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 import net.raphimc.viabedrock.protocol.storage.PacketSyncStorage;
 import net.raphimc.viabedrock.protocol.storage.PlayerListStorage;
+import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.util.Map;
+import java.util.logging.Level;
 
 public class UnhandledPackets {
 
@@ -119,6 +123,16 @@ public class UnhandledPackets {
                 clientPlayer.sendAttribute("minecraft:health");
             }
         });
+        protocol.registerClientbound(ClientboundBedrockPackets.SYNC_ENTITY_PROPERTY, null, wrapper -> {
+            wrapper.cancel();
+            try {
+                final CompoundTag registry = wrapper.read(BedrockTypes.BIG_ENDIAN_NETWORK_COMPOUND_TAG);
+                EntityPropertyStorage.getOrCreate(wrapper.user()).register(registry);
+                PacketLeftoverLayout.discardUnreadInput(wrapper);
+            } catch (final RuntimeException exception) {
+                Via.getPlatform().getLogger().log(Level.WARNING, "Unable to parse MOT SYNC_ENTITY_PROPERTY", exception);
+            }
+        });
         protocol.cancelClientbound(ClientboundBedrockPackets.CAMERA); // Not relevant (Education Edition)
         protocol.cancelClientbound(ClientboundBedrockPackets.PHOTO_TRANSFER); // Not relevant (Education Edition)
         protocol.cancelClientbound(ClientboundBedrockPackets.SHOW_PROFILE);
@@ -170,7 +184,6 @@ public class UnhandledPackets {
         // Java has no trim palette / actor-property packets; cancel so leftover
         // bytes cannot abort the replayed join batch.
         protocol.cancelClientbound(ClientboundBedrockPackets.TRIM_DATA);
-        protocol.cancelClientbound(ClientboundBedrockPackets.SYNC_ENTITY_PROPERTY);
         // CameraInterface overwrites this when experimental features are on.
         protocol.cancelClientbound(ClientboundBedrockPackets.CAMERA_PRESETS);
         // MOT 860 has SetPlayerInventoryOptions (307) but Java has no inventory-layout

@@ -25,8 +25,10 @@ import net.raphimc.viabedrock.api.model.container.AnvilContainer;
 import net.raphimc.viabedrock.api.model.container.GenericContainer;
 import net.raphimc.viabedrock.api.model.container.TradeContainer;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
+import net.raphimc.viabedrock.experimental.model.inventory.BedrockRecipe;
 import net.raphimc.viabedrock.experimental.model.inventory.InventoryActionData;
 import net.raphimc.viabedrock.experimental.model.inventory.InventorySource;
+import net.raphimc.viabedrock.experimental.storage.RecipeRegistry;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventorySourceType;
@@ -282,6 +284,75 @@ class ItemStackRequestEncoderTest {
     }
 
     @Test
+    void netease860CreativeMiddleDragWritesOneCraftAndTakePairPerDestination() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final StubUserConnection user = new StubUserConnection(channel);
+            final InventoryTracker tracker = new InventoryTracker(user);
+            user.put(tracker);
+            final BedrockItem spawned = item(35, 64, 0);
+            final BedrockItem occupied = item(35, 8, 21);
+            tracker.getInventoryContainer().setItemSilent(9, occupied.copy());
+            final CreativeContentCache cache = new CreativeContentCache(user);
+            cache.replace(List.of(new CreativeContentCache.Entry(7, spawned.copy())));
+            user.put(cache);
+
+            final InventorySource creativeSource = new InventorySource(
+                    InventorySourceType.CreativeInventory, ContainerID.CONTAINER_ID_NONE.getValue(),
+                    InventorySource_InventorySourceFlags.NoFlag);
+            final InventorySource inventorySource = new InventorySource(
+                    InventorySourceType.ContainerInventory, ContainerID.CONTAINER_ID_INVENTORY.getValue(),
+                    InventorySource_InventorySourceFlags.NoFlag);
+            final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encode(List.of(
+                    new InventoryActionData(creativeSource, ItemStackRequestEncoder.CREATIVE_DRAG_MARKER_SLOT,
+                            BedrockItem.empty(), spawned.copy()),
+                    new InventoryActionData(inventorySource, 0, BedrockItem.empty(), spawned.copy()),
+                    new InventoryActionData(inventorySource, 9, occupied.copy(), spawned.copy())
+            ), tracker, true, 860);
+
+            assertFalse(encoded.unsupported());
+            final ByteBuf buffer = Unpooled.wrappedBuffer(encoded.payload());
+            try {
+                assertEquals(1, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                BedrockTypes.VAR_INT.read(buffer);
+                assertEquals(4, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                for (int i = 0; i < 2; i++) {
+                    assertEquals(ItemStackRequestActionType.CraftCreative.getValue(), buffer.readUnsignedByte());
+                    assertEquals(7, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                    assertEquals(1, buffer.readUnsignedByte());
+                    assertEquals(ItemStackRequestActionType.Take.getValue(), buffer.readUnsignedByte());
+                    assertEquals(64, buffer.readUnsignedByte());
+                    final ItemStackRequestLayout.DecodedSlotInfo source =
+                            ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                    assertEquals(ContainerEnumName.CreatedOutputContainer, source.container());
+                    assertEquals(50, source.slot());
+                    assertEquals(0, source.stackNetworkId());
+                    final ItemStackRequestLayout.DecodedSlotInfo destination =
+                            ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                    if (i == 0) {
+                        assertEquals(ContainerEnumName.HotbarContainer, destination.container());
+                        assertEquals(0, destination.slot());
+                        assertEquals(0, destination.stackNetworkId());
+                    } else {
+                        assertEquals(ContainerEnumName.InventoryContainer, destination.container());
+                        assertEquals(9, destination.slot());
+                        assertEquals(21, destination.stackNetworkId());
+                    }
+                }
+                final ItemStackRequestLayout.DecodedRequestTrailer trailer =
+                        ItemStackRequestLayout.readRequestTrailer(buffer, true, 860);
+                assertEquals(0, trailer.filterStringCount());
+                assertEquals(TextProcessingEventOrigin.BlockActorDataText.getValue(), trailer.textOrigin());
+                assertFalse(buffer.isReadable());
+            } finally {
+                buffer.release();
+            }
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
     void netease860CreativeReplaceOccupiedSlotDestroysThenTakes() {
         final BedrockItem existing = item(1, 16, 3);
         final BedrockItem spawned = item(35, 64, 0);
@@ -381,6 +452,73 @@ class ItemStackRequestEncoderTest {
                 assertEquals(1, trailer.filterStringCount());
                 assertEquals("Renamed", trailer.filterStrings()[0]);
                 assertEquals(TextProcessingEventOrigin.AnvilText.getValue(), trailer.textOrigin());
+                assertFalse(buffer.isReadable());
+            } finally {
+                buffer.release();
+            }
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void netease860AnvilQuickMoveWritesPerDestinationTakeDeltas() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final StubUserConnection user = new StubUserConnection(channel);
+            final InventoryTracker tracker = new InventoryTracker(user);
+            user.put(tracker);
+            final AnvilContainer anvil = new AnvilContainer(user, (byte) 1, null, new BlockPosition(0, 64, 0));
+            anvil.setItemSilent(0, item(12, 1, 7));
+            tracker.setCurrentContainer(anvil);
+            final BedrockItem result = item(12, 8, 0);
+            final BedrockItem occupied = item(12, 2, 21);
+            final InventorySource menuSource = new InventorySource(
+                    InventorySourceType.ContainerInventory, anvil.containerId(),
+                    InventorySource_InventorySourceFlags.NoFlag);
+            final InventorySource inventorySource = new InventorySource(
+                    InventorySourceType.ContainerInventory, ContainerID.CONTAINER_ID_INVENTORY.getValue(),
+                    InventorySource_InventorySourceFlags.NoFlag);
+            final List<InventoryActionData> actions = List.of(
+                    new InventoryActionData(new InventorySource(InventorySourceType.NonImplementedFeatureTODO,
+                            AnvilSimulator.TODO_ANVIL_RESULT, InventorySource_InventorySourceFlags.NoFlag),
+                            0, result, BedrockItem.empty()),
+                    new InventoryActionData(menuSource, 0, item(12, 1, 7), BedrockItem.empty()),
+                    new InventoryActionData(inventorySource, 0, BedrockItem.empty(), item(12, 3, 0)),
+                    new InventoryActionData(inventorySource, 9, occupied, item(12, 7, 0))
+            );
+            final ItemStackRequestEncoder.EncodedRequest encoded =
+                    ItemStackRequestEncoder.encodeAnvilApplyToDestinations(
+                            tracker, "", 1, 0, 8, actions, true, 860);
+            assertFalse(encoded.unsupported());
+            final ByteBuf buffer = Unpooled.wrappedBuffer(encoded.payload());
+            try {
+                BedrockTypes.UNSIGNED_VAR_INT.read(buffer);
+                BedrockTypes.VAR_INT.read(buffer);
+                assertEquals(4, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                assertEquals(ItemStackRequestActionType.CraftRecipeOptional.getValue(), buffer.readUnsignedByte());
+                BedrockTypes.UNSIGNED_VAR_INT.read(buffer);
+                assertEquals(-1, buffer.readIntLE());
+                assertEquals(ItemStackRequestActionType.Consume.getValue(), buffer.readUnsignedByte());
+                assertEquals(1, buffer.readUnsignedByte());
+                ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ItemStackRequestActionType.Take.getValue(), buffer.readUnsignedByte());
+                assertEquals(3, buffer.readUnsignedByte());
+                ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                final ItemStackRequestLayout.DecodedSlotInfo first =
+                        ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ContainerEnumName.HotbarContainer, first.container());
+                assertEquals(0, first.slot());
+                assertEquals(0, first.stackNetworkId());
+                assertEquals(ItemStackRequestActionType.Take.getValue(), buffer.readUnsignedByte());
+                assertEquals(5, buffer.readUnsignedByte());
+                ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                final ItemStackRequestLayout.DecodedSlotInfo second =
+                        ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                assertEquals(ContainerEnumName.InventoryContainer, second.container());
+                assertEquals(9, second.slot());
+                assertEquals(21, second.stackNetworkId());
+                ItemStackRequestLayout.readRequestTrailer(buffer, true, 860);
                 assertFalse(buffer.isReadable());
             } finally {
                 buffer.release();
@@ -785,6 +923,76 @@ class ItemStackRequestEncoderTest {
                 assertEquals(ContainerEnumName.BeaconPaymentContainer, payment.container());
                 assertEquals(0, payment.slot());
                 assertEquals(7, payment.stackNetworkId());
+            } finally {
+                buffer.release();
+            }
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void netease860RepeatedCraftEncodesCraftRecipeAutoWithDefaultDescriptors() {
+        final EmbeddedChannel channel = new EmbeddedChannel();
+        try {
+            final StubUserConnection user = new StubUserConnection(channel);
+            final InventoryTracker tracker = new InventoryTracker(user);
+            user.put(tracker);
+            final RecipeRegistry recipes = new RecipeRegistry(user);
+            user.put(recipes);
+            tracker.getHudContainer().setItemSilent(28, item(12, 8, 4));
+            recipes.addRecipe(new BedrockRecipe(
+                    "test:sticks",
+                    BedrockRecipe.RecipeType.SHAPELESS,
+                    0,
+                    0,
+                    List.of(new BedrockRecipe.RecipeIngredient(12, BedrockRecipe.RecipeIngredient.ANY_DAMAGE, 1)),
+                    item(35, 1, 0),
+                    List.of(),
+                    "crafting_table",
+                    0,
+                    42,
+                    false
+            ));
+
+            final List<InventoryActionData> actions = CraftingSimulator.simulateCraftQuickMove(false, tracker, ignored -> 64);
+            final ItemStackRequestEncoder.EncodedRequest encoded = ItemStackRequestEncoder.encode(actions, tracker, true, 860);
+            assertFalse(encoded.unsupported());
+            final ByteBuf buffer = Unpooled.wrappedBuffer(encoded.payload());
+            try {
+                assertEquals(1, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                BedrockTypes.VAR_INT.read(buffer);
+                final int actionCount = BedrockTypes.UNSIGNED_VAR_INT.read(buffer);
+                assertTrue(actionCount >= 1);
+                boolean sawAuto = false;
+                for (int i = 0; i < actionCount; i++) {
+                    final int type = buffer.readUnsignedByte();
+                    if (type == ItemStackRequestActionType.CraftRecipeAuto.getValue()) {
+                        assertEquals(42, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
+                        assertEquals(8, buffer.readUnsignedByte());
+                        assertEquals(8, buffer.readUnsignedByte());
+                        assertEquals(1, buffer.readUnsignedByte());
+                        assertEquals(1, buffer.readUnsignedByte());
+                        assertEquals(12, buffer.readShortLE());
+                        assertEquals(0, buffer.readShortLE());
+                        assertEquals(8, (int) BedrockTypes.VAR_INT.read(buffer));
+                        sawAuto = true;
+                        break;
+                    }
+                    if (type == ItemStackRequestActionType.Consume.getValue()) {
+                        buffer.readUnsignedByte();
+                        ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                        continue;
+                    }
+                    if (type == ItemStackRequestActionType.Take.getValue() || type == ItemStackRequestActionType.Place.getValue()) {
+                        buffer.readUnsignedByte();
+                        ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                        ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
+                        continue;
+                    }
+                    throw new AssertionError("Unexpected action type " + type);
+                }
+                assertTrue(sawAuto);
             } finally {
                 buffer.release();
             }
