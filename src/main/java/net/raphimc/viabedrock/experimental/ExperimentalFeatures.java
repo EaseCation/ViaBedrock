@@ -1377,26 +1377,21 @@ public class ExperimentalFeatures {
         if (snapshot == null) {
             return false;
         }
-        if (clientPlayer.isOffhandPromoted()) {
-            return ItemUseSemantics.matchesUseItem(
-                            ViaBedrock.getConfig().shouldEmulateNetEaseClient(),
-                            snapshot.item().identifier(),
-                            snapshot.item().data(),
-                            snapshot.item().blockRuntimeId(),
-                            snapshot.item().tag(),
-                            handContext.item() == null ? null : handContext.item().identifier(),
-                            handContext.item() == null ? null : handContext.item().data(),
-                            handContext.item() == null ? null : handContext.item().blockRuntimeId(),
-                            handContext.item() == null ? null : handContext.item().tag());
+        // Check slot first
+        if (snapshot.hand() != handContext.hand()
+                || snapshot.containerId() != handContext.containerId()
+                || snapshot.containerSlot() != handContext.containerSlot()
+                || snapshot.transactionHotbarSlot() != handContext.transactionHotbarSlot()) {
+            return false;
         }
-        return snapshot.matches(
-                handContext.hand(),
-                handContext.containerId(),
-                handContext.containerSlot(),
-                handContext.transactionHotbarSlot(),
-                handContext.item(),
-                ViaBedrock.getConfig().shouldEmulateNetEaseClient()
-        );
+        
+        // Current item must exist
+        if (handContext.item() == null || handContext.item().isEmpty()) {
+            return false;
+        }
+        
+        // Only compare numeric item ID - allow data/NBT changes from server resyncs
+        return snapshot.item().identifier() == handContext.item().identifier();
     }
 
     private static void syncJavaUsingItem(final UserConnection user, final ClientPlayerEntity clientPlayer) {
