@@ -1645,7 +1645,7 @@ public class ExperimentalFeatures {
                     inventoryTracker,
                     clientPlayer.isOffhandPromoted() ? InteractionHand.MAIN_HAND : clientPlayer.usingItemHand());
             final BedrockItem selectedItem = handContext.item();
-            if (!matchesUseItem(handContext, clientPlayer) || !isContinuousUseItem(itemRewriter, selectedItem)) {
+            if (!matchesUseItem(handContext, clientPlayer)) {
                 cancelUsingItem(wrapper.user(), wrapper.user().get(InventoryTransactionRewriter.class), clientPlayer);
                 return;
             }
