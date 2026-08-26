@@ -633,7 +633,7 @@ public class ClientPlayerEntity extends PlayerEntity {
         }
         this.usingItem = usingItem;
         this.usingItemStartAge = -1;
-        this.itemUseSnapshot = null;
+        // Don't clear snapshot in setUsingItem(false) - keep it for validation
         this.crossbowChargeFinishSent = false;
         this.consumableFinishSent = false;
         this.shieldSneakEmulated = false;
@@ -1083,3 +1083,4 @@ public class ClientPlayerEntity extends PlayerEntity {
     }
 
 }
+
