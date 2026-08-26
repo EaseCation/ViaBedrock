@@ -88,6 +88,18 @@ class RidingTrackerTest {
     }
 
     @Test
+    void predictedBoatWithoutMoveVehicleKeepsMotNetworkY() {
+        final Position3f motNetworkBoat = new Position3f(10F, 64.375F, -3F);
+        final Position3f auth = RidingTracker.predictedBoatAuthInputFromVehicle(motNetworkBoat, 0.375F);
+        assertEquals(10F, auth.x());
+        assertEquals(64.375F, auth.y(), 1.0e-6F);
+        assertEquals(-3F, auth.z());
+        assertEquals(motNetworkBoat.y(), auth.y(), 1.0e-6F);
+        assertTrue(Math.abs(auth.y() - (motNetworkBoat.y() + 1.62F)) > 1.0F,
+                "player eye fallback would lift the boat ~1.245 on the first mount tick");
+    }
+
+    @Test
     void doesNotForwardInputFromNonControllingPassengers() {
         assertEquals(PASSENGER_ONLY, RidingTracker.localRidingMode(EntityTypes1_21_11.MINECART, false));
     }

@@ -416,8 +416,15 @@ public class RidingTracker extends StoredObject {
     }
 
     private Position3f authInputPosition(final Entity vehicle, final ClientPlayerEntity clientPlayer, final LocalRidingMode mode) {
-        if (mode == LocalRidingMode.BOAT_PREDICTED && this.lastMoveVehicleInputFresh && this.lastMoveVehicleInput != null) {
-            return predictedBoatAuthInputPosition(this.lastMoveVehicleInput.position(), vehicle.eyeOffset());
+        if (mode == LocalRidingMode.BOAT_PREDICTED) {
+            // Java MOVE_VEHICLE Y is the boat foot. MOT predicted-boat SAI is the boat network Y
+            // (EntityBoat.getBaseOffset() = 0.375) and onInput subtracts that offset. The first
+            // tick after mounting often has no fresh MOVE_VEHICLE yet; falling through to
+            // player eye 1.62 lifts the boat ~1.245 and looks like flying in place.
+            if (this.lastMoveVehicleInputFresh && this.lastMoveVehicleInput != null) {
+                return predictedBoatAuthInputPosition(this.lastMoveVehicleInput.position(), vehicle.eyeOffset());
+            }
+            return predictedBoatAuthInputFromVehicle(vehicle.position(), vehicle.eyeOffset());
         }
 
         final Position3f vehiclePosition = vehicle.position();
@@ -460,6 +467,22 @@ public class RidingTracker extends StoredObject {
                 javaVehiclePosition.x(),
                 javaVehiclePosition.y() + vehicleEyeOffset,
                 javaVehiclePosition.z());
+    }
+
+    /**
+     * MOT ADD/MOVE already stores the boat network Y (foot + {@code getBaseOffset()}). Convert
+     * that tracker position back to the Java boat foot so the no-{@code MOVE_VEHICLE} path uses
+     * the same SAI as a later predicted input.
+     */
+    static Position3f predictedBoatJavaFoot(final Position3f vehicleNetworkPosition, final float vehicleEyeOffset) {
+        return new Position3f(
+                vehicleNetworkPosition.x(),
+                vehicleNetworkPosition.y() - vehicleEyeOffset,
+                vehicleNetworkPosition.z());
+    }
+
+    static Position3f predictedBoatAuthInputFromVehicle(final Position3f vehicleNetworkPosition, final float vehicleEyeOffset) {
+        return predictedBoatAuthInputPosition(predictedBoatJavaFoot(vehicleNetworkPosition, vehicleEyeOffset), vehicleEyeOffset);
     }
 
     private Position3f safeDismountPosition(final Entity vehicle, final ClientPlayerEntity clientPlayer, final LocalRidingMode mode, final Position3f authInputPosition) {

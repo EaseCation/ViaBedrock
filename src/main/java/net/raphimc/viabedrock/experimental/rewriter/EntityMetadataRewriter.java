@@ -19,6 +19,7 @@ package net.raphimc.viabedrock.experimental.rewriter;
 
 import com.viaversion.nbt.tag.CompoundTag;
 import com.viaversion.viaversion.api.connection.UserConnection;
+import com.viaversion.viaversion.api.minecraft.BlockPosition;
 import com.viaversion.viaversion.api.minecraft.EulerAngle;
 import com.viaversion.viaversion.api.minecraft.Particle;
 import com.viaversion.viaversion.api.minecraft.VillagerData;
@@ -77,13 +78,12 @@ public class EntityMetadataRewriter {
 
                 upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SHARED_FLAGS), VersionedTypes.V26_1.entityDataTypes().byteType, javaBitMask));
 
-                // Bedrock only exposes sneaking as an actor flag, but the Java client derives a player's
-                // *visual* crouch from the POSE entity data (Pose.CROUCHING), not the sharedflags sneaking
-                // bit (that bit only affects eye height / nameplate). Without setting POSE, remote Bedrock
-                // players never visually crouch on the Java side. Toggle the pose for players accordingly.
+                // Java players need POSE plus SLEEPING_POS. MOT sleep is PLAYER_FLAGS bit 1
+                // (DATA_PLAYER_FLAG_SLEEP) and BED_POSITION, not ActorFlags.SNEAKING. Leaving
+                // pose as standing/crouch makes the Java client skip the lie-down animation even
+                // when MOT already accepted the bed and skipped the night.
                 if (entity.javaType().is(EntityTypes1_21_11.PLAYER)) {
-                    final int javaPose = bedrockFlags.contains(ActorFlags.SNEAKING) ? 5 : 0; // Pose.CROUCHING : Pose.STANDING
-                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.POSE), VersionedTypes.V26_1.entityDataTypes().poseType, javaPose));
+                    applyPlayerSleepPose(entity, javaEntityData, bedrockFlags);
                 }
 
                 upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SILENT), VersionedTypes.V26_1.entityDataTypes().booleanType, bedrockFlags.contains(ActorFlags.SILENT)));
@@ -777,6 +777,15 @@ public class EntityMetadataRewriter {
                 }
             }
             case AGENT, BALLOON_ANCHOR -> {} // Education edition only, ignore
+            case PLAYER_FLAGS, BED_POSITION, ENTER_BED_POSITION -> {
+                // MOT sleepOn() writes PLAYER_FLAGS + BED_POSITION together; either field can
+                // arrive first. Recompute pose and SLEEPING_POS from the stored pair so Java
+                // always sees both or neither.
+                if (!entity.javaType().is(EntityTypes1_21_11.PLAYER)) {
+                    return false;
+                }
+                applyPlayerSleepPose(entity, javaEntityData, entity.entityFlags());
+            }
             case ROW_TIME_LEFT, ROW_TIME_RIGHT -> {
                 if (!entity.javaType().isOrHasParent(EntityTypes1_21_11.ABSTRACT_BOAT)) {
                     return false;
@@ -1078,6 +1087,70 @@ public class EntityMetadataRewriter {
     }
 
     record CreakingStateFlags(boolean active, boolean tearingDown) {
+    }
+
+    /**
+     * MOT {@code DATA_PLAYER_FLAG_SLEEP} is bit 1 of {@code PLAYER_FLAGS} (byte). Java Pose ids
+     * match 1.14+: STANDING=0 SLEEPING=2 SWIMMING=3 FALL_FLYING=4 CROUCHING=5.
+     */
+    static final int JAVA_POSE_STANDING = 0;
+    static final int JAVA_POSE_SLEEPING = 2;
+    static final int JAVA_POSE_SWIMMING = 3;
+    static final int JAVA_POSE_FALL_FLYING = 4;
+    static final int JAVA_POSE_CROUCHING = 5;
+    static final int PLAYER_FLAG_SLEEP_BIT = 1;
+
+    static boolean playerSleeping(final EntityData playerFlags) {
+        if (playerFlags == null) {
+            return false;
+        }
+        return (readNumber(playerFlags).intValue() & (1 << PLAYER_FLAG_SLEEP_BIT)) != 0;
+    }
+
+    static BlockPosition playerBedPosition(final EntityData bedPosition) {
+        if (bedPosition == null || bedPosition.getValue() == null) {
+            return null;
+        }
+        if (bedPosition.getValue() instanceof BlockPosition position) {
+            if (position.x() == 0 && position.y() == 0 && position.z() == 0) {
+                return null;
+            }
+            return position;
+        }
+        return null;
+    }
+
+    static int javaPlayerPose(final boolean sleeping, final Set<ActorFlags> bedrockFlags) {
+        if (sleeping) {
+            return JAVA_POSE_SLEEPING;
+        }
+        if (bedrockFlags.contains(ActorFlags.GLIDING)) {
+            return JAVA_POSE_FALL_FLYING;
+        }
+        if (bedrockFlags.contains(ActorFlags.SWIMMING)) {
+            return JAVA_POSE_SWIMMING;
+        }
+        if (bedrockFlags.contains(ActorFlags.SNEAKING)) {
+            return JAVA_POSE_CROUCHING;
+        }
+        return JAVA_POSE_STANDING;
+    }
+
+    private static void applyPlayerSleepPose(final Entity entity, final List<EntityData> javaEntityData, final Set<ActorFlags> bedrockFlags) {
+        final boolean sleeping = playerSleeping(entity.entityData().get(ActorDataIDs.PLAYER_FLAGS));
+        EntityData bedData = entity.entityData().get(ActorDataIDs.BED_POSITION);
+        if (bedData == null) {
+            bedData = entity.entityData().get(ActorDataIDs.ENTER_BED_POSITION);
+        }
+        final BlockPosition bedPosition = sleeping ? playerBedPosition(bedData) : null;
+        upsert(javaEntityData, new EntityData(
+                entity.getJavaEntityDataIndex(EntityDataFields.POSE),
+                VersionedTypes.V26_1.entityDataTypes().poseType,
+                javaPlayerPose(sleeping, bedrockFlags)));
+        upsert(javaEntityData, new EntityData(
+                entity.getJavaEntityDataIndex(EntityDataFields.SLEEPING_POS),
+                VersionedTypes.V26_1.entityDataTypes().optionalBlockPositionType,
+                bedPosition));
     }
 
     static boolean noGravity(final EntityTypes1_21_11 type, final Set<ActorFlags> bedrockFlags) {

@@ -9,15 +9,20 @@
  */
 package net.raphimc.viabedrock.experimental.rewriter;
 
+import com.viaversion.viaversion.api.minecraft.BlockPosition;
 import com.viaversion.viaversion.api.minecraft.entities.EntityTypes1_21_11;
+import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
+import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorDataIDs;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorFlags;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand;
+import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
 import org.junit.jupiter.api.Test;
 
 import java.util.EnumSet;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class EntityMetadataRewriterTest {
@@ -168,5 +173,29 @@ class EntityMetadataRewriterTest {
                 EntityTypes1_21_11.ARMOR_STAND, EnumSet.noneOf(ActorFlags.class)));
         assertFalse(EntityMetadataRewriter.noGravity(
                 EntityTypes1_21_11.ARMOR_STAND, EnumSet.of(ActorFlags.HAS_GRAVITY)));
+    }
+
+    @Test
+    void mapsMotPlayerSleepFlagToJavaSleepingPose() {
+        final EntityData flags = new EntityData(ActorDataIDs.PLAYER_FLAGS.getValue(), EntityDataTypesBedrock.BYTE, (byte) (1 << 1));
+        assertTrue(EntityMetadataRewriter.playerSleeping(flags));
+        assertEquals(EntityMetadataRewriter.JAVA_POSE_SLEEPING, EntityMetadataRewriter.javaPlayerPose(true, EnumSet.noneOf(ActorFlags.class)));
+        assertEquals(EntityMetadataRewriter.JAVA_POSE_SLEEPING, EntityMetadataRewriter.javaPlayerPose(true, EnumSet.of(ActorFlags.SNEAKING)));
+        assertEquals(EntityMetadataRewriter.JAVA_POSE_CROUCHING, EntityMetadataRewriter.javaPlayerPose(false, EnumSet.of(ActorFlags.SNEAKING)));
+        assertEquals(EntityMetadataRewriter.JAVA_POSE_STANDING, EntityMetadataRewriter.javaPlayerPose(false, EnumSet.noneOf(ActorFlags.class)));
+        assertEquals(EntityMetadataRewriter.JAVA_POSE_SWIMMING, EntityMetadataRewriter.javaPlayerPose(false, EnumSet.of(ActorFlags.SWIMMING)));
+        assertEquals(EntityMetadataRewriter.JAVA_POSE_FALL_FLYING, EntityMetadataRewriter.javaPlayerPose(false, EnumSet.of(ActorFlags.GLIDING)));
+        assertFalse(EntityMetadataRewriter.playerSleeping(new EntityData(ActorDataIDs.PLAYER_FLAGS.getValue(), EntityDataTypesBedrock.BYTE, (byte) 0)));
+        assertFalse(EntityMetadataRewriter.playerSleeping(null));
+    }
+
+    @Test
+    void mapsMotBedPositionToJavaSleepingPosAndIgnoresUnsetOrigin() {
+        final BlockPosition bed = new BlockPosition(12, 64, -8);
+        final EntityData bedData = new EntityData(ActorDataIDs.BED_POSITION.getValue(), EntityDataTypesBedrock.BLOCK_POSITION, bed);
+        assertEquals(bed, EntityMetadataRewriter.playerBedPosition(bedData));
+        assertNull(EntityMetadataRewriter.playerBedPosition(new EntityData(
+                ActorDataIDs.BED_POSITION.getValue(), EntityDataTypesBedrock.BLOCK_POSITION, new BlockPosition(0, 0, 0))));
+        assertNull(EntityMetadataRewriter.playerBedPosition(null));
     }
 }
