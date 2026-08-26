@@ -152,11 +152,18 @@ class ItemUseSemanticsTest {
         assertTrue(ItemUseSemantics.ignoreJavaConsumableRelease(true, true));
         assertFalse(ItemUseSemantics.ignoreJavaConsumableRelease(false, true));
         assertFalse(ItemUseSemantics.ignoreJavaConsumableRelease(true, false));
-        assertFalse(ItemUseSemantics.ignoreJavaConsumableRelease(true, true, false),
-                "early Java release is an interrupt and must unlock the hotbar");
+        assertTrue(ItemUseSemantics.ignoreJavaConsumableRelease(true, true, false, 0),
+                "1-tick Java RELEASE_USE_ITEM while chewing must not abort MOT auto-complete");
+        assertTrue(ItemUseSemantics.ignoreJavaConsumableRelease(false, true, false, 1));
+        assertFalse(ItemUseSemantics.ignoreJavaConsumableRelease(true, true, false, 2),
+                "a later empty-hand release is still an interrupt");
         assertTrue(ItemUseSemantics.ignoreJavaConsumableRelease(true, true, true));
         assertFalse(ItemUseSemantics.ignoreJavaConsumableRelease(true, false, true));
         assertFalse(ItemUseSemantics.ignoreJavaConsumableRelease(false, true, true));
+        assertFalse(ItemUseSemantics.sendCancelRelease(true, true, 0));
+        assertFalse(ItemUseSemantics.sendCancelRelease(false, true, 1));
+        assertTrue(ItemUseSemantics.sendCancelRelease(true, true, 2));
+        assertTrue(ItemUseSemantics.sendCancelRelease(true, false, 0));
         assertTrue(ItemUseSemantics.suppressStartSprintingWhileUsingItem(true, true));
         assertFalse(ItemUseSemantics.suppressStartSprintingWhileUsingItem(false, true));
         assertFalse(ItemUseSemantics.suppressStartSprintingWhileUsingItem(true, false));
@@ -188,9 +195,11 @@ class ItemUseSemanticsTest {
         assertTrue(ItemUseSemantics.sendPredictedClickBlockSlotDelta(false));
         assertTrue(ItemUseSemantics.skipClickBlockWhileUsing(true, true));
         assertFalse(ItemUseSemantics.skipClickBlockWhileUsing(true, false));
-        assertFalse(ItemUseSemantics.skipClickBlockWhileUsing(false, true));
+        assertTrue(ItemUseSemantics.skipClickBlockWhileUsing(false, true),
+                "Java USE_ITEM_ON while chewing must not become MOT CLICK_BLOCK even without NetEase emulation");
         assertFalse(ItemUseSemantics.skipClickBlockWhileUsing(true, true, true));
         assertTrue(ItemUseSemantics.skipClickBlockWhileUsing(true, true, false));
+        assertTrue(ItemUseSemantics.skipClickBlockWhileUsing(false, true, false));
         assertTrue(ItemUseSemantics.needsStandaloneUseTransaction(true, false, false, false, true));
         assertFalse(ItemUseSemantics.needsStandaloneUseTransaction(false, false, false, false, true));
         assertFalse(ItemUseSemantics.needsStandaloneUseTransaction(true, false, false, false, false));
@@ -250,7 +259,9 @@ class ItemUseSemanticsTest {
         assertFalse(ItemUseSemantics.chargedCrossbowUsesMotTag(true, false, true));
         assertTrue(ItemUseSemantics.chargedCrossbowUsesMotTag(false, false, true));
         assertTrue(ItemUseSemantics.matchesUseItem(true, 1, (short) 0, 9, "a", 1, (short) 0, 8, "b"));
-        assertFalse(ItemUseSemantics.matchesUseItem(false, 1, (short) 0, 9, "a", 1, (short) 0, 8, "b"));
+        assertTrue(ItemUseSemantics.matchesUseItem(false, 1, (short) 0, 9, "a", 1, (short) 0, 8, "b"),
+                "enchanted golden apple NBT/blockRuntimeId must not abort eating");
+        assertFalse(ItemUseSemantics.matchesUseItem(true, 1, (short) 0, 9, "a", 2, (short) 0, 9, "a"));
         assertEquals(82, ItemUseSemantics.riptideDurationTicks(1));
         assertEquals(114, ItemUseSemantics.riptideDurationTicks(2));
         assertEquals(146, ItemUseSemantics.riptideDurationTicks(3));

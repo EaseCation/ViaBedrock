@@ -168,7 +168,8 @@ public final class ItemUseSemantics {
     /**
      * MOT CLICK_AIR compares the held stack with {@code equalsFast} (id+data only).
      * A later INVENTORY_SLOT rewrite that only changes NBT/netId/blockRuntimeId must
-     * not cancel an in-progress eat/draw on NetEase.
+     * not cancel an in-progress eat/draw. Enchanted golden apples always carry NBT,
+     * so even official matching has to ignore tag/blockRuntimeId once using started.
      */
     public static boolean matchesUseItem(final boolean emulateNetEase, final int snapshotId, final short snapshotData,
                                   final int snapshotBlockRuntimeId, final Object snapshotTag,
@@ -177,13 +178,7 @@ public final class ItemUseSemantics {
         if (currentId == null || currentData == null) {
             return false;
         }
-        if (emulateNetEase) {
-            return snapshotId == currentId && snapshotData == currentData;
-        }
-        return snapshotId == currentId
-                && snapshotData == currentData
-                && snapshotBlockRuntimeId == (currentBlockRuntimeId == null ? 0 : currentBlockRuntimeId)
-                && java.util.Objects.equals(snapshotTag, currentTag);
+        return snapshotId == currentId && snapshotData == currentData;
     }
 
     /**
@@ -483,9 +478,11 @@ public final class ItemUseSemantics {
      * MOT USE_ITEM CLICK_BLOCK ({@code actionType=0}) always calls
      * {@code setUsingItem(false)} before {@code Level.useItemOn}. Java Fabric
      * keeps sending USE_ITEM_ON at the crosshair while chewing/drawing; a
-     * CLICK_BLOCK would cancel MOT auto-complete even after 28/29 are skipped.
-     * Shield-block is sneak-emulated, not MOT using-item, so those clicks must
-     * still reach chests/buttons. Official 975 still places through CLICK_BLOCK.
+     * CLICK_BLOCK would cancel MOT auto-complete after 1 tick. Shield-block is
+     * sneak-emulated, not MOT using-item, so those clicks must still reach
+     * chests/buttons. Do this whenever the proxy is already using, not only when
+     * NetEase emulation is on: production logs showed {@code false -> true} then
+     * a silent {@code true -> false} on the next tick with no CLICK_AIR finish.
      * Ref: MOT Player.java case 2 / actionType 0.
      */
     static boolean skipClickBlockWhileUsing(final boolean emulateNetEase, final boolean usingItem) {
@@ -494,7 +491,7 @@ public final class ItemUseSemantics {
 
     static boolean skipClickBlockWhileUsing(final boolean emulateNetEase, final boolean usingItem,
                                             final boolean shieldSneakEmulated) {
-        return emulateNetEase && usingItem && !shieldSneakEmulated;
+        return usingItem && !shieldSneakEmulated;
     }
 
     /**
@@ -561,7 +558,36 @@ public final class ItemUseSemantics {
 
     static boolean ignoreJavaConsumableRelease(final boolean emulateNetEase, final boolean consumable,
                                                final boolean durationReady) {
-        return emulateNetEase && consumable && durationReady;
+        return ignoreJavaConsumableRelease(emulateNetEase, consumable, durationReady, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Java can emit {@code RELEASE_USE_ITEM} on the tick after USE_ITEM when the
+     * crosshair is on a block. MOT {@code TYPE_RELEASE_ITEM} finally always cleared
+     * using. Swallow that 1-tick interrupt; a later empty-hand / duration-ready
+     * finish still goes through.
+     */
+    static boolean ignoreJavaConsumableRelease(final boolean emulateNetEase, final boolean consumable,
+                                               final boolean durationReady, final int usingTicks) {
+        if (!consumable) {
+            return false;
+        }
+        if (usingTicks < 2) {
+            return true;
+        }
+        return emulateNetEase && durationReady;
+    }
+
+    /**
+     * Snapshot NBT / blockRuntimeId mismatch on CLIENT_TICK_END used to send
+     * ItemRelease and abort MOT auto-complete. Keep local using for the first
+     * ticks; a real hotbar change still fails {@code matchesUseItem} id+data.
+     */
+    static boolean sendCancelRelease(final boolean emulateNetEase, final boolean consumable, final int usingTicks) {
+        if (consumable && usingTicks < 2) {
+            return false;
+        }
+        return true;
     }
 
     static boolean consumableConsumedByServer(final int startedId, final int startedAmount,

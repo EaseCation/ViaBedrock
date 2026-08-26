@@ -1428,8 +1428,13 @@ public class ExperimentalFeatures {
 
     private static void cancelUsingItem(final UserConnection user, final InventoryTransactionRewriter inventoryTransactionRewriter, final ClientPlayerEntity clientPlayer) {
         final ItemUseSnapshot snapshot = clientPlayer.itemUseSnapshot();
+        final ItemRewriter itemRewriter = user.get(ItemRewriter.class);
         if (snapshot != null
-                && !ItemUseSemantics.emulateShieldAsSneak(ViaBedrock.getConfig().shouldEmulateNetEaseClient(), ItemUseSemantics.isShield(user.get(ItemRewriter.class).bedrockIdentifier(snapshot.item())))) {
+                && !ItemUseSemantics.emulateShieldAsSneak(ViaBedrock.getConfig().shouldEmulateNetEaseClient(), ItemUseSemantics.isShield(itemRewriter.bedrockIdentifier(snapshot.item())))
+                && ItemUseSemantics.sendCancelRelease(
+                        ViaBedrock.getConfig().shouldEmulateNetEaseClient(),
+                        isConsumableUseItem(itemRewriter, snapshot.item()),
+                        clientPlayer.usingItemTicks())) {
             sendReleaseItemTransaction(user, inventoryTransactionRewriter, createReleaseItemSnapshot(snapshot, clientPlayer), ItemReleaseInventoryTransaction_ActionType.Release);
         }
         stopUsingItem(user, clientPlayer);
@@ -1607,7 +1612,8 @@ public class ExperimentalFeatures {
                 if (ItemUseSemantics.ignoreJavaConsumableRelease(
                         ViaBedrock.getConfig().shouldEmulateNetEaseClient(),
                         isConsumableUseItem(wrapper.user().get(ItemRewriter.class), selectedItem),
-                        releaseAction == ItemReleaseInventoryTransaction_ActionType.Use)) {
+                        releaseAction == ItemReleaseInventoryTransaction_ActionType.Use,
+                        clientPlayer.usingItemTicks())) {
                     return;
                 }
                 if (ItemUseSemantics.emulateShieldAsSneak(ViaBedrock.getConfig().shouldEmulateNetEaseClient(), isShield(wrapper.user().get(ItemRewriter.class), selectedItem))) {
