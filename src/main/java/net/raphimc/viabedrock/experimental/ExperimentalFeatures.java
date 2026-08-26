@@ -1640,6 +1640,10 @@ public class ExperimentalFeatures {
                 return;
             }
 
+            // Keep sending START_USING_ITEM every tick while using item
+            // This mirrors official Bedrock client behavior
+            clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StartUsingItem);
+
             final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
             final ItemUseHandContext handContext = ItemUseHandContext.resolve(
                     inventoryTracker,
@@ -2183,5 +2187,6 @@ public class ExperimentalFeatures {
         }
     }
 }
+
 
 
