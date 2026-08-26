@@ -70,10 +70,20 @@ import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
 
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.logging.Level;
 
 public class WorldEffectPackets {
+
+    static final long WORLD_PARTICLE_ENTITY_ID = -1L;
+
+    enum ParticleRoute {
+        JAVA,
+        VBU_V2,
+        VBU_LEGACY,
+        DROP
+    }
 
     // Only log warnings about missing mappings if explicitly enabled for debugging
     // The Bedrock Dedicated Server sends a lot of unknown sound events which are expected to be ignored in most cases (Resource packs could add custom sounds for certain events)
@@ -98,17 +108,17 @@ public class WorldEffectPackets {
 
             final BedrockMappingData.JavaSound javaSound = BedrockProtocol.MAPPINGS.getBedrockToJavaSounds().get(name);
             final Position3f sourcePosition = new Position3f(position.x() / 8F, position.y() / 8F, position.z() / 8F);
-            if (javaSound == null) {
-                // Try custom sound from resource pack
-                final Holder<SoundEvent> customHolder = tryResolveCustomSound(wrapper.user(), name);
-                if (customHolder == null) {
-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown bedrock sound: " + name);
-                    wrapper.cancel();
-                    return;
-                }
+            // Resource-pack definitions override vanilla mappings, matching Bedrock pack priority.
+            final Holder<SoundEvent> customHolder = tryResolveCustomSound(wrapper.user(), name);
+            if (customHolder != null) {
                 final SoundSource category = getSoundCategory(wrapper.user(), name, SoundSource.MASTER);
                 writeProjectedSound(wrapper, customHolder, category, name, "bedrock:" + name,
                         sourcePosition, volume, pitch, false, true);
+                return;
+            }
+            if (javaSound == null) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown bedrock sound: " + name);
+                wrapper.cancel();
                 return;
             }
 
@@ -125,16 +135,15 @@ public class WorldEffectPackets {
                 wrapper.write(Types.BYTE, (byte) 0); // flags
             } else {
                 final BedrockMappingData.JavaSound javaSound = BedrockProtocol.MAPPINGS.getBedrockToJavaSounds().get(name);
-                if (javaSound == null) {
-                    // Try custom sound from resource pack
-                    final Holder<SoundEvent> customHolder = tryResolveCustomSound(wrapper.user(), name);
-                    if (customHolder == null) {
-                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown bedrock sound: " + name);
-                        wrapper.cancel();
-                        return;
-                    }
+                final Holder<SoundEvent> customHolder = tryResolveCustomSound(wrapper.user(), name);
+                if (customHolder != null) {
                     wrapper.write(Types.BYTE, (byte) 2); // flags
                     wrapper.write(Types.STRING, "bedrock:" + name); // sound identifier
+                    return;
+                }
+                if (javaSound == null) {
+                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown bedrock sound: " + name);
+                    wrapper.cancel();
                     return;
                 }
 
@@ -148,7 +157,7 @@ public class WorldEffectPackets {
                 wrapper.cancel();
                 return;
             }
-            wrapper.read(BedrockTypes.VAR_LONG); // entity unique id
+            final long entityUniqueId = wrapper.read(BedrockTypes.VAR_LONG); // entity unique id
             final Position3f position = wrapper.read(BedrockTypes.POSITION_3F); // position
             final String effectIdentifier = wrapper.read(BedrockTypes.STRING); // effect name
             final String molangVarsJson;
@@ -161,15 +170,39 @@ public class WorldEffectPackets {
             ViaBedrock.getPlatform().getLogger().log(Level.FINE, "[Particle:L1] SpawnParticleEffect received: " + effectIdentifier + " at (" + position.x() + ", " + position.y() + ", " + position.z() + ") molang=" + (molangVarsJson != null));
 
             final BedrockMappingData.JavaParticle javaParticle = BedrockProtocol.MAPPINGS.getBedrockToJavaParticles().get(effectIdentifier);
-            if (javaParticle == null) {
-                // Try forwarding to VBU for custom particle rendering
-                final ChannelStorage channelStorage = wrapper.user().get(ChannelStorage.class);
-                if (channelStorage != null && channelStorage.hasChannel(ViaBedrockUtilityInterface.CONFIRM_CHANNEL)) {
-                    ViaBedrock.getPlatform().getLogger().log(Level.FINE, "[Particle:L1] No Java mapping, forwarding to VBU: " + effectIdentifier);
-                    ViaBedrockUtilityInterface.spawnParticle(wrapper.user(), effectIdentifier, position.x(), position.y(), position.z(), molangVarsJson);
+            final ChannelStorage channelStorage = wrapper.user().get(ChannelStorage.class);
+            // Keep stable Java projections first; V2 handles effects that Java cannot represent.
+            final ParticleRoute route = selectParticleRoute(
+                    javaParticle != null,
+                    channelStorage != null && channelStorage.hasChannel(ViaBedrockUtilityInterface.PARTICLE_RUNTIME_V2_CAPABILITY),
+                    channelStorage != null && channelStorage.hasChannel(ViaBedrockUtilityInterface.CONFIRM_CHANNEL)
+            );
+            if (route == ParticleRoute.VBU_V2) {
+                if (isWorldParticle(entityUniqueId)) {
+                    ViaBedrockUtilityInterface.spawnParticleV2(wrapper.user(), effectIdentifier, 0, null,
+                            position.x(), position.y(), position.z(), molangVarsJson);
                 } else {
-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "[Particle:L1] No Java mapping AND VBU channel not registered: " + effectIdentifier);
+                    final Entity host = wrapper.user().get(EntityTracker.class).getEntityByUid(entityUniqueId);
+                    final UUID ownerUuid = host == null ? null : host.javaUuid();
+                    if (ownerUuid == null) {
+                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING,
+                                "[Particle:L1] Dropping entity-bound particle because Bedrock unique id "
+                                        + entityUniqueId + " cannot be resolved (effect=" + effectIdentifier + ")");
+                        wrapper.cancel();
+                        return;
+                    }
+                    ViaBedrockUtilityInterface.spawnParticleV2(wrapper.user(), effectIdentifier, 1, ownerUuid,
+                            position.x(), position.y(), position.z(), molangVarsJson);
                 }
+                wrapper.cancel();
+                return;
+            } else if (route == ParticleRoute.VBU_LEGACY) {
+                ViaBedrock.getPlatform().getLogger().log(Level.FINE, "[Particle:L1] No Java mapping, forwarding to VBU: " + effectIdentifier);
+                ViaBedrockUtilityInterface.spawnParticle(wrapper.user(), effectIdentifier, position.x(), position.y(), position.z(), molangVarsJson);
+                wrapper.cancel();
+                return;
+            } else if (route == ParticleRoute.DROP) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "[Particle:L1] No Java mapping AND VBU channel not registered: " + effectIdentifier);
                 wrapper.cancel();
                 return;
             }
@@ -247,14 +280,8 @@ public class WorldEffectPackets {
                 }
             }
             final BedrockMappingData.JavaSound javaSound = BedrockProtocol.MAPPINGS.getBedrockToJavaSounds().get(configuredSound.sound());
-            if (javaSound == null) {
-                // Try custom sound from resource pack
-                final Holder<SoundEvent> customHolder = tryResolveCustomSound(wrapper.user(), configuredSound.sound());
-                if (customHolder == null) {
-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown bedrock sound: " + configuredSound.sound());
-                    wrapper.cancel();
-                    return;
-                }
+            final Holder<SoundEvent> customHolder = tryResolveCustomSound(wrapper.user(), configuredSound.sound());
+            if (customHolder != null) {
                 final SoundSource category = getSoundCategory(
                         wrapper.user(), configuredSound.sound(), SoundSource.MASTER);
                 writeProjectedSound(wrapper, customHolder, category, configuredSound.sound(),
@@ -262,6 +289,11 @@ public class WorldEffectPackets {
                         MathUtil.randomFloatInclusive(configuredSound.minVolume(), configuredSound.maxVolume()),
                         MathUtil.randomFloatInclusive(configuredSound.minPitch(), configuredSound.maxPitch()),
                         globalSound, true);
+                return;
+            }
+            if (javaSound == null) {
+                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown bedrock sound: " + configuredSound.sound());
+                wrapper.cancel();
                 return;
             }
 
@@ -723,6 +755,24 @@ public class WorldEffectPackets {
             }
             wrapper.write(Types.VAR_INT, BedrockProtocol.MAPPINGS.getJavaBlocks().get(javaBlock.namespacedIdentifier())); // block
         });
+    }
+
+    static ParticleRoute selectParticleRoute(final boolean hasJavaMapping, final boolean supportsV2,
+                                             final boolean supportsLegacyVbu) {
+        if (hasJavaMapping) {
+            return ParticleRoute.JAVA;
+        }
+        if (supportsV2) {
+            return ParticleRoute.VBU_V2;
+        }
+        if (supportsLegacyVbu) {
+            return ParticleRoute.VBU_LEGACY;
+        }
+        return ParticleRoute.DROP;
+    }
+
+    static boolean isWorldParticle(final long entityUniqueId) {
+        return entityUniqueId == WORLD_PARTICLE_ENTITY_ID;
     }
 
     private static CustomMappingAccess.JavaBlockStateResolution resolveJavaBlockState(final UserConnection user, final int bedrockRuntimeId, final String context) {
