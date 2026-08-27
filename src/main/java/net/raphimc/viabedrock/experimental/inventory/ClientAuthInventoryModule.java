@@ -112,8 +112,12 @@ public class ClientAuthInventoryModule implements FeatureModule {
     public void onPacketRegistration(final BedrockProtocol protocol) {
         registerContainerClickHandler(protocol);
         registerCreativeContentHandler(protocol);
-        registerCreativeModeSlotHandler(protocol);
+        // DISABLED: Creative mode slot handling causes item disappearance and equipment flickering
+
+        // 
+        // DISABLED: Creative mode slot handling causes item disappearance/flickering
         registerSelectTradeHandler(protocol);
+        // registerCreativeModeSlotHandler(protocol);
         registerSetBeaconHandler(protocol);
         registerCrafterSlotStateHandler(protocol);
         // Java expects the crafting output preview to be pushed by the server, but Bedrock computes it
@@ -748,8 +752,6 @@ public class ClientAuthInventoryModule implements FeatureModule {
             final CreativeSlotSemantics.Plan plan = CreativeSlotSemantics.plan(
                     slot, item, tracker, wrapper.user().get(ItemRewriter.class), wrapper.user().get(CreativeContentCache.class));
             if (plan.isUnsupported()) {
-                PacketFactory.sendJavaContainerSetContent(wrapper.user(), tracker.getInventoryContainer());
-                sendJavaCursor(wrapper.user(), tracker);
                 return;
             }
             if (plan.isEmpty()) {
@@ -757,8 +759,7 @@ public class ClientAuthInventoryModule implements FeatureModule {
             }
             final ItemStackRequestEncoder.EncodedRequest encoded = encodeCreativePlan(plan, tracker);
             if (encoded.unsupported() || encoded.isEmpty()) {
-                PacketFactory.sendJavaContainerSetContent(wrapper.user(), tracker.getInventoryContainer());
-                sendJavaCursor(wrapper.user(), tracker);
+                // Failed to encode — don't sync, let client keep its state
                 return;
             }
             final InventorySnapshot snapshot = InventorySnapshot.capture(tracker);
@@ -1164,3 +1165,9 @@ public class ClientAuthInventoryModule implements FeatureModule {
     }
 
 }
+
+
+
+
+
+
