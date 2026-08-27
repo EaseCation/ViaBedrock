@@ -117,7 +117,7 @@ class ClientAuthInventoryModuleTest {
     }
 
     @Test
-    void encodeCreativePickupWritesTakeFromHotbarToCursor() {
+    void encodeCreativeEmptyHotbarWritesDestroy() {
         final EmbeddedChannel channel = new EmbeddedChannel();
         try {
             final StubUserConnection user = new StubUserConnection(channel);
@@ -125,11 +125,11 @@ class ClientAuthInventoryModuleTest {
             user.put(tracker);
             final BedrockItem wool = new BedrockItem(35, (short) 0, (byte) 16);
             tracker.getInventoryContainer().setItemSilent(0, wool.copy());
-            final CreativeSlotSemantics.Plan pickup = CreativeSlotSemantics.plan(
+            final CreativeSlotSemantics.Plan destroy = CreativeSlotSemantics.plan(
                     36, com.viaversion.viaversion.api.minecraft.item.StructuredItem.empty(), tracker, null, null);
-            assertEquals(CreativeSlotSemantics.Kind.PICKUP, pickup.kind());
+            assertEquals(CreativeSlotSemantics.Kind.DESTROY, destroy.kind());
 
-            final ItemStackRequestEncoder.EncodedRequest encoded = ClientAuthInventoryModule.encodeCreativePlan(pickup, tracker);
+            final ItemStackRequestEncoder.EncodedRequest encoded = ClientAuthInventoryModule.encodeCreativePlan(destroy, tracker);
             assertFalse(encoded.unsupported());
             assertFalse(encoded.isEmpty());
 
@@ -138,14 +138,11 @@ class ClientAuthInventoryModuleTest {
                 assertEquals(1, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
                 BedrockTypes.VAR_INT.read(buffer);
                 assertEquals(1, (int) BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
-                assertEquals(ItemStackRequestActionType.Take.getValue(), buffer.readUnsignedByte());
+                assertEquals(ItemStackRequestActionType.Destroy.getValue(), buffer.readUnsignedByte());
                 assertEquals(16, buffer.readUnsignedByte());
                 final ItemStackRequestLayout.DecodedSlotInfo source = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
                 assertEquals(ContainerEnumName.HotbarContainer, source.container());
                 assertEquals(0, source.slot());
-                final ItemStackRequestLayout.DecodedSlotInfo destination = ItemStackRequestLayout.readSlotInfo(buffer, true, 860);
-                assertEquals(ContainerEnumName.CursorContainer, destination.container());
-                assertEquals(0, destination.slot());
                 ItemStackRequestLayout.readRequestTrailer(buffer, true, 860);
                 assertFalse(buffer.isReadable());
             } finally {

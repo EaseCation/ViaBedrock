@@ -750,6 +750,7 @@ public class ClientAuthInventoryModule implements FeatureModule {
             if (plan.isUnsupported()) {
                 // Leave JE's optimistic creative prediction alone. Force-resyncing
                 // from the Bedrock mirror is what made clicked items vanish (#1-1).
+                // Do not invent Take-to-cursor here: emptying a slot is Destroy.
                 return;
             }
             if (plan.isEmpty()) {
@@ -776,9 +777,6 @@ public class ClientAuthInventoryModule implements FeatureModule {
         final List<InventoryActionData> actions = new ArrayList<>();
         if (plan.kind() == CreativeSlotSemantics.Kind.DESTROY) {
             return encodeDestroy(plan, tracker);
-        }
-        if (plan.kind() == CreativeSlotSemantics.Kind.PICKUP) {
-            return encodePickup(plan, tracker);
         }
         final BedrockItem spawned = plan.predicted() == null ? BedrockItem.empty() : plan.predicted().copy();
         actions.add(new InventoryActionData(
@@ -819,35 +817,6 @@ public class ClientAuthInventoryModule implements FeatureModule {
             net.raphimc.viabedrock.protocol.types.BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 1);
             final int protocol = creativeEncodeProtocol();
             ItemStackRequestLayout.writeDestroy(buffer, plan.count(), plan.destination(), true, protocol);
-            ItemStackRequestLayout.writeRequestTrailer(buffer, true, protocol);
-            final byte[] payload = new byte[buffer.readableBytes()];
-            buffer.readBytes(payload);
-            return ItemStackRequestEncoder.EncodedRequest.of(payload, requestId);
-        } finally {
-            buffer.release();
-        }
-    }
-
-    private static ItemStackRequestEncoder.EncodedRequest encodePickup(final CreativeSlotSemantics.Plan plan, final InventoryTracker tracker) {
-        final ItemStackRequestLayout.SlotInfo source = plan.destination();
-        if (source == null) {
-            return ItemStackRequestEncoder.EncodedRequest.notSupported();
-        }
-        final io.netty.buffer.ByteBuf buffer = io.netty.buffer.Unpooled.buffer();
-        try {
-            net.raphimc.viabedrock.protocol.types.BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 1);
-            final int requestId = tracker.nextItemStackRequestId();
-            net.raphimc.viabedrock.protocol.types.BedrockTypes.VAR_INT.write(buffer, requestId);
-            net.raphimc.viabedrock.protocol.types.BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 1);
-            final int protocol = creativeEncodeProtocol();
-            ItemStackRequestLayout.writeTransfer(
-                    buffer,
-                    net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemStackRequestActionType.Take,
-                    plan.count(),
-                    source,
-                    ItemStackSlotMapper.hud(0),
-                    true,
-                    protocol);
             ItemStackRequestLayout.writeRequestTrailer(buffer, true, protocol);
             final byte[] payload = new byte[buffer.readableBytes()];
             buffer.readBytes(payload);
