@@ -78,6 +78,29 @@ Protocol truth: `decompiled/nukkit-mot` encode/decode, then `decompiled/nukkitma
   - `decompiled/nukkit-mot/cn/nukkit/entity/Entity.java` (sniffer flags 110–112)
 - **Risk:** README boxes stay unchecked. Full `gradlew test` still includes optional JFR/GC soak tests gated by env vars. Extra-output auto-craft with `times != 1` is rejected by MOT.
 
+## 2026-08-27 — Restore creative spawn SAI (#6, keep #1-1)
+
+- **Goal:** After PR #4 disabled `registerCreativeModeSlotHandler`, Java creative-tab clicks never reached MOT. JE predicted the stack locally, but MOT inventory / ViaBedrock `InventoryTracker` stayed empty, so switching back to survival wiped the items and using them did nothing.
+- **Root cause:** NetEase `SET_CREATIVE_MODE_SLOT` is owned by `ClientAuthInventoryModule`. Official `InventoryPackets` early-returns on the NetEase path and does not cancel/resync. Disabling the handler therefore dropped the packet on the floor. The earlier #1-1 wipe came from `Plan.unsupported()` force-resyncing JE from the empty Bedrock mirror, plus backpack empties being misread as creative `Destroy`.
+- **Change:**
+  - Re-enable `registerCreativeModeSlotHandler` so spawn writes MOT 860 `CraftCreative` + `Take` and ISR can assign netIds.
+  - Prefer `ItemRewriter.bedrockItem()` identity lookup and compare components with `sameEffectiveComponents` (ignore private `viabedrock:bedrock_item` shadow; `StructuredDataContainer` has no `equals()`).
+  - On unsupported / encode failure, leave JE's optimistic prediction alone instead of wiping the cursor.
+  - Java `SET_CREATIVE_MODE_SLOT` is an absolute slot assignment. Empty item (cursor, hotbar, backpack, armor, offhand) is MOT 860 `Destroy` of that slot. Pickup/move is `CONTAINER_CLICK`; do not translate empties as `Take` onto the cursor.
+- **Refs:** `ClientAuthInventoryModule.registerCreativeModeSlotHandler`, `CreativeSlotSemantics`, `CreativeContentCache`, MOT `CraftCreativeActionProcessor`.
+- **Risk:** Items still missing a creative netId remain unsupported and can stay as a JE-only ghost until a later authoritative update. Potion/tipped-arrow/bed colour variants still depend on `bedrockItem()` restoring aux (#1-3 / #1-4 / #1-15).
+
+## 2026-08-27 — Creative empty-slot is Destroy, not Take-to-cursor (#6 follow-up)
+
+- **Goal:** After restoring spawn SAI, emptying backpack/hotbar was mapped to `PICKUP` (`Take` onto the cursor). Players then could not throw stacks back into the creative catalog (that click is client-only; vanilla already destroyed the slot), could not move hotbar → backpack/armor, and moving inside the 27-slot inventory duplicated the stack.
+- **Root cause:** Vanilla creative never "picks up" via this packet. `SET_CREATIVE_MODE_SLOT(slot, empty)` means the slot is now empty. Dropping onto the creative tab only clears the JE cursor and sends no extra packet. Treating empties as `Take` left the stack on the MOT cursor/source, so the next `SPAWN` into another slot created a second copy.
+- **Change:**
+  - Empty assigned slots (including hotbar/backpack/armor/offhand) encode MOT 860 `Destroy`.
+  - Remove `Kind.PICKUP` / `encodePickup`.
+  - Predicted apply only writes the assigned slot (empty on destroy, spawned item on spawn).
+- **Refs:** `CreativeSlotSemantics.plan`, `ClientAuthInventoryModule.encodeDestroy`.
+- **Risk:** A failed `Destroy` still leaves JE's optimistic empty prediction; MOT may restore the stack on the next authoritative update.
+
 ## Open risks (not patched here)
 
 - Static `runtime_item_states.json` is still the international dump. MOT `runtime_item_states_netease_860.json` differs on 552 vanilla ids, but MOT always sends live `ITEM_REGISTRY`, so classification (`id <= 255`) is the remaining static risk.
