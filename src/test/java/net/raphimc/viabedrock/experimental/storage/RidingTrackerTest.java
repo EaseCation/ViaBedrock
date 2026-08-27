@@ -134,7 +134,7 @@ class RidingTrackerTest {
     @Test
     void predictedBoatJavaSyncKeepsMotFootYWhilePreservingSteerXZ() {
         // Even after SAI Y is pinned, JE local buoyancy can still climb visually when MOT stops
-        // sending MOVE packets. The force-sync foot must keep MOT Y and MOVE_VEHICLE XZ.
+        // sending MOVE packets. The clientbound MOVE_VEHICLE snap must keep MOT Y and steer XZ.
         final Position3f motNetworkBoat = new Position3f(10F, 64.375F, -3F);
         final Position3f buoyantJavaFoot = new Position3f(11F, 65.0F, -2F);
         final Position3f sync = RidingTracker.predictedBoatJavaSyncPosition(buoyantJavaFoot, motNetworkBoat, 0.375F);

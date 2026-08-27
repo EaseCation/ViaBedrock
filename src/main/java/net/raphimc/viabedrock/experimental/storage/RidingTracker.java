@@ -164,8 +164,9 @@ public class RidingTracker extends StoredObject {
                 final float vehiclePitch = vehicleInput != null ? vehicleInput.pitch() : vehicle.rotation().x();
                 final float vehicleYaw = vehicleInput != null ? vehicleInput.yaw() : vehicle.rotation().y();
                 // MOT Y is already pinned in SAI, but JE still runs local boat buoyancy and climbs
-                // visually when the server stops sending MOVE packets. Force-sync the JE hull each
-                // auth tick so the client cannot keep floating upward (#1-2 visual takeoff).
+                // visually when MOT stops broadcasting MOVE. ENTITY_POSITION_SYNC does not stick on
+                // a locally controlled boat; snap with clientbound MOVE_VEHICLE each auth tick
+                // (#1-2 visual / slow hull climb).
                 this.syncPredictedBoatToJavaClient(vehicle, vehicleInput);
                 clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.IsInClientPredictedVehicle);
                 context.setPredictedVehicle(vehicle.uniqueId(), vehiclePitch, vehicleYaw);
@@ -531,11 +532,10 @@ public class RidingTracker extends StoredObject {
                 vehicleInput != null ? vehicleInput.position() : null,
                 vehicle.position(),
                 vehicle.eyeOffset());
-        final Position3f rotation = vehicleInput != null
-                ? new Position3f(vehicleInput.pitch(), vehicleInput.yaw(), vehicle.rotation().z())
-                : vehicle.rotation();
-        final boolean onGround = vehicleInput != null ? vehicleInput.onGround() : vehicle.isOnGround();
-        RidingAnchorHelper.move(this.user(), vehicle.javaId(), javaPosition, rotation, onGround);
+        final float yaw = vehicleInput != null ? vehicleInput.yaw() : vehicle.rotation().y();
+        final float pitch = vehicleInput != null ? vehicleInput.pitch() : vehicle.rotation().x();
+        // Controlled JE boats ignore ordinary entity teleports while predicting locally.
+        RidingAnchorHelper.moveVehicle(this.user(), javaPosition, yaw, pitch);
     }
 
     private Position3f safeDismountPosition(final Entity vehicle, final ClientPlayerEntity clientPlayer, final LocalRidingMode mode, final Position3f authInputPosition) {
