@@ -132,6 +132,21 @@ class RidingTrackerTest {
     }
 
     @Test
+    void predictedBoatJavaSyncKeepsMotFootYWhilePreservingSteerXZ() {
+        // Even after SAI Y is pinned, JE local buoyancy can still climb visually when MOT stops
+        // sending MOVE packets. The force-sync foot must keep MOT Y and MOVE_VEHICLE XZ.
+        final Position3f motNetworkBoat = new Position3f(10F, 64.375F, -3F);
+        final Position3f buoyantJavaFoot = new Position3f(11F, 65.0F, -2F);
+        final Position3f sync = RidingTracker.predictedBoatJavaSyncPosition(buoyantJavaFoot, motNetworkBoat, 0.375F);
+
+        assertEquals(11F, sync.x(), 1.0e-6F);
+        assertEquals(64.0F, sync.y(), 1.0e-6F);
+        assertEquals(-2F, sync.z(), 1.0e-6F);
+        assertTrue(Math.abs(sync.y() - buoyantJavaFoot.y()) > 0.5F,
+                "JE buoyancy foot must be snapped back to MOT height");
+    }
+
+    @Test
     void doesNotForwardInputFromNonControllingPassengers() {
         assertEquals(PASSENGER_ONLY, RidingTracker.localRidingMode(EntityTypes1_21_11.MINECART, false));
     }

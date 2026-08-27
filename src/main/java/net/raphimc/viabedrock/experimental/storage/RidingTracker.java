@@ -163,6 +163,10 @@ public class RidingTracker extends StoredObject {
                 final MoveVehicleInput vehicleInput = this.lastMoveVehicleInputFresh ? this.lastMoveVehicleInput : null;
                 final float vehiclePitch = vehicleInput != null ? vehicleInput.pitch() : vehicle.rotation().x();
                 final float vehicleYaw = vehicleInput != null ? vehicleInput.yaw() : vehicle.rotation().y();
+                // MOT Y is already pinned in SAI, but JE still runs local boat buoyancy and climbs
+                // visually when the server stops sending MOVE packets. Force-sync the JE hull each
+                // auth tick so the client cannot keep floating upward (#1-2 visual takeoff).
+                this.syncPredictedBoatToJavaClient(vehicle, vehicleInput);
                 clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.IsInClientPredictedVehicle);
                 context.setPredictedVehicle(vehicle.uniqueId(), vehiclePitch, vehicleYaw);
             }
@@ -505,6 +509,33 @@ public class RidingTracker extends StoredObject {
 
     static Position3f predictedBoatAuthInputFromVehicle(final Position3f vehicleNetworkPosition, final float vehicleEyeOffset) {
         return predictedBoatAuthInputPosition(predictedBoatJavaFoot(vehicleNetworkPosition, vehicleEyeOffset), vehicleEyeOffset);
+    }
+
+    /**
+     * JE foot position used to snap the local predicted boat back to MOT height.
+     * Keep MOVE_VEHICLE XZ/yaw for steering, but always take Y from the MOT network hull.
+     */
+    static Position3f predictedBoatJavaSyncPosition(
+            final Position3f javaMoveVehiclePosition,
+            final Position3f vehicleNetworkPosition,
+            final float vehicleEyeOffset) {
+        final Position3f motFoot = predictedBoatJavaFoot(vehicleNetworkPosition, vehicleEyeOffset);
+        if (javaMoveVehiclePosition == null) {
+            return motFoot;
+        }
+        return new Position3f(javaMoveVehiclePosition.x(), motFoot.y(), javaMoveVehiclePosition.z());
+    }
+
+    private void syncPredictedBoatToJavaClient(final Entity vehicle, final MoveVehicleInput vehicleInput) {
+        final Position3f javaPosition = predictedBoatJavaSyncPosition(
+                vehicleInput != null ? vehicleInput.position() : null,
+                vehicle.position(),
+                vehicle.eyeOffset());
+        final Position3f rotation = vehicleInput != null
+                ? new Position3f(vehicleInput.pitch(), vehicleInput.yaw(), vehicle.rotation().z())
+                : vehicle.rotation();
+        final boolean onGround = vehicleInput != null ? vehicleInput.onGround() : vehicle.isOnGround();
+        RidingAnchorHelper.move(this.user(), vehicle.javaId(), javaPosition, rotation, onGround);
     }
 
     private Position3f safeDismountPosition(final Entity vehicle, final ClientPlayerEntity clientPlayer, final LocalRidingMode mode, final Position3f authInputPosition) {
