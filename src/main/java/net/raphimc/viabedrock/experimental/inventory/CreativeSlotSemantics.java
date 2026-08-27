@@ -26,7 +26,7 @@ import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 
 /**
- * Turns Java SET_CREATIVE_MODE_SLOT into Nukkit 860 SAI CraftCreative / Destroy / Drop.
+ * Turns Java SET_CREATIVE_MODE_SLOT into Nukkit 860 SAI CraftCreative / Take / Destroy.
  * Official 975 keeps the old cancel-and-resync path; this helper is NetEase-only.
  */
 public final class CreativeSlotSemantics {
@@ -72,6 +72,18 @@ public final class CreativeSlotSemantics {
         }
     }
 
+    public static void applyPredictedPlan(final int javaSlot, final Plan plan, final InventoryTracker tracker) {
+        if (plan == null || plan.isEmpty() || plan.isUnsupported()) {
+            return;
+        }
+        if (plan.kind() == Kind.PICKUP) {
+            applyPredictedItem(javaSlot, BedrockItem.empty(), tracker);
+            applyPredictedItem(JAVA_CURSOR_SLOT, plan.predicted(), tracker);
+            return;
+        }
+        applyPredictedItem(javaSlot, plan.predicted(), tracker);
+    }
+
     public static Plan plan(final int javaSlot, final Item javaItem, final InventoryTracker tracker,
                             final ItemRewriter itemRewriter, final CreativeContentCache cache) {
         final ItemStackRequestLayout.SlotInfo destination = destinationSlot(javaSlot, tracker);
@@ -84,7 +96,12 @@ public final class CreativeSlotSemantics {
             if (current.isEmpty()) {
                 return Plan.empty();
             }
-            return Plan.destroy(current.amount(), withNetId(destination, current));
+            // Cursor empty = throw the held stack into the void. Emptying a backpack /
+            // hotbar / armor / offhand slot is JE "pick up", not creative Destroy.
+            if (isJavaCursorSlot(javaSlot)) {
+                return Plan.destroy(current.amount(), withNetId(destination, current));
+            }
+            return Plan.pickup(current.amount(), withNetId(destination, current), current.copy());
         }
         if (cache == null) {
             return Plan.unsupported();
@@ -140,6 +157,10 @@ public final class CreativeSlotSemantics {
             return new Plan(Kind.DESTROY, 0, count, destination, BedrockItem.empty());
         }
 
+        public static Plan pickup(final int count, final ItemStackRequestLayout.SlotInfo source, final BedrockItem predicted) {
+            return new Plan(Kind.PICKUP, 0, count, source, predicted);
+        }
+
         public static Plan spawn(final int creativeNetId, final int count, final ItemStackRequestLayout.SlotInfo destination,
                                  final BedrockItem predicted) {
             return new Plan(Kind.SPAWN, creativeNetId, count, destination, predicted);
@@ -158,6 +179,7 @@ public final class CreativeSlotSemantics {
         EMPTY,
         UNSUPPORTED,
         DESTROY,
+        PICKUP,
         SPAWN
     }
 }

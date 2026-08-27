@@ -63,6 +63,18 @@ class CreativeSlotSemanticsTest {
     }
 
     @Test
+    void emptyingHotbarPicksUpInsteadOfDestroying() {
+        this.tracker.getInventoryContainer().setItemSilent(0, new BedrockItem(35, (short) 0, (byte) 16));
+        final CreativeSlotSemantics.Plan pickup = CreativeSlotSemantics.plan(36, StructuredItem.empty(), this.tracker, null, new CreativeContentCache(this.user));
+        assertEquals(CreativeSlotSemantics.Kind.PICKUP, pickup.kind());
+        assertEquals(16, pickup.count());
+        assertEquals(ContainerEnumName.HotbarContainer, pickup.destination().container());
+        assertEquals(0, pickup.destination().slot());
+        assertEquals(35, pickup.predicted().identifier());
+        assertEquals(16, pickup.predicted().amount());
+    }
+
+    @Test
     void spawnNeedsACreativeCache() {
         final StructuredItem wool = new StructuredItem(35, 64);
         assertTrue(CreativeSlotSemantics.plan(-1, wool, this.tracker, null, null).isUnsupported());

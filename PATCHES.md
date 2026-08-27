@@ -78,6 +78,18 @@ Protocol truth: `decompiled/nukkit-mot` encode/decode, then `decompiled/nukkitma
   - `decompiled/nukkit-mot/cn/nukkit/entity/Entity.java` (sniffer flags 110–112)
 - **Risk:** README boxes stay unchecked. Full `gradlew test` still includes optional JFR/GC soak tests gated by env vars. Extra-output auto-craft with `times != 1` is rejected by MOT.
 
+## 2026-08-27 — Restore creative spawn SAI (#6, keep #1-1)
+
+- **Goal:** After PR #4 disabled `registerCreativeModeSlotHandler`, Java creative-tab clicks never reached MOT. JE predicted the stack locally, but MOT inventory / ViaBedrock `InventoryTracker` stayed empty, so switching back to survival wiped the items and using them did nothing.
+- **Root cause:** NetEase `SET_CREATIVE_MODE_SLOT` is owned by `ClientAuthInventoryModule`. Official `InventoryPackets` early-returns on the NetEase path and does not cancel/resync. Disabling the handler therefore dropped the packet on the floor. The earlier #1-1 wipe came from `Plan.unsupported()` force-resyncing JE from the empty Bedrock mirror, plus backpack empties being misread as creative `Destroy`.
+- **Change:**
+  - Re-enable `registerCreativeModeSlotHandler` so spawn writes MOT 860 `CraftCreative` + `Take` and ISR can assign netIds.
+  - Prefer `ItemRewriter.bedrockItem()` identity lookup and compare components with `sameEffectiveComponents` (ignore private `viabedrock:bedrock_item` shadow; `StructuredDataContainer` has no `equals()`).
+  - On unsupported / encode failure, leave JE's optimistic prediction alone instead of wiping the cursor.
+  - Emptying a backpack/hotbar/armor/offhand slot is `Take` onto the cursor (`PICKUP`); only an empty cursor is creative `Destroy`.
+- **Refs:** `ClientAuthInventoryModule.registerCreativeModeSlotHandler`, `CreativeSlotSemantics`, `CreativeContentCache`, MOT `CraftCreativeActionProcessor`.
+- **Risk:** Items still missing a creative netId remain unsupported and can stay as a JE-only ghost until a later authoritative update. Potion/tipped-arrow/bed colour variants still depend on `bedrockItem()` restoring aux (#1-3 / #1-4 / #1-15).
+
 ## Open risks (not patched here)
 
 - Static `runtime_item_states.json` is still the international dump. MOT `runtime_item_states_netease_860.json` differs on 552 vanilla ids, but MOT always sends live `ITEM_REGISTRY`, so classification (`id <= 255`) is the remaining static risk.
