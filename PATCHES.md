@@ -2,6 +2,13 @@
 
 Protocol truth: `decompiled/nukkit-mot` encode/decode, then `decompiled/nukkitmaster` for PyRpc / ModUI. Do not treat international Bedrock wiki or Geyser palettes as MOT 860.
 
+## 2026-08-28 — Colored beds keep item meta instead of undyed block runtime
+
+- **Goal:** MOT 860 still ships 16 bed colors as `minecraft:bed` + meta 0–15. The item identifier also names the undyed bed block, so ViaBedrock treated every bed as a block item, zeroed aux data, and mapped inventory display to `white_bed`. Placement stayed correct because MOT clones by creative netId / item damage.
+- **Change:** Identifiers that exist only in `bedrockToJavaMetaItems` are no longer registered as block items. `BedrockItemType` therefore keeps bed meta and `javaItem()` uses the existing 0–15 color table.
+- **Refs:** `cn/nukkit/item/ItemBed.java` (`this.block = Block.get(BED_BLOCK)`), `BinaryStream.getBlockRuntimeId`, `item_mappings.json` `minecraft:bed` meta table, GitHub issue #1-3.
+- **Risk:** Other meta-only items that share a block identifier (banners, skulls) get the same decode path. True block items that also have a meta table are unchanged.
+
 ## 2026-08-24 — Consume leftover CAMERA_INSTRUCTION after fade
 
 - **Goal:** MOT 860 `CameraInstructionPacket.decode()` still reads target (712), FOV (827) and spline/attach (859) after fade. ViaBedrock stopped at fade, so leftover bytes could abort the join batch.

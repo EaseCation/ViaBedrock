@@ -138,7 +138,10 @@ public class ItemRewriter extends StoredObject {
                 }
             }
         }
-        blockItems.removeIf(identifier -> !this.items.containsKey(identifier));
+        // MOT 860 still ships colored beds (and similar) as one identifier + meta 0-15.
+        // Those identifiers also name an undyed block, so treating them as block items
+        // would zero aux data and collapse every color to white_bed / the undyed Java item.
+        blockItems.removeIf(identifier -> !this.items.containsKey(identifier) || isMetaOnlyItem(identifier));
 
         this.blockItemValidBlockStates = new Int2ObjectOpenHashMap<>(blockItems.size());
         for (String identifier : blockItems) {
@@ -710,6 +713,11 @@ public class ItemRewriter extends StoredObject {
             javaId++;
         }
         return mappings;
+    }
+
+    private static boolean isMetaOnlyItem(final String identifier) {
+        return BedrockProtocol.MAPPINGS.getBedrockToJavaMetaItems().containsKey(identifier)
+                && !BedrockProtocol.MAPPINGS.getBedrockToJavaBlockItems().containsKey(identifier);
     }
 
     private static boolean isVanillaItem(final String bedrockIdentifier, final Integer bedrockId) {
