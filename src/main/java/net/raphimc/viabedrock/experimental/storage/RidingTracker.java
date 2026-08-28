@@ -29,6 +29,10 @@ import com.viaversion.viaversion.libs.fastutil.longs.LongList;
 import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
 import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.api.model.entity.PlayerEntity;
+import com.viaversion.viaversion.api.minecraft.BlockPosition;
+import net.raphimc.viabedrock.api.model.BlockState;
+import net.raphimc.viabedrock.api.model.container.HorseContainer;
+import net.raphimc.viabedrock.experimental.ItemUseAirClickTarget;
 import net.raphimc.viabedrock.experimental.model.PlayerAuthInputContext;
 import net.raphimc.viabedrock.experimental.riding.RidingAnchorHelper;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorDataIDs;
@@ -36,7 +40,8 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAuthIn
 import net.raphimc.viabedrock.protocol.data.enums.java.InputFlag;
 import net.raphimc.viabedrock.protocol.model.EntityLink;
 import net.raphimc.viabedrock.protocol.model.Position3f;
-import net.raphimc.viabedrock.api.model.container.HorseContainer;
+import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
+import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 
@@ -54,6 +59,13 @@ public class RidingTracker extends StoredObject {
     private static final float JAVA_PLAYER_VEHICLE_ATTACHMENT_Y = 0.6F; // PlayerEntity.VEHICLE_ATTACHMENT_POS
     private static final int PENDING_DISMOUNT_TICKS = 10;
     private static final Position3f BOAT_PLAYER_SEAT_OFFSET = new Position3f(0F, 1.02001F, 0F);
+    // MOT EntityBoat dimensions. Occupied boats disable wave sim, so ViaBedrock must derive a
+    // resting network Y from the water surface instead of freezing the last tracker snapshot.
+    private static final float BOAT_WIDTH = 1.4F;
+    // Only snap the JE hull when it drifts beyond this; every-tick MOVE_VEHICLE caused jitter.
+    private static final float BOAT_CLIENT_SYNC_EPSILON = 0.04F;
+    // Reject continuous JE buoyancy climbs while still allowing waterfall / slope drops.
+    private static final float BOAT_MAX_JAVA_CLIMB = 0.75F;
 
     private final Long2ObjectMap<LongList> vehiclePassengers = new Long2ObjectOpenHashMap<>();
     private final Long2ObjectMap<AnchorState> anchorsByPassenger = new Long2ObjectOpenHashMap<>();
@@ -163,11 +175,11 @@ public class RidingTracker extends StoredObject {
                 final MoveVehicleInput vehicleInput = this.lastMoveVehicleInputFresh ? this.lastMoveVehicleInput : null;
                 final float vehiclePitch = vehicleInput != null ? vehicleInput.pitch() : vehicle.rotation().x();
                 final float vehicleYaw = vehicleInput != null ? vehicleInput.yaw() : vehicle.rotation().y();
-                // MOT Y is already pinned in SAI, but JE still runs local boat buoyancy and climbs
-                // visually when MOT stops broadcasting MOVE. ENTITY_POSITION_SYNC does not stick on
-                // a locally controlled boat; snap with clientbound MOVE_VEHICLE each auth tick
-                // (#1-2 visual / slow hull climb).
+                // Snap JE only when the visual hull drifted from the water-aware SAI target.
+                // Also keep the ViaBedrock tracker Y aligned so later ticks do not re-freeze the
+                // spawn-height snapshot (#1-2 hover / jitter after hard pin).
                 this.syncPredictedBoatToJavaClient(vehicle, vehicleInput);
+                vehicle.setPosition(new Position3f(authInputPosition.x(), authInputPosition.y(), authInputPosition.z()));
                 clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.IsInClientPredictedVehicle);
                 context.setPredictedVehicle(vehicle.uniqueId(), vehiclePitch, vehicleYaw);
             }
@@ -423,17 +435,19 @@ public class RidingTracker extends StoredObject {
     private Position3f authInputPosition(final Entity vehicle, final ClientPlayerEntity clientPlayer, final LocalRidingMode mode) {
         if (mode == LocalRidingMode.BOAT_PREDICTED) {
             // MOT 860 still uses IN_CLIENT_PREDICTED_IN_VEHICLE + EntityBoat.onInput(x,y,z,yaw).
-            // JE MOVE_VEHICLE Y follows client boat buoyancy and climbs each tick; feeding that Y
-            // back through SAI makes MOT rewrite the hull higher and higher (#1-2 continuous lift).
-            // Keep XZ/yaw from MOVE_VEHICLE for steering, but pin Y to the MOT boat network height.
+            // Raw JE buoyancy Y climbs forever if echoed. Hard-pinning to the frozen MOT tracker Y
+            // stopped the fly-up but left the hull hovering/jittering because occupied boats disable
+            // MOT wave sim and never refresh network Y on slopes/waterfalls. Keep XZ/yaw from
+            // MOVE_VEHICLE and choose a water-surface (or grounded) network Y instead.
             final Position3f vehicleNetworkPosition = vehicle.position();
-            if (this.lastMoveVehicleInputFresh && this.lastMoveVehicleInput != null) {
-                return predictedBoatAuthInputPosition(
-                        this.lastMoveVehicleInput.position(),
-                        vehicleNetworkPosition,
-                        vehicle.eyeOffset());
-            }
-            return predictedBoatAuthInputFromVehicle(vehicleNetworkPosition, vehicle.eyeOffset());
+            final Position3f javaVehiclePosition = this.lastMoveVehicleInputFresh && this.lastMoveVehicleInput != null
+                    ? this.lastMoveVehicleInput.position()
+                    : null;
+            return predictedBoatAuthInputPosition(
+                    javaVehiclePosition,
+                    vehicleNetworkPosition,
+                    vehicle.eyeOffset(),
+                    this.boatWorldView());
         }
 
         final Position3f vehiclePosition = vehicle.position();
@@ -467,9 +481,9 @@ public class RidingTracker extends StoredObject {
     /**
      * Java {@code MOVE_VEHICLE} carries JE client XZ plus a buoyancy-affected Y. MOT predicted-boat
      * SAI must be the boat network Y ({@code EntityBoat.getBaseOffset()} = 0.375) because
-     * {@code onInput} subtracts that offset. Adding the player eye (1.62), or feeding JE buoyancy
-     * Y back through SAI, lifts the boat every tick and trips GanAC AntiVehicle.FlyCheck (0.5).
-     * Ref: MOT Player.java IN_CLIENT_PREDICTED_IN_VEHICLE; EntityBoat.onInput.
+     * {@code onInput} subtracts that offset. Adding the player eye (1.62), or feeding raw JE
+     * buoyancy Y back through SAI, lifts the boat every tick and trips GanAC AntiVehicle.FlyCheck.
+     * Ref: MOT Player.java IN_CLIENT_PREDICTED_IN_VEHICLE; EntityBoat.onInput / getWaterLevel.
      */
     static Position3f predictedBoatAuthInputPosition(final Position3f javaVehiclePosition, final float vehicleEyeOffset) {
         return new Position3f(
@@ -482,12 +496,19 @@ public class RidingTracker extends StoredObject {
             final Position3f javaVehiclePosition,
             final Position3f vehicleNetworkPosition,
             final float vehicleEyeOffset) {
-        // vehicleEyeOffset kept for API symmetry with the foot-space helper; Y is intentionally
-        // taken from the MOT network height so JE buoyancy cannot accumulate through onInput.
-        return new Position3f(
-                javaVehiclePosition.x(),
-                predictedBoatNetworkY(vehicleNetworkPosition),
-                javaVehiclePosition.z());
+        return predictedBoatAuthInputPosition(javaVehiclePosition, vehicleNetworkPosition, vehicleEyeOffset, null);
+    }
+
+    static Position3f predictedBoatAuthInputPosition(
+            final Position3f javaVehiclePosition,
+            final Position3f vehicleNetworkPosition,
+            final float vehicleEyeOffset,
+            final ItemUseAirClickTarget.WorldView world) {
+        final float networkY = predictedBoatNetworkY(javaVehiclePosition, vehicleNetworkPosition, vehicleEyeOffset, world);
+        if (javaVehiclePosition == null) {
+            return new Position3f(vehicleNetworkPosition.x(), networkY, vehicleNetworkPosition.z());
+        }
+        return new Position3f(javaVehiclePosition.x(), networkY, javaVehiclePosition.z());
     }
 
     /**
@@ -503,9 +524,49 @@ public class RidingTracker extends StoredObject {
     }
 
     static float predictedBoatNetworkY(final Position3f vehicleNetworkPosition) {
-        // Tracker stores MOT ADD/MOVE network Y. Keep that value as SAI Y so onInput restores the
-        // same server foot instead of accumulating JE buoyancy deltas.
         return vehicleNetworkPosition.y();
+    }
+
+    /**
+     * Choose the SAI network Y for a predicted boat.
+     * <p>
+     * Priority:
+     * <ol>
+     *   <li>Chunk water surface under the steered XZ (occupied MOT boats disable wave sim, so the
+     *       tracker Y never follows slopes / waterfalls by itself).</li>
+     *   <li>Small, physically plausible JE MOVE_VEHICLE corrections around that surface.</li>
+     *   <li>Last MOT tracker network Y when chunks are unloaded.</li>
+     * </ol>
+     * Large JE buoyancy climbs are rejected so #1-2 fly-up cannot accumulate through onInput.
+     */
+    static float predictedBoatNetworkY(
+            final Position3f javaVehiclePosition,
+            final Position3f vehicleNetworkPosition,
+            final float vehicleEyeOffset,
+            final ItemUseAirClickTarget.WorldView world) {
+        final float trackerNetworkY = vehicleNetworkPosition.y();
+        final float sampleX = javaVehiclePosition != null ? javaVehiclePosition.x() : vehicleNetworkPosition.x();
+        final float sampleZ = javaVehiclePosition != null ? javaVehiclePosition.z() : vehicleNetworkPosition.z();
+        final float javaOrTrackerNetworkY = javaVehiclePosition != null ? javaVehiclePosition.y() + vehicleEyeOffset : trackerNetworkY;
+        final Float waterNetworkY = resolveBoatWaterNetworkY(world, sampleX, trackerNetworkY, javaOrTrackerNetworkY, sampleZ);
+
+        if (waterNetworkY != null) {
+            // Occupied MOT boats do not refresh network Y themselves. Stick to the sampled water
+            // surface so slopes / waterfalls lower the hull instead of leaving it hovering.
+            return waterNetworkY;
+        }
+        if (javaVehiclePosition != null) {
+            final float javaNetworkY = javaOrTrackerNetworkY;
+            final float delta = javaNetworkY - trackerNetworkY;
+            // No water sample (land / unloaded chunks): allow small grounded corrections and
+            // downward motion, but still reject the continuous JE buoyancy climb.
+            if (Math.abs(delta) <= BOAT_CLIENT_SYNC_EPSILON
+                    || (delta < 0F && delta >= -BOAT_MAX_JAVA_CLIMB)
+                    || Math.abs(delta) <= BOAT_MAX_JAVA_CLIMB * 0.25F) {
+                return javaNetworkY;
+            }
+        }
+        return trackerNetworkY;
     }
 
     static Position3f predictedBoatAuthInputFromVehicle(final Position3f vehicleNetworkPosition, final float vehicleEyeOffset) {
@@ -513,28 +574,159 @@ public class RidingTracker extends StoredObject {
     }
 
     /**
-     * JE foot position used to snap the local predicted boat back to MOT height.
-     * Keep MOVE_VEHICLE XZ/yaw for steering, but always take Y from the MOT network hull.
+     * JE foot used to snap the local predicted boat. Keep MOVE_VEHICLE XZ/yaw for steering, and
+     * use the same water-aware network Y that SAI will send so the visual hull and MOT onInput
+     * stay locked together without fighting every tick.
      */
     static Position3f predictedBoatJavaSyncPosition(
             final Position3f javaMoveVehiclePosition,
             final Position3f vehicleNetworkPosition,
             final float vehicleEyeOffset) {
-        final Position3f motFoot = predictedBoatJavaFoot(vehicleNetworkPosition, vehicleEyeOffset);
+        return predictedBoatJavaSyncPosition(javaMoveVehiclePosition, vehicleNetworkPosition, vehicleEyeOffset, null);
+    }
+
+    static Position3f predictedBoatJavaSyncPosition(
+            final Position3f javaMoveVehiclePosition,
+            final Position3f vehicleNetworkPosition,
+            final float vehicleEyeOffset,
+            final ItemUseAirClickTarget.WorldView world) {
+        final float networkY = predictedBoatNetworkY(javaMoveVehiclePosition, vehicleNetworkPosition, vehicleEyeOffset, world);
+        final float footY = networkY - vehicleEyeOffset;
         if (javaMoveVehiclePosition == null) {
-            return motFoot;
+            return new Position3f(vehicleNetworkPosition.x(), footY, vehicleNetworkPosition.z());
         }
-        return new Position3f(javaMoveVehiclePosition.x(), motFoot.y(), javaMoveVehiclePosition.z());
+        return new Position3f(javaMoveVehiclePosition.x(), footY, javaMoveVehiclePosition.z());
+    }
+
+    /**
+     * Sample water under the boat BB the same way MOT {@code EntityBoat.getWaterLevel()} does.
+     * Resting network Y equals the highest water {@code maxY} under the hull
+     * ({@code waterDiff = (footY + baseOffset) - waterMaxY ~= 0}).
+     */
+    static Float resolveBoatWaterNetworkY(
+            final ItemUseAirClickTarget.WorldView world,
+            final float x,
+            final float seedNetworkY,
+            final float z) {
+        return resolveBoatWaterNetworkY(world, x, seedNetworkY, seedNetworkY, z);
+    }
+
+    static Float resolveBoatWaterNetworkY(
+            final ItemUseAirClickTarget.WorldView world,
+            final float x,
+            final float primarySeedNetworkY,
+            final float secondarySeedNetworkY,
+            final float z) {
+        if (world == null) {
+            return null;
+        }
+        final float half = BOAT_WIDTH * 0.5F;
+        final int minX = (int) Math.floor(x - half);
+        final int maxX = (int) Math.floor(x + half);
+        final int minZ = (int) Math.floor(z - half);
+        final int maxZ = (int) Math.floor(z + half);
+        final int minY = (int) Math.floor(Math.min(primarySeedNetworkY, secondarySeedNetworkY)) - 8;
+        final int maxY = (int) Math.floor(Math.max(primarySeedNetworkY, secondarySeedNetworkY)) + 8;
+        float bestSurface = Float.NEGATIVE_INFINITY;
+        boolean found = false;
+        for (int bx = minX; bx <= maxX; bx++) {
+            for (int bz = minZ; bz <= maxZ; bz++) {
+                for (int by = maxY; by >= minY; by--) {
+                    final Float surface = waterSurfaceMaxY(world, bx, by, bz);
+                    if (surface == null) {
+                        continue;
+                    }
+                    found = true;
+                    if (surface > bestSurface) {
+                        bestSurface = surface;
+                    }
+                    break;
+                }
+            }
+        }
+        return found ? bestSurface : null;
+    }
+
+    static Float waterSurfaceMaxY(final ItemUseAirClickTarget.WorldView world, final int x, final int y, final int z) {
+        final BlockPosition pos = new BlockPosition(x, y, z);
+        Float best = null;
+        for (int layer = 0; layer <= 1; layer++) {
+            final BlockState state = world.blockState(world.blockStateId(layer, pos));
+            final Float surface = waterSurfaceMaxY(state, y);
+            if (surface != null && (best == null || surface > best)) {
+                best = surface;
+            }
+        }
+        return best;
+    }
+
+    static Float waterSurfaceMaxY(final BlockState state, final int blockY) {
+        if (state == null) {
+            return null;
+        }
+        final String identifier = state.identifier();
+        if (!"water".equals(identifier) && !"flowing_water".equals(identifier)) {
+            return null;
+        }
+        int depth = 0;
+        final String liquidDepth = state.properties().get("liquid_depth");
+        if (liquidDepth != null) {
+            try {
+                depth = Integer.parseInt(liquidDepth);
+            } catch (final NumberFormatException ignored) {
+                depth = 0;
+            }
+        }
+        // MOT BlockLiquid: damage >= 8 is falling water treated as full source for height percent.
+        if (depth >= 8) {
+            depth = 0;
+        }
+        final float heightPercent = (depth + 1) / 9F;
+        return blockY + 1F - heightPercent;
+    }
+
+    private ItemUseAirClickTarget.WorldView boatWorldView() {
+        final ChunkTracker chunkTracker = this.user().get(ChunkTracker.class);
+        final BlockStateRewriter blockStateRewriter = this.user().get(BlockStateRewriter.class);
+        if (chunkTracker == null || blockStateRewriter == null) {
+            return null;
+        }
+        return new ItemUseAirClickTarget.WorldView() {
+            @Override
+            public int blockStateId(final int layer, final BlockPosition position) {
+                return chunkTracker.getBlockState(layer, position);
+            }
+
+            @Override
+            public BlockState blockState(final int bedrockBlockStateId) {
+                return blockStateRewriter.blockState(bedrockBlockStateId);
+            }
+
+            @Override
+            public int airId() {
+                return chunkTracker.bedrockAirId();
+            }
+        };
     }
 
     private void syncPredictedBoatToJavaClient(final Entity vehicle, final MoveVehicleInput vehicleInput) {
+        final ItemUseAirClickTarget.WorldView world = this.boatWorldView();
         final Position3f javaPosition = predictedBoatJavaSyncPosition(
                 vehicleInput != null ? vehicleInput.position() : null,
                 vehicle.position(),
-                vehicle.eyeOffset());
+                vehicle.eyeOffset(),
+                world);
         final float yaw = vehicleInput != null ? vehicleInput.yaw() : vehicle.rotation().y();
         final float pitch = vehicleInput != null ? vehicleInput.pitch() : vehicle.rotation().x();
         // Controlled JE boats ignore ordinary entity teleports while predicting locally.
+        // Skip no-op snaps so the hull does not jitter on a fixed Y.
+        final Position3f visual = vehicleInput != null ? vehicleInput.position() : null;
+        if (visual != null
+                && Math.abs(visual.x() - javaPosition.x()) < BOAT_CLIENT_SYNC_EPSILON
+                && Math.abs(visual.y() - javaPosition.y()) < BOAT_CLIENT_SYNC_EPSILON
+                && Math.abs(visual.z() - javaPosition.z()) < BOAT_CLIENT_SYNC_EPSILON) {
+            return;
+        }
         RidingAnchorHelper.moveVehicle(this.user(), javaPosition, yaw, pitch);
     }
 
