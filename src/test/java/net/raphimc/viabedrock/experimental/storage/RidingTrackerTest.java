@@ -154,9 +154,9 @@ class RidingTrackerTest {
     }
 
     @Test
-    void predictedBoatFollowsWaterSurfaceInsteadOfFrozenTrackerY() {
-        // Occupied MOT boats disable wave sim, so tracker Y stays at the mount snapshot. SAI must
-        // follow the chunk water surface or the hull hovers through waterfalls/slopes.
+    void predictedBoatApproachesWaterSurfaceInsteadOfTeleporting() {
+        // Occupied MOT boats disable wave sim, so tracker Y stays at the mount snapshot. Hard
+        // snapping to the water surface teleports the hull; approach one step per auth tick.
         final Position3f frozenTracker = new Position3f(10F, 70.375F, -3F);
         final Position3f steeredJavaFoot = new Position3f(10.2F, 69.9F, -3.1F);
         final ItemUseAirClickTarget.WorldView world = waterWorld(10, 64, -3, 0);
@@ -164,25 +164,40 @@ class RidingTrackerTest {
         final Position3f auth = RidingTracker.predictedBoatAuthInputPosition(steeredJavaFoot, frozenTracker, 0.375F, world);
         final Position3f sync = RidingTracker.predictedBoatJavaSyncPosition(steeredJavaFoot, frozenTracker, 0.375F, world);
 
-        // Source water maxY = blockY + 1 - (0+1)/9 = 64 + 8/9 ~= 64.888...
-        final float expectedNetworkY = 64F + (8F / 9F);
+        final float waterNetworkY = 64F + (8F / 9F);
+        final float expectedNetworkY = 70.375F - 0.045F;
         assertEquals(10.2F, auth.x(), 1.0e-6F);
         assertEquals(expectedNetworkY, auth.y(), 1.0e-5F);
         assertEquals(-3.1F, auth.z(), 1.0e-6F);
         assertEquals(expectedNetworkY - 0.375F, sync.y(), 1.0e-5F);
-        assertTrue(Math.abs(auth.y() - frozenTracker.y()) > 5F, "must leave the frozen mount-height snapshot");
+        assertTrue(auth.y() > waterNetworkY + 1F, "must not teleport all the way to the water in one tick");
+        assertTrue(auth.y() < frozenTracker.y(), "must start descending toward the water");
     }
 
     @Test
-    void predictedBoatFollowsLowerWaterEvenWhenJavaFootLagsBehind() {
-        final Position3f tracker = new Position3f(10F, 65.0F, -3F);
-        // JE foot has not fully dropped yet; water sample still wins so the hull does not hover.
+    void predictedBoatEventuallyReachesLowerWaterAcrossAuthTicks() {
+        Position3f tracker = new Position3f(10F, 65.0F, -3F);
         final Position3f laggingJavaFoot = new Position3f(10F, 64.7F, -3F);
         final ItemUseAirClickTarget.WorldView world = waterWorld(10, 63, -3, 0);
-
-        final Position3f auth = RidingTracker.predictedBoatAuthInputPosition(laggingJavaFoot, tracker, 0.375F, world);
         final float expectedNetworkY = 63F + (8F / 9F);
-        assertEquals(expectedNetworkY, auth.y(), 1.0e-5F);
+
+        float authY = tracker.y();
+        for (int i = 0; i < 64; i++) {
+            final Position3f auth = RidingTracker.predictedBoatAuthInputPosition(laggingJavaFoot, tracker, 0.375F, world);
+            authY = auth.y();
+            tracker = new Position3f(tracker.x(), authY, tracker.z());
+            if (Math.abs(authY - expectedNetworkY) <= 1.0e-5F) {
+                break;
+            }
+        }
+        assertEquals(expectedNetworkY, authY, 1.0e-5F);
+    }
+
+    @Test
+    void approachBoatNetworkYMovesAtMostOneStep() {
+        assertEquals(10.045F, RidingTracker.approachBoatNetworkY(10F, 12F), 1.0e-6F);
+        assertEquals(9.955F, RidingTracker.approachBoatNetworkY(10F, 8F), 1.0e-6F);
+        assertEquals(10.02F, RidingTracker.approachBoatNetworkY(10F, 10.02F), 1.0e-6F);
     }
 
     @Test

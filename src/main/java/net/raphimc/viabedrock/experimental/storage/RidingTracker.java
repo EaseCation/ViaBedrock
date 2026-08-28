@@ -62,8 +62,12 @@ public class RidingTracker extends StoredObject {
     // MOT EntityBoat dimensions. Occupied boats disable wave sim, so ViaBedrock must derive a
     // resting network Y from the water surface instead of freezing the last tracker snapshot.
     private static final float BOAT_WIDTH = 1.4F;
-    // Only snap the JE hull when it drifts beyond this; every-tick MOVE_VEHICLE caused jitter.
-    private static final float BOAT_CLIENT_SYNC_EPSILON = 0.04F;
+    // Visual snap threshold. Keep this larger than the per-tick approach step so MOVE_VEHICLE
+    // does not fight JE buoyancy every frame (user-visible jitter).
+    private static final float BOAT_CLIENT_SYNC_EPSILON = 0.12F;
+    // Soft vertical approach toward the resting water / grounded target. Instant snaps felt like
+    // teleports; MOT occupied boats also move gradually when wave sim is off and onInput steers.
+    private static final float BOAT_VERTICAL_APPROACH_STEP = 0.045F;
     // Reject continuous JE buoyancy climbs while still allowing waterfall / slope drops.
     private static final float BOAT_MAX_JAVA_CLIMB = 0.75F;
 
@@ -175,9 +179,9 @@ public class RidingTracker extends StoredObject {
                 final MoveVehicleInput vehicleInput = this.lastMoveVehicleInputFresh ? this.lastMoveVehicleInput : null;
                 final float vehiclePitch = vehicleInput != null ? vehicleInput.pitch() : vehicle.rotation().x();
                 final float vehicleYaw = vehicleInput != null ? vehicleInput.yaw() : vehicle.rotation().y();
-                // Snap JE only when the visual hull drifted from the water-aware SAI target.
-                // Also keep the ViaBedrock tracker Y aligned so later ticks do not re-freeze the
-                // spawn-height snapshot (#1-2 hover / jitter after hard pin).
+                // Soft-follow the water-aware SAI target. Snap JE only when the visual hull
+                // drifted beyond the larger epsilon so MOVE_VEHICLE does not jitter every tick.
+                // Keep the ViaBedrock tracker Y aligned with the approached network Y.
                 this.syncPredictedBoatToJavaClient(vehicle, vehicleInput);
                 vehicle.setPosition(new Position3f(authInputPosition.x(), authInputPosition.y(), authInputPosition.z()));
                 clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.IsInClientPredictedVehicle);
@@ -550,12 +554,12 @@ public class RidingTracker extends StoredObject {
         final float javaOrTrackerNetworkY = javaVehiclePosition != null ? javaVehiclePosition.y() + vehicleEyeOffset : trackerNetworkY;
         final Float waterNetworkY = resolveBoatWaterNetworkY(world, sampleX, trackerNetworkY, javaOrTrackerNetworkY, sampleZ);
 
+        final float target;
         if (waterNetworkY != null) {
-            // Occupied MOT boats do not refresh network Y themselves. Stick to the sampled water
-            // surface so slopes / waterfalls lower the hull instead of leaving it hovering.
-            return waterNetworkY;
-        }
-        if (javaVehiclePosition != null) {
+            // Occupied MOT boats disable wave sim, so tracker Y never follows slopes/waterfalls.
+            // Aim at the resting water surface, but approach it gradually (no teleport snaps).
+            target = waterNetworkY;
+        } else if (javaVehiclePosition != null) {
             final float javaNetworkY = javaOrTrackerNetworkY;
             final float delta = javaNetworkY - trackerNetworkY;
             // No water sample (land / unloaded chunks): allow small grounded corrections and
@@ -563,10 +567,22 @@ public class RidingTracker extends StoredObject {
             if (Math.abs(delta) <= BOAT_CLIENT_SYNC_EPSILON
                     || (delta < 0F && delta >= -BOAT_MAX_JAVA_CLIMB)
                     || Math.abs(delta) <= BOAT_MAX_JAVA_CLIMB * 0.25F) {
-                return javaNetworkY;
+                target = javaNetworkY;
+            } else {
+                target = trackerNetworkY;
             }
+        } else {
+            target = trackerNetworkY;
         }
-        return trackerNetworkY;
+        return approachBoatNetworkY(trackerNetworkY, target);
+    }
+
+    static float approachBoatNetworkY(final float currentNetworkY, final float targetNetworkY) {
+        final float delta = targetNetworkY - currentNetworkY;
+        if (Math.abs(delta) <= BOAT_VERTICAL_APPROACH_STEP) {
+            return targetNetworkY;
+        }
+        return currentNetworkY + Math.copySign(BOAT_VERTICAL_APPROACH_STEP, delta);
     }
 
     static Position3f predictedBoatAuthInputFromVehicle(final Position3f vehicleNetworkPosition, final float vehicleEyeOffset) {
