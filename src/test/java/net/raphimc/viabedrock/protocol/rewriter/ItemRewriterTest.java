@@ -44,6 +44,8 @@ import com.viaversion.viaversion.libs.fastutil.ints.Int2IntOpenHashMap;
 import com.viaversion.viaversion.protocol.ProtocolPipelineImpl;
 import com.viaversion.viaversion.protocols.v1_20_3to1_20_5.data.PotionEffects1_20_5;
 import com.viaversion.viaversion.protocols.v1_20_3to1_20_5.data.Potions1_20_5;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.api.util.TextUtil;
@@ -89,6 +91,7 @@ class ItemRewriterTest {
     private static final int WOOL_ID = 104;
     private static final int CUSTOM_ITEM_ID = 105;
     private static final int POTION_ID = 106;
+    private static final int BED_ID = 107;
     private static final int SYNCED_CUSTOM_JAVA_ID = 200_000;
     private static final String CUSTOM_IDENTIFIER = "example:wand";
 
@@ -122,7 +125,8 @@ class ItemRewriterTest {
                 itemEntry("minecraft:stone", STONE_ID),
                 itemEntry("minecraft:wool", WOOL_ID),
                 itemEntry(CUSTOM_IDENTIFIER, CUSTOM_ITEM_ID),
-                itemEntry("minecraft:potion", POTION_ID)
+                itemEntry("minecraft:potion", POTION_ID),
+                itemEntry("minecraft:bed", BED_ID)
         });
         this.user.put(this.rewriter);
     }
@@ -181,6 +185,34 @@ class ItemRewriterTest {
         assertEquals(WOOL_ID, bedrockItem.identifier());
         assertEquals(0, bedrockItem.data());
         assertEquals(3, bedrockItem.amount());
+    }
+
+    @Test
+    void coloredBedsKeepMetaInsteadOfUndyedBlockRuntime() {
+        final StructuredItem javaRedBed = creativeJavaItem("minecraft:red_bed", 1);
+        final BedrockItem bedrockItem = this.rewriter.bedrockItem(javaRedBed);
+
+        assertFalse(bedrockItem.isEmpty());
+        assertEquals(BED_ID, bedrockItem.identifier());
+        assertEquals(14, bedrockItem.data());
+        assertEquals(0, bedrockItem.blockRuntimeId());
+
+        final Item roundTrip = this.rewriter.javaItem(bedrockItem.copy());
+        assertEquals(javaRedBed.identifier(), roundTrip.identifier());
+        assertEquals(1, roundTrip.amount());
+
+        final BedrockItem onWire = new BedrockItem(BED_ID, (short) 14, (byte) 1);
+        onWire.setBlockRuntimeId(12345);
+        final ByteBuf buffer = Unpooled.buffer();
+        try {
+            this.rewriter.itemType().write(buffer, onWire);
+            final BedrockItem decoded = this.rewriter.itemType().read(buffer);
+            assertEquals(14, decoded.data());
+            assertEquals(0, decoded.blockRuntimeId());
+            assertEquals(javaRedBed.identifier(), this.rewriter.javaItem(decoded).identifier());
+        } finally {
+            buffer.release();
+        }
     }
 
     @Test
