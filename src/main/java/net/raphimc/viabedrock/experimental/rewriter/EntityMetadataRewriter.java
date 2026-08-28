@@ -144,6 +144,12 @@ public class EntityMetadataRewriter {
                     upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.CHEST), VersionedTypes.V26_1.entityDataTypes().booleanType, bedrockFlags.contains(ActorFlags.CHESTED)));
                 }
 
+                // Java 1.21.5+ draws saddles from SADDLE equipment, not ABSTRACT_HORSE FLAGS 0x04.
+                // MOT only sets ActorFlags.SADDLED (EntityHorseBase/Pig/Strider.setSaddled).
+                if (usesJavaSaddleEquipment(entity.javaType())) {
+                    sendSaddleEquipment(entity, bedrockFlags.contains(ActorFlags.SADDLED));
+                }
+
                 if (entity.javaType().isOrHasParent(EntityTypes1_21_11.TAMABLE_ANIMAL)) {
                     upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.FLAGS), VersionedTypes.V26_1.entityDataTypes().byteType, tamableFlags(bedrockFlags)));
                 }
@@ -1584,6 +1590,49 @@ public class EntityMetadataRewriter {
             default -> null;
         };
         return javaRegistryIndex("minecraft:villager_type", name);
+    }
+
+    static boolean usesJavaSaddleEquipment(final EntityTypes1_21_11 type) {
+        if (type.isOrHasParent(EntityTypes1_21_11.LLAMA) || type.isOrHasParent(EntityTypes1_21_11.CAMEL)) {
+            return false;
+        }
+        return type.isOrHasParent(EntityTypes1_21_11.ABSTRACT_HORSE)
+                || type.is(EntityTypes1_21_11.PIG)
+                || type.is(EntityTypes1_21_11.STRIDER);
+    }
+
+    static boolean shouldSendJavaSaddleEquipment(final Boolean lastSent, final boolean saddled) {
+        if (lastSent != null && lastSent == saddled) {
+            return false;
+        }
+        return saddled || lastSent != null;
+    }
+
+    static Item javaSaddleEquipmentItem(final Integer saddleItemId, final boolean saddled) {
+        if (!saddled || saddleItemId == null) {
+            return StructuredItem.empty();
+        }
+        return new StructuredItem(saddleItemId, 1, ProtocolConstants.createStructuredDataContainer());
+    }
+
+    static void sendSaddleEquipment(final Entity entity, final boolean saddled) {
+        if (!shouldSendJavaSaddleEquipment(entity.javaSaddleEquipped(), saddled)) {
+            return;
+        }
+        final UserConnection user = entity.user();
+        if (user == null) {
+            return;
+        }
+        final Integer saddleId = BedrockProtocol.MAPPINGS.getJavaItems().get("minecraft:saddle");
+        if (saddled && saddleId == null) {
+            return;
+        }
+        final PacketWrapper equipment = PacketWrapper.create(ClientboundPackets26_1.SET_EQUIPMENT, user);
+        equipment.write(Types.VAR_INT, entity.javaId());
+        equipment.write(Types.BYTE, (byte) EquipmentSlot.SADDLE.ordinal());
+        equipment.write(VersionedTypes.V26_1.item, javaSaddleEquipmentItem(saddleId, saddled));
+        equipment.send(BedrockProtocol.class);
+        entity.setJavaSaddleEquipped(saddled);
     }
 
     static void sendCopperGolemFlowerEquipment(final Entity entity, final Boolean hasFlower) {
