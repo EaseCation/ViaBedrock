@@ -165,7 +165,7 @@ public class ClientPlayerPackets {
                 || action == PlayerActionAction.STAB;
     }
 
-    static boolean scheduleDelayedMotBreak(final ClientPlayerEntity clientPlayer, final ChunkTracker chunkTracker, final BlockPosition position, final Direction direction) {
+    public static boolean scheduleDelayedMotBreak(final ClientPlayerEntity clientPlayer, final ChunkTracker chunkTracker, final BlockPosition position, final Direction direction) {
         if (clientPlayer == null) {
             return false;
         }
