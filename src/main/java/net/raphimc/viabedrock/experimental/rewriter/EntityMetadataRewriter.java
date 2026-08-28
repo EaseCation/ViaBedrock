@@ -55,6 +55,7 @@ import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
 
 import java.util.List;
 import java.util.Set;
+import java.util.function.LongFunction;
 import java.util.logging.Level;
 
 public class EntityMetadataRewriter {
@@ -733,6 +734,18 @@ public class EntityMetadataRewriter {
                 } else if (entity.javaType().is(EntityTypes1_21_11.VEX)) {
                     final byte flags = (byte) (targetId != -1 && targetId != 0 ? 0x01 : 0);
                     upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.FLAGS), VersionedTypes.V26_1.entityDataTypes().byteType, flags));
+                } else if (entity.javaType().is(EntityTypes1_21_11.FISHING_BOBBER)) {
+                    // MOT EntityFishingHook.setTarget writes DATA_TARGET_EID. Java fishing
+                    // bobbers store HOOKED_ENTITY as the hooked Java id plus one (0 = none).
+                    final Integer hookedEntity = fishingBobberHookedEntity(targetId, uniqueId -> {
+                        final Entity hooked = entityTracker.getEntityByUid(uniqueId);
+                        return hooked != null ? hooked.javaId() : null;
+                    });
+                    if (hookedEntity == null) {
+                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to find TARGET entity with id " + targetId + " for entity " + entity.type());
+                        break;
+                    }
+                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.HOOKED_ENTITY), VersionedTypes.V26_1.entityDataTypes().varIntType, hookedEntity));
                 } else if (targetId != 0 && targetId != -1)  {
                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received TARGET for non-GUARDIAN entity " + entity.type() + " with non-zero value " + targetId);
                 }
@@ -1406,6 +1419,19 @@ public class EntityMetadataRewriter {
     private static void upsert(final List<EntityData> javaEntityData, final EntityData data) {
         javaEntityData.removeIf(existing -> existing.id() == data.id());
         javaEntityData.add(data);
+    }
+
+    /**
+     * Java fishing bobber {@code HOOKED_ENTITY} is the hooked entity's Java id plus one
+     * (vanilla / Geyser convention). {@code 0} means not hooked. MOT writes
+     * {@code DATA_TARGET_EID}; {@code null} means the target unique id is not in the tracker yet.
+     */
+    static Integer fishingBobberHookedEntity(final long targetUniqueId, final LongFunction<Integer> javaIdLookup) {
+        if (targetUniqueId == 0L || targetUniqueId == -1L) {
+            return 0;
+        }
+        final Integer javaId = javaIdLookup.apply(targetUniqueId);
+        return javaId == null ? null : javaId + 1;
     }
 
     // Bedrock villager VARIANT (profession) -> Java profession registry id. Inverse of Geyser's
