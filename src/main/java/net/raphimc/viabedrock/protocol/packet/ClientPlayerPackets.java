@@ -46,6 +46,7 @@ import net.raphimc.viabedrock.experimental.inventory.ItemUseHandContext;
 import net.raphimc.viabedrock.experimental.model.PlayerAuthInputContext;
 import net.raphimc.viabedrock.experimental.model.inventory.BedrockInventoryTransaction;
 import net.raphimc.viabedrock.experimental.rewriter.InventoryTransactionRewriter;
+import net.raphimc.viabedrock.experimental.storage.BlockBreakingProgressTracker;
 import net.raphimc.viabedrock.experimental.storage.RidingTracker;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
@@ -162,6 +163,62 @@ public class ClientPlayerPackets {
                 || action == PlayerActionAction.DROP_ALL_ITEMS
                 || action == PlayerActionAction.SWAP_ITEM_WITH_OFFHAND
                 || action == PlayerActionAction.STAB;
+    }
+
+    static boolean scheduleDelayedMotBreak(final ClientPlayerEntity clientPlayer, final ChunkTracker chunkTracker, final BlockPosition position, final Direction direction) {
+        if (clientPlayer == null) {
+            return false;
+        }
+        final String javaIdentifier = javaBlockIdentifier(chunkTracker, position);
+        final int delayTicks = InstantBreakBlocks.delayedMotBreakTicks(javaIdentifier);
+        if (delayTicks <= 0) {
+            clientPlayer.clearDelayedMotBreak();
+            return false;
+        }
+        clientPlayer.scheduleDelayedMotBreak(position, direction, clientPlayer.age() + delayTicks);
+        return true;
+    }
+
+    static void completeDueDelayedMotBreak(final UserConnection user, final ClientPlayerEntity clientPlayer) {
+        if (user == null || clientPlayer == null) {
+            return;
+        }
+        final ClientPlayerEntity.DelayedMotBreak due = clientPlayer.pollDueDelayedMotBreak();
+        if (due == null) {
+            return;
+        }
+        final GameSessionStorage gameSession = user.get(GameSessionStorage.class);
+        final ChunkTracker chunkTracker = user.get(ChunkTracker.class);
+        if (gameSession == null || chunkTracker == null) {
+            return;
+        }
+        final int javaBlockStateId = chunkTracker.getJavaBlockState(due.position());
+        // Delayed START-only blocks must not share a tick with StartDestroy. MOT 860
+        // EnumMap iterates Predict before Continue, so Continue after Predict restarts mining.
+        if (!gameSession.isBlockBreakingServerAuthoritative()) {
+            clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.StopDestroyBlock));
+            clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.CrackBlock, due.position(), due.direction().ordinal()));
+        } else if (ViaBedrock.getConfig() != null && ViaBedrock.getConfig().shouldEmulateNetEaseClient()) {
+            clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.PredictDestroyBlock, due.position(), due.direction().ordinal()));
+        } else {
+            clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.ContinueDestroyBlock, due.position(), due.direction().ordinal()));
+            clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.PredictDestroyBlock, due.position(), due.direction().ordinal()));
+        }
+        chunkTracker.handleBlockChange(due.position(), 0, chunkTracker.bedrockAirId());
+        PacketFactory.sendJavaBlockUpdate(user, due.position(), ProtocolConstants.JAVA_AIR_ID);
+        final BlockBreakingProgressTracker tracker = user.get(BlockBreakingProgressTracker.class);
+        if (tracker != null) {
+            tracker.finishMining(due.position(), 0, javaBlockStateId);
+        }
+    }
+
+    static String javaBlockIdentifier(final ChunkTracker chunkTracker, final BlockPosition position) {
+        if (chunkTracker == null || position == null) {
+            return null;
+        }
+        final int javaBlockStateId = chunkTracker.getJavaBlockState(position);
+        final BlockState javaBlockState = BedrockProtocol.MAPPINGS.getJavaBlockStates().inverse().get(javaBlockStateId);
+        return javaBlockState != null ? javaBlockState.identifier() : null;
     }
 
     private static void finishBlockBreak(final UserConnection user, final GameSessionStorage gameSession, final ClientPlayerEntity clientPlayer, final ChunkTracker chunkTracker, final BlockPosition position, final Direction direction) {
@@ -519,18 +576,22 @@ public class ClientPlayerPackets {
                         // Instant-break cases (creative, 0 destroy time, shears on leaves): Java only
                         // sends START_DESTROY_BLOCK and never a STOP. MOT SAI ignores CreativeDestroyBlock(13)
                         // and only breaks on PredictDestroyBlock, so finish in this same tick.
+                        clientPlayer.clearDelayedMotBreak();
                         finishBlockBreak(wrapper.user(), gameSession, clientPlayer, chunkTracker, position, direction);
                     } else {
+                        scheduleDelayedMotBreak(clientPlayer, chunkTracker, position, direction);
                         clientPlayer.setBlockBreakingInfo(new ClientPlayerEntity.BlockBreakingInfo(position, direction));
                     }
                 }
                 case ABORT_DESTROY_BLOCK -> {
                     final int abortFacing = abortDestroyFacing(direction, clientPlayer.blockBreakingInfo());
+                    clientPlayer.clearDelayedMotBreak();
                     clientPlayer.setBlockBreakingInfo(null);
                     clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.AbortDestroyBlock, position, abortFacing));
                 }
                 case STOP_DESTROY_BLOCK -> {
                     clientPlayer.cancelNextSwingPacket();
+                    clientPlayer.clearDelayedMotBreak();
                     clientPlayer.setBlockBreakingInfo(null);
                     finishBlockBreak(wrapper.user(), gameSession, clientPlayer, chunkTracker, position, direction);
                 }
@@ -735,10 +796,12 @@ public class ClientPlayerPackets {
 
             if (!clientPlayer.isInitiallySpawned() || clientPlayer.isDead()) {
                 wrapper.cancel();
+                clientPlayer.clearDelayedMotBreak();
                 discardPendingAuthInput(clientPlayer);
                 clientPlayer.deferredEntityActions().clear();
                 return;
             }
+            completeDueDelayedMotBreak(wrapper.user(), clientPlayer);
             ExperimentalFeatures.retryPromotedOffhandRestore(wrapper.user(), clientPlayer);
             EntityInteractionPacketSender.flushDeferred(wrapper.user(), clientPlayer);
 

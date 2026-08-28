@@ -112,6 +112,7 @@ public class ClientPlayerEntity extends PlayerEntity {
     private GameMode javaGameMode;
     private boolean cancelNextSwingPacket;
     private BlockBreakingInfo blockBreakingInfo;
+    private DelayedMotBreak delayedMotBreak;
     private boolean usingItem;
     private int usingItemStartAge = -1;
     private ItemUseSnapshot itemUseSnapshot;
@@ -623,6 +624,24 @@ public class ClientPlayerEntity extends PlayerEntity {
         this.blockBreakingInfo = blockBreakingInfo;
     }
 
+    public void scheduleDelayedMotBreak(final BlockPosition position, final Direction direction, final int dueAge) {
+        this.delayedMotBreak = new DelayedMotBreak(position, direction, dueAge);
+    }
+
+    public void clearDelayedMotBreak() {
+        this.delayedMotBreak = null;
+    }
+
+    public DelayedMotBreak pollDueDelayedMotBreak() {
+        if (this.delayedMotBreak == null || this.age < this.delayedMotBreak.dueAge()) {
+            return null;
+        }
+        final DelayedMotBreak due = this.delayedMotBreak;
+        this.delayedMotBreak = null;
+        this.blockBreakingInfo = null;
+        return due;
+    }
+
     public boolean isUsingItem() {
         return this.usingItem;
     }
@@ -1036,6 +1055,9 @@ public class ClientPlayerEntity extends PlayerEntity {
     }
 
     public record BlockBreakingInfo(BlockPosition position, Direction direction) {
+    }
+
+    public record DelayedMotBreak(BlockPosition position, Direction direction, int dueAge) {
     }
 
     public record ItemUseSnapshot(InteractionHand hand, byte containerId, int containerSlot, int transactionHotbarSlot, BedrockItem item) {

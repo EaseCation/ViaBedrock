@@ -79,6 +79,7 @@ import net.raphimc.viabedrock.experimental.task.ScriptDebugTextTickTask;
 import net.raphimc.viabedrock.experimental.util.JavaMapPaletteUtil;
 import net.raphimc.viabedrock.experimental.util.ProtocolUtil;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
+import net.raphimc.viabedrock.protocol.packet.ClientPlayerPackets;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.BedrockMappingData;
@@ -801,6 +802,7 @@ public class ExperimentalFeatures {
             // MOT PredictDestroy already aborts then completes. A trailing Abort
             // is stored in MOT's EnumMap before Predict, so GanAC/MOT would see
             // Abort first and drop the break. Mirror finishBlockBreak: Start+Predict.
+            clientPlayer.clearDelayedMotBreak();
             for (PlayerActionType type : overlayCreativeBreakActions()) {
                 clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(
                         type, position, direction.ordinal()));
@@ -809,12 +811,14 @@ public class ExperimentalFeatures {
             // Survival overlay is Java ATTACK on a fake display — there is no STOP_DESTROY.
             // MOT only finishes on PredictDestroyBlock. Instant (hardness 0) overlays must
             // Start+Predict like creative. Non-instant overlays keep CrackBlock via SWING.
+            clientPlayer.clearDelayedMotBreak();
             for (PlayerActionType type : overlayCreativeBreakActions()) {
                 clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(
                         type, position, direction.ordinal()));
             }
         } else {
             clientPlayer.setBlockBreakingInfo(new ClientPlayerEntity.BlockBreakingInfo(position, direction));
+            ClientPlayerPackets.scheduleDelayedMotBreak(clientPlayer, user.get(ChunkTracker.class), position, direction);
         }
     }
 
