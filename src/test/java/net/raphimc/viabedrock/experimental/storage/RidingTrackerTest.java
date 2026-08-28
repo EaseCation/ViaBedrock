@@ -147,7 +147,7 @@ class RidingTrackerTest {
         final Position3f sync = RidingTracker.predictedBoatJavaSyncPosition(buoyantJavaFoot, motNetworkBoat, 0.375F);
 
         assertEquals(11F, sync.x(), 1.0e-6F);
-        assertEquals(65.0F - 0.045F, sync.y(), 1.0e-6F);
+        assertEquals(65.0F - 0.25F, sync.y(), 1.0e-6F);
         assertEquals(-2F, sync.z(), 1.0e-6F);
         assertTrue(sync.y() < buoyantJavaFoot.y(), "must start pulling the JE foot down");
         assertTrue(sync.y() > 64.0F, "must not teleport to the resting foot in one packet");
@@ -166,7 +166,7 @@ class RidingTrackerTest {
 
         final float waterNetworkY = 64F + (8F / 9F);
         final float expectedNetworkY = 70.375F - 0.045F;
-        final float expectedSyncFoot = 69.9F - 0.045F;
+        final float expectedSyncFoot = 69.9F - 0.25F;
         assertEquals(10.2F, auth.x(), 1.0e-6F);
         assertEquals(expectedNetworkY, auth.y(), 1.0e-5F);
         assertEquals(-3.1F, auth.z(), 1.0e-6F);
@@ -204,10 +204,17 @@ class RidingTrackerTest {
     @Test
     void shouldSyncPredictedBoatJavaYUsesTakeoffAndHoverMargins() {
         final float targetFoot = 64.0F;
-        assertFalse(RidingTracker.shouldSyncPredictedBoatJavaY(64.10F, targetFoot));
-        assertFalse(RidingTracker.shouldSyncPredictedBoatJavaY(63.80F, targetFoot));
-        assertTrue(RidingTracker.shouldSyncPredictedBoatJavaY(64.21F, targetFoot));
-        assertTrue(RidingTracker.shouldSyncPredictedBoatJavaY(63.64F, targetFoot));
+        assertFalse(RidingTracker.shouldSyncPredictedBoatJavaY(64.50F, targetFoot));
+        assertFalse(RidingTracker.shouldSyncPredictedBoatJavaY(63.20F, targetFoot));
+        assertTrue(RidingTracker.shouldSyncPredictedBoatJavaY(64.86F, targetFoot));
+        assertTrue(RidingTracker.shouldSyncPredictedBoatJavaY(62.99F, targetFoot));
+    }
+
+    @Test
+    void stabilizeBoatRestingNetworkYIgnoresSmallFlicker() {
+        assertEquals(64.5F, RidingTracker.stabilizeBoatRestingNetworkY(64.5F, 64.55F), 1.0e-6F);
+        assertEquals(64.8F, RidingTracker.stabilizeBoatRestingNetworkY(64.5F, 64.8F), 1.0e-6F);
+        assertEquals(10F, RidingTracker.stabilizeBoatRestingNetworkY(null, 10F), 1.0e-6F);
     }
 
     @Test

@@ -64,12 +64,18 @@ public class RidingTracker extends StoredObject {
     private static final float BOAT_WIDTH = 1.4F;
     // Absolute no-op epsilon for tiny float noise when comparing visual vs sync target.
     private static final float BOAT_CLIENT_SYNC_EPSILON = 0.02F;
-    // Soft vertical approach for SAI/tracker and for rare JE corrections.
+    // Soft vertical approach for SAI/tracker. Keep this small so water/land follow stays smooth.
     private static final float BOAT_VERTICAL_APPROACH_STEP = 0.045F;
-    // Dead zone around the FINAL resting foot Y. Inside this band we do not send MOVE_VEHICLE,
-    // otherwise JE buoyancy (~0.045/tick) fights our sync every few ticks and jitters.
-    private static final float BOAT_JAVA_SYNC_TAKEOFF_MARGIN = 0.20F;
-    private static final float BOAT_JAVA_SYNC_HOVER_MARGIN = 0.35F;
+    // Rare JE corrections use a larger step so one MOVE_VEHICLE actually catches takeoff without
+    // needing a burst of packets (bursts are what the player sees as severe jitter while moving).
+    private static final float BOAT_JAVA_SYNC_APPROACH_STEP = 0.25F;
+    // Wide dead zone: JE boats bob more while paddling. Only correct clear takeoff / hover.
+    private static final float BOAT_JAVA_SYNC_TAKEOFF_MARGIN = 0.85F;
+    private static final float BOAT_JAVA_SYNC_HOVER_MARGIN = 1.00F;
+    // Ignore resting-target flicker from sampling adjacent water/ground columns while steering.
+    private static final float BOAT_RESTING_TARGET_HYSTERESIS = 0.12F;
+    // Minimum gap between clientbound MOVE_VEHICLE Y corrections.
+    private static final int BOAT_JAVA_SYNC_COOLDOWN_TICKS = 25;
     // Reject continuous JE buoyancy climbs while still allowing waterfall / slope drops.
     private static final float BOAT_MAX_JAVA_CLIMB = 0.75F;
 
@@ -84,6 +90,8 @@ public class RidingTracker extends StoredObject {
     private Long pendingDismountVehicleUniqueId;
     private int pendingDismountTicks;
     private Position3f lastSafeDismountPosition;
+    private Float lastBoatRestingNetworkY;
+    private int boatJavaSyncCooldownTicks;
 
     public RidingTracker(final UserConnection user) {
         super(user);
@@ -449,11 +457,13 @@ public class RidingTracker extends StoredObject {
             final Position3f javaVehiclePosition = this.lastMoveVehicleInputFresh && this.lastMoveVehicleInput != null
                     ? this.lastMoveVehicleInput.position()
                     : null;
-            return predictedBoatAuthInputPosition(
-                    javaVehiclePosition,
-                    vehicleNetworkPosition,
-                    vehicle.eyeOffset(),
-                    this.boatWorldView());
+            final ItemUseAirClickTarget.WorldView world = this.boatWorldView();
+            final float networkY = this.predictedBoatNetworkYStabilized(
+                    javaVehiclePosition, vehicleNetworkPosition, vehicle.eyeOffset(), world);
+            if (javaVehiclePosition != null) {
+                return new Position3f(javaVehiclePosition.x(), networkY, javaVehiclePosition.z());
+            }
+            return new Position3f(vehicleNetworkPosition.x(), networkY, vehicleNetworkPosition.z());
         }
 
         final Position3f vehiclePosition = vehicle.position();
@@ -555,6 +565,17 @@ public class RidingTracker extends StoredObject {
                 boatTargetNetworkY(javaVehiclePosition, vehicleNetworkPosition, vehicleEyeOffset, world));
     }
 
+    private float predictedBoatNetworkYStabilized(
+            final Position3f javaVehiclePosition,
+            final Position3f vehicleNetworkPosition,
+            final float vehicleEyeOffset,
+            final ItemUseAirClickTarget.WorldView world) {
+        final float sampled = boatTargetNetworkY(javaVehiclePosition, vehicleNetworkPosition, vehicleEyeOffset, world);
+        final float stabilized = stabilizeBoatRestingNetworkY(this.lastBoatRestingNetworkY, sampled);
+        this.lastBoatRestingNetworkY = stabilized;
+        return approachBoatNetworkY(vehicleNetworkPosition.y(), stabilized);
+    }
+
     /**
      * Final resting network Y (water surface / grounded), without the per-tick approach.
      * JE MOVE_VEHICLE must aim at this value; syncing to the intermediate approached Y was
@@ -607,8 +628,22 @@ public class RidingTracker extends StoredObject {
         return dy > BOAT_JAVA_SYNC_TAKEOFF_MARGIN || dy < -BOAT_JAVA_SYNC_HOVER_MARGIN;
     }
 
+    static float stabilizeBoatRestingNetworkY(final Float previousNetworkY, final float sampledNetworkY) {
+        if (previousNetworkY == null) {
+            return sampledNetworkY;
+        }
+        if (Math.abs(sampledNetworkY - previousNetworkY) <= BOAT_RESTING_TARGET_HYSTERESIS) {
+            return previousNetworkY;
+        }
+        return sampledNetworkY;
+    }
+
     static float approachBoatJavaSyncFootY(final float visualFootY, final float targetFootY) {
-        return approachBoatNetworkY(visualFootY, targetFootY);
+        final float delta = targetFootY - visualFootY;
+        if (Math.abs(delta) <= BOAT_JAVA_SYNC_APPROACH_STEP) {
+            return targetFootY;
+        }
+        return visualFootY + Math.copySign(BOAT_JAVA_SYNC_APPROACH_STEP, delta);
     }
 
     static Position3f predictedBoatAuthInputFromVehicle(final Position3f vehicleNetworkPosition, final float vehicleEyeOffset) {
@@ -823,16 +858,27 @@ public class RidingTracker extends StoredObject {
     }
 
     private void syncPredictedBoatToJavaClient(final Entity vehicle, final MoveVehicleInput vehicleInput) {
+        if (this.boatJavaSyncCooldownTicks > 0) {
+            this.boatJavaSyncCooldownTicks--;
+            return;
+        }
         final ItemUseAirClickTarget.WorldView world = this.boatWorldView();
         final Position3f visual = vehicleInput != null ? vehicleInput.position() : null;
-        final float targetNetworkY = boatTargetNetworkY(visual, vehicle.position(), vehicle.eyeOffset(), world);
+        final float sampledTargetNetworkY = boatTargetNetworkY(visual, vehicle.position(), vehicle.eyeOffset(), world);
+        final float targetNetworkY = stabilizeBoatRestingNetworkY(this.lastBoatRestingNetworkY, sampledTargetNetworkY);
+        this.lastBoatRestingNetworkY = targetNetworkY;
         final float targetFootY = targetNetworkY - vehicle.eyeOffset();
-        // Near the final resting height, leave JE alone. Syncing to the intermediate approached
-        // tracker Y (or to the exact water foot every few buoyancy ticks) was the remaining jitter.
+        // Wide dead zone + cooldown: paddling makes JE bob; frequent MOVE_VEHICLE Y corrections
+        // were still fighting buoyancy and looking like severe jitter until the boat stopped.
         if (visual != null && !shouldSyncPredictedBoatJavaY(visual.y(), targetFootY)) {
             return;
         }
-        final Position3f javaPosition = predictedBoatJavaSyncPosition(visual, vehicle.position(), vehicle.eyeOffset(), world);
+        final float syncFootY = visual != null
+                ? approachBoatJavaSyncFootY(visual.y(), targetFootY)
+                : approachBoatJavaSyncFootY(vehicle.position().y() - vehicle.eyeOffset(), targetFootY);
+        final float syncX = visual != null ? visual.x() : vehicle.position().x();
+        final float syncZ = visual != null ? visual.z() : vehicle.position().z();
+        final Position3f javaPosition = new Position3f(syncX, syncFootY, syncZ);
         final float yaw = vehicleInput != null ? vehicleInput.yaw() : vehicle.rotation().y();
         final float pitch = vehicleInput != null ? vehicleInput.pitch() : vehicle.rotation().x();
         if (visual != null
@@ -842,6 +888,7 @@ public class RidingTracker extends StoredObject {
             return;
         }
         RidingAnchorHelper.moveVehicle(this.user(), javaPosition, yaw, pitch);
+        this.boatJavaSyncCooldownTicks = BOAT_JAVA_SYNC_COOLDOWN_TICKS;
     }
 
     private Position3f safeDismountPosition(final Entity vehicle, final ClientPlayerEntity clientPlayer, final LocalRidingMode mode, final Position3f authInputPosition) {
@@ -971,6 +1018,8 @@ public class RidingTracker extends StoredObject {
         this.lastMoveVehicleInput = null;
         this.lastMoveVehicleInputFresh = false;
         this.lastSafeDismountPosition = null;
+        this.lastBoatRestingNetworkY = null;
+        this.boatJavaSyncCooldownTicks = 0;
         this.clearPendingDismount();
     }
 
