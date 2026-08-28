@@ -139,18 +139,18 @@ class RidingTrackerTest {
     }
 
     @Test
-    void predictedBoatJavaSyncKeepsMotFootYWhilePreservingSteerXZ() {
-        // Even after SAI Y is water-aware, JE local buoyancy can still climb visually. The
-        // clientbound MOVE_VEHICLE snap must keep the resting foot and steer XZ.
+    void predictedBoatJavaSyncSoftFollowsTargetFootWhilePreservingSteerXZ() {
+        // Large JE climb corrections still start from the visual foot and approach the resting
+        // target one step at a time (no teleport), while preserving steer XZ.
         final Position3f motNetworkBoat = new Position3f(10F, 64.375F, -3F);
         final Position3f buoyantJavaFoot = new Position3f(11F, 65.0F, -2F);
         final Position3f sync = RidingTracker.predictedBoatJavaSyncPosition(buoyantJavaFoot, motNetworkBoat, 0.375F);
 
         assertEquals(11F, sync.x(), 1.0e-6F);
-        assertEquals(64.0F, sync.y(), 1.0e-6F);
+        assertEquals(65.0F - 0.045F, sync.y(), 1.0e-6F);
         assertEquals(-2F, sync.z(), 1.0e-6F);
-        assertTrue(Math.abs(sync.y() - buoyantJavaFoot.y()) > 0.5F,
-                "JE buoyancy foot must be snapped back to the resting height");
+        assertTrue(sync.y() < buoyantJavaFoot.y(), "must start pulling the JE foot down");
+        assertTrue(sync.y() > 64.0F, "must not teleport to the resting foot in one packet");
     }
 
     @Test
@@ -166,10 +166,11 @@ class RidingTrackerTest {
 
         final float waterNetworkY = 64F + (8F / 9F);
         final float expectedNetworkY = 70.375F - 0.045F;
+        final float expectedSyncFoot = 69.9F - 0.045F;
         assertEquals(10.2F, auth.x(), 1.0e-6F);
         assertEquals(expectedNetworkY, auth.y(), 1.0e-5F);
         assertEquals(-3.1F, auth.z(), 1.0e-6F);
-        assertEquals(expectedNetworkY - 0.375F, sync.y(), 1.0e-5F);
+        assertEquals(expectedSyncFoot, sync.y(), 1.0e-5F);
         assertTrue(auth.y() > waterNetworkY + 1F, "must not teleport all the way to the water in one tick");
         assertTrue(auth.y() < frozenTracker.y(), "must start descending toward the water");
     }
@@ -201,6 +202,15 @@ class RidingTrackerTest {
     }
 
     @Test
+    void shouldSyncPredictedBoatJavaYUsesTakeoffAndHoverMargins() {
+        final float targetFoot = 64.0F;
+        assertFalse(RidingTracker.shouldSyncPredictedBoatJavaY(64.10F, targetFoot));
+        assertFalse(RidingTracker.shouldSyncPredictedBoatJavaY(63.80F, targetFoot));
+        assertTrue(RidingTracker.shouldSyncPredictedBoatJavaY(64.21F, targetFoot));
+        assertTrue(RidingTracker.shouldSyncPredictedBoatJavaY(63.64F, targetFoot));
+    }
+
+    @Test
     void predictedBoatAllowsSmallGroundedJavaCorrectionWithoutWater() {
         final Position3f tracker = new Position3f(10F, 64.375F, -3F);
         final Position3f groundedJavaFoot = new Position3f(10F, 64.01F, -3F);
@@ -209,11 +219,59 @@ class RidingTrackerTest {
     }
 
     @Test
+    void predictedBoatApproachesLandGroundInsteadOfHoveringOnCliff() {
+        // No water under the hull: previous code rejected large downward JE deltas and froze at
+        // the mount snapshot, so land cliffs left the boat floating. Soft-follow solid ground.
+        final Position3f frozenTracker = new Position3f(10F, 70.375F, -3F);
+        final Position3f fallingJavaFoot = new Position3f(10.1F, 68.5F, -3.1F);
+        final ItemUseAirClickTarget.WorldView world = solidWorld(10, 64, -3);
+
+        final float groundNetworkY = 64F + 1F + 0.375F;
+        assertEquals(groundNetworkY, RidingTracker.boatTargetNetworkY(fallingJavaFoot, frozenTracker, 0.375F, world), 1.0e-5F);
+
+        final Position3f auth = RidingTracker.predictedBoatAuthInputPosition(fallingJavaFoot, frozenTracker, 0.375F, world);
+        assertEquals(70.375F - 0.045F, auth.y(), 1.0e-5F);
+        assertTrue(auth.y() > groundNetworkY + 1F, "must not teleport to the cliff bottom in one tick");
+    }
+
+    @Test
+    void predictedBoatAllowsLargeLandDescentWithoutChunkSample() {
+        final Position3f tracker = new Position3f(10F, 70.375F, -3F);
+        final Position3f fallingJavaFoot = new Position3f(10F, 68.0F, -3F);
+        final Position3f auth = RidingTracker.predictedBoatAuthInputPosition(fallingJavaFoot, tracker, 0.375F, null);
+        assertEquals(70.375F - 0.045F, auth.y(), 1.0e-5F);
+    }
+
+    @Test
     void waterSurfaceMaxYMatchesMotLiquidHeightPercent() {
         assertEquals(64F + (8F / 9F), RidingTracker.waterSurfaceMaxY(waterState(0), 64), 1.0e-6F);
         assertEquals(64F + (7F / 9F), RidingTracker.waterSurfaceMaxY(waterState(1), 64), 1.0e-6F);
         assertEquals(64F + (8F / 9F), RidingTracker.waterSurfaceMaxY(waterState(8), 64), 1.0e-6F);
         assertEquals(null, RidingTracker.waterSurfaceMaxY(new BlockState("stone", Collections.emptyMap()), 64));
+    }
+
+    private static ItemUseAirClickTarget.WorldView solidWorld(final int x, final int y, final int z) {
+        final int solidId = 9;
+        final BlockPosition solid = new BlockPosition(x, y, z);
+        return new ItemUseAirClickTarget.WorldView() {
+            @Override
+            public int blockStateId(final int layer, final BlockPosition position) {
+                return layer == 0 && position.equals(solid) ? solidId : 0;
+            }
+
+            @Override
+            public BlockState blockState(final int bedrockBlockStateId) {
+                if (bedrockBlockStateId == solidId) {
+                    return new BlockState("stone", Collections.emptyMap());
+                }
+                return new BlockState("air", Collections.emptyMap());
+            }
+
+            @Override
+            public int airId() {
+                return 0;
+            }
+        };
     }
 
     private static ItemUseAirClickTarget.WorldView waterWorld(final int x, final int y, final int z, final int depth) {
