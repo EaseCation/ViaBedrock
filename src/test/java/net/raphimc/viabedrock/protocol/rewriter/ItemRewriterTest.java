@@ -466,6 +466,79 @@ class ItemRewriterTest {
     }
 
     @Test
+    void numericEnchantmentTagsMapToJavaEnchantments() {
+        final int sharpnessJavaId = registryId("minecraft:enchantment", "minecraft:sharpness");
+        final CompoundTag tag = new CompoundTag();
+        final ListTag<CompoundTag> ench = new ListTag<>(CompoundTag.class);
+        final CompoundTag entry = new CompoundTag();
+        entry.putInt("id", Enchant_Type.Sharpness.getValue());
+        entry.putInt("lvl", 5);
+        ench.add(entry);
+        tag.put("ench", ench);
+        final BedrockItem source = new BedrockItem(IRON_SWORD_ID, (short) 0, (byte) 1, tag);
+
+        final Item javaItem = this.rewriter.javaItem(source.copy());
+        ExperimentalItemRewriter.handleItem(this.user, source, source.tag(), javaItem);
+
+        final Enchantments enchantments = javaItem.dataContainer().get(StructuredDataKey.ENCHANTMENTS1_21_5);
+        assertNotNull(enchantments);
+        assertEquals(5, enchantments.getLevel(sharpnessJavaId));
+        assertNull(javaItem.dataContainer().get(StructuredDataKey.ENCHANTMENT_GLINT_OVERRIDE));
+    }
+
+    @Test
+    void mixedShortAndIntEnchantmentTagsStillMap() {
+        final int sharpnessJavaId = registryId("minecraft:enchantment", "minecraft:sharpness");
+        final CompoundTag tag = new CompoundTag();
+        final ListTag<CompoundTag> ench = new ListTag<>(CompoundTag.class);
+        final CompoundTag entry = new CompoundTag();
+        entry.putShort("id", (short) Enchant_Type.Sharpness.getValue());
+        entry.putInt("lvl", 3);
+        ench.add(entry);
+        tag.put("ench", ench);
+        final BedrockItem source = new BedrockItem(IRON_SWORD_ID, (short) 0, (byte) 1, tag);
+
+        final Item javaItem = this.rewriter.javaItem(source.copy());
+        ExperimentalItemRewriter.handleItem(this.user, source, source.tag(), javaItem);
+
+        final Enchantments enchantments = javaItem.dataContainer().get(StructuredDataKey.ENCHANTMENTS1_21_5);
+        assertNotNull(enchantments);
+        assertEquals(3, enchantments.getLevel(sharpnessJavaId));
+        assertNull(javaItem.dataContainer().get(StructuredDataKey.ENCHANTMENT_GLINT_OVERRIDE));
+    }
+
+    @Test
+    void unknownEnchantmentIdsStillRequestJavaGlint() {
+        final CompoundTag tag = new CompoundTag();
+        final ListTag<CompoundTag> ench = new ListTag<>(CompoundTag.class);
+        final CompoundTag entry = new CompoundTag();
+        entry.putInt("id", 32_767);
+        entry.putInt("lvl", 1);
+        ench.add(entry);
+        tag.put("ench", ench);
+        final BedrockItem source = new BedrockItem(IRON_SWORD_ID, (short) 0, (byte) 1, tag);
+
+        final Item javaItem = this.rewriter.javaItem(source.copy());
+        ExperimentalItemRewriter.handleItem(this.user, source, source.tag(), javaItem);
+
+        final Enchantments enchantments = javaItem.dataContainer().get(StructuredDataKey.ENCHANTMENTS1_21_5);
+        assertTrue(enchantments == null || enchantments.size() == 0);
+        assertEquals(Boolean.TRUE, javaItem.dataContainer().get(StructuredDataKey.ENCHANTMENT_GLINT_OVERRIDE));
+    }
+
+    @Test
+    void emptyEnchantmentListRequestsJavaGlint() {
+        final CompoundTag tag = new CompoundTag();
+        tag.put("ench", new ListTag<>(CompoundTag.class));
+        final BedrockItem source = new BedrockItem(IRON_SWORD_ID, (short) 0, (byte) 1, tag);
+
+        final Item javaItem = this.rewriter.javaItem(source.copy());
+        ExperimentalItemRewriter.handleItem(this.user, source, source.tag(), javaItem);
+
+        assertEquals(Boolean.TRUE, javaItem.dataContainer().get(StructuredDataKey.ENCHANTMENT_GLINT_OVERRIDE));
+    }
+
+    @Test
     void creativePotionUsesBedrockAuxAndRoundTripsKnownCustomNbt() {
         final int nightVision = Potions1_20_5.keyToId("minecraft:night_vision");
         final int wither = PotionEffects1_20_5.keyToId("minecraft:wither");
