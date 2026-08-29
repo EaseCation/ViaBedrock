@@ -198,4 +198,16 @@ class EntityMetadataRewriterTest {
                 ActorDataIDs.BED_POSITION.getValue(), EntityDataTypesBedrock.BLOCK_POSITION, new BlockPosition(0, 0, 0))));
         assertNull(EntityMetadataRewriter.playerBedPosition(null));
     }
+
+    @Test
+    void mapsMotFishingHookTargetToJavaHookedEntityPlusOne() {
+        assertEquals(0, EntityMetadataRewriter.fishingBobberHookedEntity(0L, uniqueId -> {
+            throw new AssertionError("unset TARGET must not look up an entity");
+        }));
+        assertEquals(0, EntityMetadataRewriter.fishingBobberHookedEntity(-1L, uniqueId -> {
+            throw new AssertionError("unset TARGET must not look up an entity");
+        }));
+        assertEquals(43, EntityMetadataRewriter.fishingBobberHookedEntity(100L, uniqueId -> uniqueId == 100L ? 42 : null));
+        assertNull(EntityMetadataRewriter.fishingBobberHookedEntity(100L, uniqueId -> null));
+    }
 }
