@@ -60,6 +60,7 @@ public class RidingTracker extends StoredObject {
     private static final int PENDING_DISMOUNT_TICKS = 10;
     private static final Position3f BOAT_PLAYER_SEAT_OFFSET = new Position3f(0F, 1.02001F, 0F);
     // MOT EntityMinecartAbstract: getMountedOffset = height * 0.75 = 0.525. Off-rail adds +0.35 via seat metadata.
+    // Visual sitting stays on JE's 0.1875 passenger attachment; this offset is SAI / dismount only.
     private static final Position3f MINECART_PLAYER_SEAT_OFFSET = new Position3f(0F, 0.525F, 0F);
     // MOT EntityBoat dimensions. Occupied boats disable wave sim, so ViaBedrock must derive a
     // resting network Y from the water surface instead of freezing the last tracker snapshot.
@@ -355,7 +356,7 @@ public class RidingTracker extends StoredObject {
         anchor.vehicleUniqueId = vehicle.uniqueId();
 
         final Position3f rawOffset = this.rawSeatOffset(vehicle, passenger);
-        final float anchorYOffset = this.passengerAnchorYOffset(vehicle, passenger);
+        final float anchorYOffset = this.passengerAnchorYOffset(passenger);
         final Position3f position = vehicle.position().add(this.seatOffset(vehicle, passenger, rawOffset, anchorYOffset));
         if (!anchor.spawned) {
             RidingAnchorHelper.spawn(this.user(), anchor.javaId, anchor.uuid, position);
@@ -435,16 +436,7 @@ public class RidingTracker extends StoredObject {
                 offset.x() * sin + offset.z() * cos);
     }
 
-    private float passengerAnchorYOffset(final Entity vehicle, final Entity passenger) {
-        if (usesMinecartRiding(vehicle.javaType())) {
-            // MOT seat is relative to the minecart's internal foot. vehicle.position() is the
-            // network Y (internal + getBaseOffset 0.35). JE then subtracts the player's 0.6
-            // vehicle attachment from the TEXT_DISPLAY anchor.
-            if (passenger instanceof PlayerEntity) {
-                return JAVA_PLAYER_VEHICLE_ATTACHMENT_Y - vehicle.eyeOffset();
-            }
-            return -vehicle.eyeOffset();
-        }
+    private float passengerAnchorYOffset(final Entity passenger) {
         if (passenger instanceof PlayerEntity) {
             // Bedrock player positions are network/base-offset coordinates (Nukkit EntityHuman#getBaseOffset = 1.62).
             // Java then subtracts the player's vehicle attachment from the anchor when applying SET_PASSENGERS.
@@ -1040,9 +1032,10 @@ public class RidingTracker extends StoredObject {
         return clientPlayer != null && clientPlayer == entity;
     }
 
-    private static boolean usesVanillaRiding(final EntityTypes1_21_11 type) {
+    static boolean usesVanillaRiding(final EntityTypes1_21_11 type) {
         return usesBoatRiding(type)
                 || type.isOrHasParent(EntityTypes1_21_11.ABSTRACT_HORSE)
+                || usesMinecartRiding(type)
                 || type == EntityTypes1_21_11.PIG
                 || type == EntityTypes1_21_11.STRIDER;
     }
@@ -1063,23 +1056,6 @@ public class RidingTracker extends StoredObject {
             return MINECART_PLAYER_SEAT_OFFSET;
         }
         return metadataOffset != null ? metadataOffset : Position3f.ZERO;
-    }
-
-    /**
-     * JE passenger feet = TEXT_DISPLAY anchor Y − PlayerEntity.VEHICLE_ATTACHMENT (0.6).
-     * MOT minecart network Y is internal foot + getBaseOffset (0.35); the seat (0.525, or
-     * 0.875 off-rail) is relative to the internal foot. Place the anchor so JE subtracts
-     * 0.6 and lands on MOT's passenger foot.
-     */
-    static float minecartPlayerAnchorYOffset() {
-        return JAVA_PLAYER_VEHICLE_ATTACHMENT_Y - 0.35F;
-    }
-
-    static Position3f minecartPlayerAnchorPosition(final Position3f vehicleNetworkPosition, final Position3f seatOffset) {
-        return new Position3f(
-                vehicleNetworkPosition.x() + seatOffset.x(),
-                vehicleNetworkPosition.y() + seatOffset.y() + minecartPlayerAnchorYOffset(),
-                vehicleNetworkPosition.z() + seatOffset.z());
     }
 
     private static boolean contains(final LongList list, final long value) {

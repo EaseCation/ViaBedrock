@@ -334,8 +334,10 @@ class RidingTrackerTest {
     }
 
     @Test
-    void minecartsUseSeatAnchorsInsteadOfVanillaPassengerAttachment() {
+    void minecartsUseJavaPassengerAttachmentAndMotSeatForAuthInput() {
         assertAll(
+                () -> assertTrue(RidingTracker.usesVanillaRiding(EntityTypes1_21_11.MINECART)),
+                () -> assertTrue(RidingTracker.usesVanillaRiding(EntityTypes1_21_11.CHEST_MINECART)),
                 () -> assertTrue(RidingTracker.usesMinecartRiding(EntityTypes1_21_11.MINECART)),
                 () -> assertTrue(RidingTracker.usesMinecartRiding(EntityTypes1_21_11.CHEST_MINECART)),
                 () -> assertTrue(RidingTracker.usesMinecartRiding(EntityTypes1_21_11.HOPPER_MINECART)),
@@ -354,19 +356,6 @@ class RidingTrackerTest {
         final Position3f offRail = new Position3f(0F, 0.875F, 0F);
         assertEquals(offRail, RidingTracker.defaultSeatOffset(EntityTypes1_21_11.MINECART, offRail));
         assertEquals(Position3f.ZERO, RidingTracker.defaultSeatOffset(EntityTypes1_21_11.HORSE, Position3f.ZERO));
-    }
-
-    @Test
-    void minecartPlayerAnchorPlacesJavaFeetOnMotSeat() {
-        final Position3f network = new Position3f(10F, 64.35F, -3F);
-        final Position3f onRail = RidingTracker.minecartPlayerAnchorPosition(network, new Position3f(0F, 0.525F, 0F));
-        final Position3f offRail = RidingTracker.minecartPlayerAnchorPosition(network, new Position3f(0F, 0.875F, 0F));
-
-        assertEquals(10F, onRail.x());
-        assertEquals(-3F, onRail.z());
-        assertEquals(65.125F, onRail.y(), 1.0e-5F);
-        assertEquals(64.525F, onRail.y() - 0.6F, 1.0e-5F);
-        assertEquals(64.875F, offRail.y() - 0.6F, 1.0e-5F);
     }
 
     @Test
