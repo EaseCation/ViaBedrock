@@ -2,6 +2,13 @@
 
 Protocol truth: `decompiled/nukkit-mot` encode/decode, then `decompiled/nukkitmaster` for PyRpc / ModUI. Do not treat international Bedrock wiki or Geyser palettes as MOT 860.
 
+## 2026-08-29 — Numeric Bedrock ench tags still map; unknown ids keep Java glint
+
+- **Goal:** MOT / NetEase often write ench[].id / lvl as int (or mixed short+int) instead of short. The experimental rewriter previously required ShortTag, so known enchantments never reached Java and unknown/custom ids lost both tooltip and glint.
+- **Change:** applyBedrockEnchantment accepts any NumberTag. Empty ench lists, unmapped numeric ids, and unknown custom enchantments still set ENCHANTMENT_GLINT_OVERRIDE. Mapped vanilla ids continue to populate ENCHANTMENTS1_21_5 without a redundant glint override.
+- **Refs:** ExperimentalItemRewriter.handleItem, MOT item NBT ench, GitHub issue custom-item enchantment glint.
+- **Risk:** Requires enable-experimental-features. Worn custom attachable armor still uses VBU entity materials and may not draw Java item glint.
+
 ## 2026-08-28 — Colored beds keep item meta instead of undyed block runtime
 
 - **Goal:** MOT 860 still ships 16 bed colors as `minecraft:bed` + meta 0–15. The item identifier also names the undyed bed block, so ViaBedrock treated every bed as a block item, zeroed aux data, and mapped inventory display to `white_bed`. Placement stayed correct because MOT clones by creative netId / item damage.
