@@ -1235,15 +1235,21 @@ public class ClientPlayerPackets {
                 && !identifier.equals("soul_fire");
     }
 
+    /**
+     * MOT {@code START_SWIMMING} uses the feet block from <em>before</em> this AuthInput
+     * position is applied. The first in-water tick is cancelled with {@code needSendData}
+     * and never sets {@code ActorFlags.SWIMMING}. Java still predicts pose 3 locally.
+     * Do not latch {@link ClientPlayerEntity#isSwimming()} on the emit; retry Start
+     * until MOT metadata confirms, otherwise observers stay on {@code POSE=STANDING}.
+     */
     static void applyJavaSwimTransition(final UserConnection user, final ClientPlayerEntity clientPlayer) {
-        final PlayerAuthInputPacket_InputData flag = swimTransitionFlag(wantsJavaSwim(user, clientPlayer), clientPlayer.isSwimming());
-        if (flag == PlayerAuthInputPacket_InputData.StartSwimming) {
-            clientPlayer.setSwimming(true);
-            clientPlayer.addAuthInputData(flag);
-        } else if (flag == PlayerAuthInputPacket_InputData.StopSwimming) {
-            clientPlayer.setSwimming(false);
+        final boolean wantSwim = wantsJavaSwim(user, clientPlayer);
+        final boolean motSwimming = clientPlayer.hasEntityFlag(ActorFlags.SWIMMING);
+        final PlayerAuthInputPacket_InputData flag = swimTransitionFlag(wantSwim, motSwimming);
+        if (flag != null) {
             clientPlayer.addAuthInputData(flag);
         }
+        clientPlayer.setSwimming(localSwimmingAfterTransition(wantSwim, motSwimming));
     }
 
     static void applyJavaGlideStart(final UserConnection user, final ClientPlayerEntity clientPlayer) {
@@ -1285,14 +1291,27 @@ public class ClientPlayerPackets {
         }
     }
 
-    static PlayerAuthInputPacket_InputData swimTransitionFlag(final boolean wantSwim, final boolean currentlySwimming) {
-        if (wantSwim && !currentlySwimming) {
+    /**
+     * {@code motSwimming} is MOT {@link ActorFlags#SWIMMING}, not a local prediction.
+     * {@code wantSwim && !motSwimming} must keep returning Start so a cancelled first
+     * tick can be retried after MOT applies the in-water coordinates.
+     */
+    static PlayerAuthInputPacket_InputData swimTransitionFlag(final boolean wantSwim, final boolean motSwimming) {
+        if (wantSwim && !motSwimming) {
             return PlayerAuthInputPacket_InputData.StartSwimming;
         }
-        if (!wantSwim && currentlySwimming) {
+        if (!wantSwim && motSwimming) {
             return PlayerAuthInputPacket_InputData.StopSwimming;
         }
         return null;
+    }
+
+    /**
+     * Mirror MOT confirmation only while Java still wants to swim. A Stop emit must
+     * drop the local latch even if SET_ACTOR_DATA has not cleared the flag yet.
+     */
+    static boolean localSwimmingAfterTransition(final boolean wantSwim, final boolean motSwimming) {
+        return wantSwim && motSwimming;
     }
 
     static boolean shouldStopGliding(final boolean gliding, final boolean onGround) {
@@ -1357,13 +1376,31 @@ public class ClientPlayerPackets {
      * waterlogging. ClientPlayerEntity.position() is the eye, so subtract {@code eyeOffset()}.
      * {@link ChunkTracker#getBlockState(int, BlockPosition)} returns air when the column is
      * missing, which would invert a swim edge; keep the last in-water sample until the feet
-     * chunk is loaded.
+     * chunk is loaded. Do not reuse {@link ClientPlayerEntity#isSwimming()} for that sample:
+     * StartSwimming is retried before MOT sets {@link ActorFlags#SWIMMING}.
      */
     static boolean isInsideOfWater(final UserConnection user, final ClientPlayerEntity clientPlayer) {
-        return keepLastInsideOfWater(
-                knownInsideOfWater(user, clientPlayer),
-                clientPlayer != null && clientPlayer.isSwimming()
-        );
+        if (clientPlayer == null) {
+            return false;
+        }
+        final Boolean known = knownInsideOfWater(user, clientPlayer);
+        if (known != null) {
+            clientPlayer.setLastInsideOfWater(known);
+        }
+        return keepLastInsideOfWater(known, lastInsideOfWaterSample(clientPlayer));
+    }
+
+    /**
+     * Pending StartSwimming ticks have no MOT flag yet. Remember the last loaded
+     * feet sample, and treat confirmed {@link ActorFlags#SWIMMING} as still in water
+     * when the column is missing.
+     */
+    static boolean lastInsideOfWaterSample(final boolean lastInside, final boolean motSwimming) {
+        return lastInside || motSwimming;
+    }
+
+    static boolean lastInsideOfWaterSample(final ClientPlayerEntity clientPlayer) {
+        return lastInsideOfWaterSample(clientPlayer.lastInsideOfWater(), clientPlayer.hasEntityFlag(ActorFlags.SWIMMING));
     }
 
     static BlockPosition feetBlockPosition(final ClientPlayerEntity clientPlayer) {
