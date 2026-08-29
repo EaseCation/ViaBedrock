@@ -180,6 +180,10 @@ public class Entity {
         if ("minecraft:boat".equals(this.type) || "minecraft:chest_boat".equals(this.type)) {
             return 0.375F;
         }
+        // MOT EntityMinecartAbstract.getBaseOffset() is 0.35. Same ADD/MOVE rule as boats.
+        if (this.javaType != null && this.javaType.isOrHasParent(EntityTypes1_21_11.ABSTRACT_MINECART)) {
+            return 0.35F;
+        }
         return 0F;
     }
 
