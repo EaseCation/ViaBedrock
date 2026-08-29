@@ -72,6 +72,7 @@ public class Entity {
     protected String name;
     protected int age;
     protected boolean hasBossBar;
+    private Boolean javaSaddleEquipped;
 
     public UserConnection user() {
         return this.user;
@@ -302,6 +303,14 @@ public class Entity {
 
     public void setHasBossBar(final boolean hasBossBar) {
         this.hasBossBar = hasBossBar;
+    }
+
+    public Boolean javaSaddleEquipped() {
+        return this.javaSaddleEquipped;
+    }
+
+    public void setJavaSaddleEquipped(final Boolean javaSaddleEquipped) {
+        this.javaSaddleEquipped = javaSaddleEquipped;
     }
 
     public final int getJavaEntityDataIndex(final String fieldName) {
