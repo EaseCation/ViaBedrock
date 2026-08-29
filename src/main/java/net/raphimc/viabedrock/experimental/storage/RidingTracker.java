@@ -59,6 +59,9 @@ public class RidingTracker extends StoredObject {
     private static final float JAVA_PLAYER_VEHICLE_ATTACHMENT_Y = 0.6F; // PlayerEntity.VEHICLE_ATTACHMENT_POS
     private static final int PENDING_DISMOUNT_TICKS = 10;
     private static final Position3f BOAT_PLAYER_SEAT_OFFSET = new Position3f(0F, 1.02001F, 0F);
+    // MOT EntityMinecartAbstract: getMountedOffset = height * 0.75 = 0.525. Off-rail adds +0.35 via seat metadata.
+    // Visual sitting stays on JE's 0.1875 passenger attachment; this offset is SAI / dismount only.
+    private static final Position3f MINECART_PLAYER_SEAT_OFFSET = new Position3f(0F, 0.525F, 0F);
     // MOT EntityBoat dimensions. Occupied boats disable wave sim, so ViaBedrock must derive a
     // resting network Y from the water surface instead of freezing the last tracker snapshot.
     private static final float BOAT_WIDTH = 1.4F;
@@ -352,7 +355,7 @@ public class RidingTracker extends StoredObject {
         }
         anchor.vehicleUniqueId = vehicle.uniqueId();
 
-        final Position3f rawOffset = this.rawSeatOffset(passenger);
+        final Position3f rawOffset = this.rawSeatOffset(vehicle, passenger);
         final float anchorYOffset = this.passengerAnchorYOffset(passenger);
         final Position3f position = vehicle.position().add(this.seatOffset(vehicle, passenger, rawOffset, anchorYOffset));
         if (!anchor.spawned) {
@@ -406,6 +409,10 @@ public class RidingTracker extends StoredObject {
             return Position3f.ZERO;
         }
         return offset;
+    }
+
+    private Position3f rawSeatOffset(final Entity vehicle, final Entity passenger) {
+        return defaultSeatOffset(vehicle.javaType(), this.rawSeatOffset(passenger));
     }
 
     private boolean canRideDirectly(final Entity vehicle, final Entity passenger) {
@@ -463,9 +470,14 @@ public class RidingTracker extends StoredObject {
             // foot, which trips GanAC AntiVehicle.FlyCheck (0.5). Match VIRTUAL_INPUT_ONLY /
             // safeDismountPosition: vehicle + seat + player eye.
             // Ref: MOT Player.java clientPosition; Entity.getMountedOffset; EntityHorse height 1.6.
+            // Minecart network Y includes getBaseOffset (0.35); Bedrock player SAI is
+            // internal foot + seat + player 1.62.
+            final Position3f authVehiclePosition = usesMinecartRiding(vehicle.javaType())
+                    ? new Position3f(vehiclePosition.x(), vehiclePosition.y() - vehicle.eyeOffset(), vehiclePosition.z())
+                    : vehiclePosition;
             return passengerAuthInputPosition(
-                    vehiclePosition,
-                    this.seatOffset(vehicle, clientPlayer, this.rawSeatOffset(clientPlayer), 0F),
+                    authVehiclePosition,
+                    this.seatOffset(vehicle, clientPlayer, this.rawSeatOffset(vehicle, clientPlayer), 0F),
                     clientPlayer.eyeOffset());
         }
 
@@ -849,8 +861,10 @@ public class RidingTracker extends StoredObject {
             return authInputPosition.add(this.seatOffset(vehicle, clientPlayer, this.boatMountedOffset(clientPlayer), 0F));
         }
 
-        final Position3f vehiclePosition = vehicle.position();
-        final Position3f seatPosition = vehiclePosition.add(this.seatOffset(vehicle, clientPlayer, this.rawSeatOffset(clientPlayer), 0F));
+        final Position3f vehiclePosition = usesMinecartRiding(vehicle.javaType())
+                ? new Position3f(vehicle.position().x(), vehicle.position().y() - vehicle.eyeOffset(), vehicle.position().z())
+                : vehicle.position();
+        final Position3f seatPosition = vehiclePosition.add(this.seatOffset(vehicle, clientPlayer, this.rawSeatOffset(vehicle, clientPlayer), 0F));
         return new Position3f(seatPosition.x(), seatPosition.y() + clientPlayer.eyeOffset(), seatPosition.z());
     }
 
@@ -873,7 +887,7 @@ public class RidingTracker extends StoredObject {
         if (usesBoatRiding(type)) {
             return LocalRidingMode.BOAT_PREDICTED;
         }
-        if (type.isOrHasParent(EntityTypes1_21_11.ABSTRACT_MINECART)
+        if (usesMinecartRiding(type)
                 || type.isOrHasParent(EntityTypes1_21_11.ABSTRACT_HORSE)
                 || type == EntityTypes1_21_11.PIG
                 || type == EntityTypes1_21_11.STRIDER
@@ -1018,16 +1032,30 @@ public class RidingTracker extends StoredObject {
         return clientPlayer != null && clientPlayer == entity;
     }
 
-    private static boolean usesVanillaRiding(final EntityTypes1_21_11 type) {
+    static boolean usesVanillaRiding(final EntityTypes1_21_11 type) {
         return usesBoatRiding(type)
                 || type.isOrHasParent(EntityTypes1_21_11.ABSTRACT_HORSE)
-                || type.isOrHasParent(EntityTypes1_21_11.ABSTRACT_MINECART)
+                || usesMinecartRiding(type)
                 || type == EntityTypes1_21_11.PIG
                 || type == EntityTypes1_21_11.STRIDER;
     }
 
     private static boolean usesBoatRiding(final EntityTypes1_21_11 type) {
         return type.isOrHasParent(EntityTypes1_21_11.ABSTRACT_BOAT);
+    }
+
+    static boolean usesMinecartRiding(final EntityTypes1_21_11 type) {
+        return type != null && type.isOrHasParent(EntityTypes1_21_11.ABSTRACT_MINECART);
+    }
+
+    static Position3f defaultSeatOffset(final EntityTypes1_21_11 type, final Position3f metadataOffset) {
+        if (metadataOffset != null && (metadataOffset.x() != 0F || metadataOffset.y() != 0F || metadataOffset.z() != 0F)) {
+            return metadataOffset;
+        }
+        if (usesMinecartRiding(type)) {
+            return MINECART_PLAYER_SEAT_OFFSET;
+        }
+        return metadataOffset != null ? metadataOffset : Position3f.ZERO;
     }
 
     private static boolean contains(final LongList list, final long value) {

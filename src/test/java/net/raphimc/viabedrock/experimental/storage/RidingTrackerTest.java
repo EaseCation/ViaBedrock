@@ -334,6 +334,43 @@ class RidingTrackerTest {
     }
 
     @Test
+    void minecartsUseJavaPassengerAttachmentAndMotSeatForAuthInput() {
+        assertAll(
+                () -> assertTrue(RidingTracker.usesVanillaRiding(EntityTypes1_21_11.MINECART)),
+                () -> assertTrue(RidingTracker.usesVanillaRiding(EntityTypes1_21_11.CHEST_MINECART)),
+                () -> assertTrue(RidingTracker.usesMinecartRiding(EntityTypes1_21_11.MINECART)),
+                () -> assertTrue(RidingTracker.usesMinecartRiding(EntityTypes1_21_11.CHEST_MINECART)),
+                () -> assertTrue(RidingTracker.usesMinecartRiding(EntityTypes1_21_11.HOPPER_MINECART)),
+                () -> assertTrue(RidingTracker.usesMinecartRiding(EntityTypes1_21_11.TNT_MINECART)),
+                () -> assertTrue(RidingTracker.usesMinecartRiding(EntityTypes1_21_11.FURNACE_MINECART)),
+                () -> assertTrue(RidingTracker.usesMinecartRiding(EntityTypes1_21_11.COMMAND_BLOCK_MINECART)),
+                () -> assertTrue(RidingTracker.usesMinecartRiding(EntityTypes1_21_11.SPAWNER_MINECART)),
+                () -> assertFalse(RidingTracker.usesMinecartRiding(EntityTypes1_21_11.OAK_BOAT)),
+                () -> assertFalse(RidingTracker.usesMinecartRiding(EntityTypes1_21_11.HORSE))
+        );
+    }
+
+    @Test
+    void minecartDefaultSeatMatchesMotMountedOffset() {
+        assertEquals(0.525F, RidingTracker.defaultSeatOffset(EntityTypes1_21_11.MINECART, Position3f.ZERO).y(), 1.0e-6F);
+        final Position3f offRail = new Position3f(0F, 0.875F, 0F);
+        assertEquals(offRail, RidingTracker.defaultSeatOffset(EntityTypes1_21_11.MINECART, offRail));
+        assertEquals(Position3f.ZERO, RidingTracker.defaultSeatOffset(EntityTypes1_21_11.HORSE, Position3f.ZERO));
+    }
+
+    @Test
+    void minecartAuthInputUsesInternalFootPlusSeatPlusPlayerEye() {
+        final Position3f internal = new Position3f(10F, 64F, -3F);
+        final Position3f seat = new Position3f(0F, 0.525F, 0F);
+        final Position3f auth = RidingTracker.passengerAuthInputPosition(internal, seat, 1.62F);
+
+        assertEquals(10F, auth.x());
+        assertEquals(66.145F, auth.y(), 1.0e-5F);
+        assertEquals(-3F, auth.z());
+        assertEquals(64F + 0.525F + 1.62F, auth.y(), 1.0e-5F);
+    }
+
+    @Test
     void passengerAuthInputKeepsHorseSeatPlusPlayerEye() {
         final Position3f vehicle = new Position3f(10F, 64F, -3F);
         final Position3f horseSeat = new Position3f(0F, 1.2F, 0F);
