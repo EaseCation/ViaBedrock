@@ -91,9 +91,13 @@ public class ClientPlayerEntity extends PlayerEntity {
     private boolean horizontalCollision;
     private boolean sneaking;
     private boolean sprinting;
-    // Java never sends Bedrock START/STOP_SWIMMING or STOP_GLIDING. Track the
-    // translated pose so AuthInput can emit the one-tick MOT flags GanAC needs.
+    // Java never sends Bedrock START/STOP_SWIMMING or STOP_GLIDING. swimming
+    // follows MOT ActorFlags.SWIMMING so AuthInput can retry StartSwimming
+    // until the server confirms; optimistic true blocked observers at STANDING.
     private boolean swimming;
+    // Last known MOT-style feet-in-water sample. Missing columns look like air
+    // in ChunkTracker, so keep this independent of swimming for Start retries.
+    private boolean lastInsideOfWater;
     private boolean gliding;
     // Java START_FALL_FLYING can arrive while onGround is still true. MOT/GanAC
     // ElytraF suppress StartGliding on that tick, so hold it until airborne.
@@ -499,6 +503,14 @@ public class ClientPlayerEntity extends PlayerEntity {
 
     public void setSwimming(final boolean swimming) {
         this.swimming = swimming;
+    }
+
+    public boolean lastInsideOfWater() {
+        return this.lastInsideOfWater;
+    }
+
+    public void setLastInsideOfWater(final boolean lastInsideOfWater) {
+        this.lastInsideOfWater = lastInsideOfWater;
     }
 
     public boolean isGliding() {
