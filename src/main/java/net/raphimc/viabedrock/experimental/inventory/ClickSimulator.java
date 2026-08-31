@@ -81,7 +81,8 @@ public class ClickSimulator {
             if (is3x3 || is2x2) {
                 return switch (action) {
                     case PICKUP -> CraftingSimulator.simulateCraftPickup(is3x3, tracker, stackLimits);
-                    case QUICK_MOVE -> CraftingSimulator.simulateCraftQuickMove(is3x3, tracker, stackLimits);
+                    case QUICK_MOVE -> CraftingSimulator.simulateCraftQuickMove(
+                            is3x3, tracker, stackLimits, changedSlots, carriedItem);
                     default -> null;
                 };
             }

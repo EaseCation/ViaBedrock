@@ -29,9 +29,12 @@ import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -53,6 +56,14 @@ class CraftingSimulatorStackLimitsTest {
     @AfterEach
     void closeChannel() {
         this.channel.finishAndReleaseAll();
+    }
+
+    @Test
+    void accumulatedUnsignedShortAmountIsNotTreatedAsEmpty() {
+        final BedrockItem item = new BedrockItem(OUTPUT_ID, (short) 0, 256, null);
+
+        assertEquals(256, item.amount());
+        assertFalse(item.isEmpty());
     }
 
     @Test
@@ -79,7 +90,7 @@ class CraftingSimulatorStackLimitsTest {
         assertNotNull(actions);
         final List<InventoryActionData> inventoryActions = inventoryActions(actions);
         assertEquals(2, inventoryActions.size());
-        assertEquals(List.of(9, 10), inventoryActions.stream().map(InventoryActionData::slot).toList());
+        assertEquals(List.of(8, 7), inventoryActions.stream().map(InventoryActionData::slot).toList());
         assertTrue(inventoryActions.stream().allMatch(action -> action.toItem().amount() == 1));
     }
 
@@ -92,6 +103,23 @@ class CraftingSimulatorStackLimitsTest {
 
         assertNull(CraftingSimulator.simulateCraftQuickMove(false, this.tracker, ignored -> 1));
         assertEquals(1, this.tracker.getHudContainer().getItem(28).amount());
+    }
+
+    @Test
+    void quickMoveReducesCraftCountToWholeOutputsThatFit() {
+        this.prepareRecipe(4, 16);
+        for (int slot = 0; slot < this.tracker.getInventoryContainer().size(); slot++) {
+            this.tracker.getInventoryContainer().setItemSilent(slot, item(99, 64));
+        }
+        this.tracker.getInventoryContainer().setItemSilent(8, item(OUTPUT_ID, 60));
+
+        final List<InventoryActionData> actions = CraftingSimulator.simulateCraftQuickMove(
+                false, this.tracker, ignored -> 64);
+
+        assertNotNull(actions);
+        assertEquals(1, ingredientAmount(actions));
+        assertEquals(4, primaryOutputAmount(actions));
+        assertEquals(64, inventoryActions(actions).getFirst().toItem().amount());
     }
 
     @Test
@@ -114,6 +142,130 @@ class CraftingSimulatorStackLimitsTest {
                 .filter(action -> action.source().type() == InventorySourceType.NonImplementedFeatureTODO)
                 .filter(action -> action.source().containerId() == -5)
                 .findFirst().orElseThrow().toItem().amount());
+    }
+
+    @Test
+    void quickMoveCarriesMoreThan255OutputInOneUnsignedShortTransaction() {
+        this.prepareRecipe(4, 64);
+
+        final List<InventoryActionData> actions = CraftingSimulator.simulateCraftQuickMove(
+                false, this.tracker, ignored -> 64, null, null);
+
+        assertNotNull(actions);
+        assertEquals(256, primaryOutputAmount(actions));
+        assertEquals(64, ingredientAmount(actions));
+        assertEquals(List.of(8, 7, 6, 5), actions.stream()
+                .filter(CraftingSimulatorStackLimitsTest::isInventoryAction)
+                .map(InventoryActionData::slot)
+                .toList());
+        assertEquals(64, actions.stream()
+                .filter(CraftingSimulatorStackLimitsTest::isInventoryAction)
+                .findFirst().orElseThrow().toItem().amount());
+        assertConservesItems(actions);
+    }
+
+    @Test
+    void shapedIngredientCountControlsCraftMultiplierAndConsumption() {
+        this.recipes.clear();
+        this.tracker.getHudContainer().clearItems();
+        this.tracker.getInventoryContainer().clearItems();
+        this.tracker.getHudContainer().setItemSilent(28, item(INGREDIENT_ID, 6));
+        this.recipes.addRecipe(new BedrockRecipe(
+                "test:counted",
+                BedrockRecipe.RecipeType.SHAPED,
+                1,
+                1,
+                List.of(new BedrockRecipe.RecipeIngredient(
+                        INGREDIENT_ID,
+                        BedrockRecipe.RecipeIngredient.ANY_DAMAGE,
+                        2
+                )),
+                item(OUTPUT_ID, 1),
+                List.of(),
+                "crafting_table",
+                0,
+                2,
+                false
+        ));
+
+        final List<InventoryActionData> actions = CraftingSimulator.simulateCraftQuickMove(
+                false, this.tracker, ignored -> 64);
+
+        assertNotNull(actions);
+        assertEquals(6, ingredientAmount(actions));
+        assertEquals(3, primaryOutputAmount(actions));
+    }
+
+    @Test
+    void shapelessIngredientCountUsesOneGridSlotAndConsumesItsDeclaredAmount() {
+        this.recipes.clear();
+        this.tracker.getHudContainer().clearItems();
+        this.tracker.getInventoryContainer().clearItems();
+        this.tracker.getHudContainer().setItemSilent(28, item(INGREDIENT_ID, 6));
+        this.recipes.addRecipe(new BedrockRecipe(
+                "test:counted_shapeless",
+                BedrockRecipe.RecipeType.SHAPELESS,
+                0,
+                0,
+                List.of(new BedrockRecipe.RecipeIngredient(
+                        INGREDIENT_ID,
+                        BedrockRecipe.RecipeIngredient.ANY_DAMAGE,
+                        2
+                )),
+                item(OUTPUT_ID, 1),
+                List.of(),
+                "crafting_table",
+                0,
+                4,
+                false
+        ));
+
+        final List<InventoryActionData> actions = CraftingSimulator.simulateCraftQuickMove(
+                false, this.tracker, ignored -> 64);
+
+        assertNotNull(actions);
+        assertEquals(6, ingredientAmount(actions));
+        assertEquals(3, primaryOutputAmount(actions));
+    }
+
+    @Test
+    void extraOutputsAreDeclaredAndPlacedWithoutBreakingConservation() {
+        this.recipes.clear();
+        this.tracker.getHudContainer().clearItems();
+        this.tracker.getInventoryContainer().clearItems();
+        this.tracker.getHudContainer().setItemSilent(28, item(INGREDIENT_ID, 2));
+        this.recipes.addRecipe(new BedrockRecipe(
+                "test:remainder",
+                BedrockRecipe.RecipeType.SHAPELESS,
+                0,
+                0,
+                List.of(new BedrockRecipe.RecipeIngredient(
+                        INGREDIENT_ID,
+                        BedrockRecipe.RecipeIngredient.ANY_DAMAGE,
+                        1
+                )),
+                item(OUTPUT_ID, 1),
+                List.of(item(4, 1)),
+                "crafting_table",
+                0,
+                3,
+                false
+        ));
+
+        final List<InventoryActionData> actions = CraftingSimulator.simulateCraftQuickMove(
+                false, this.tracker, ignored -> 64);
+
+        assertNotNull(actions);
+        assertEquals(2, primaryOutputAmount(actions));
+        assertEquals(2, actions.stream()
+                .filter(action -> action.source().type() == InventorySourceType.NonImplementedFeatureTODO)
+                .filter(action -> action.source().containerId() == -5)
+                .filter(action -> action.fromItem().identifier() == 4)
+                .findFirst().orElseThrow().fromItem().amount());
+        assertTrue(actions.stream()
+                .filter(CraftingSimulatorStackLimitsTest::isInventoryAction)
+                .anyMatch(action -> action.toItem().identifier() == 4 && action.toItem().amount() == 2));
+        assertConservesItems(actions);
     }
 
     @Test
@@ -155,9 +307,42 @@ class CraftingSimulatorStackLimitsTest {
 
     private static List<InventoryActionData> inventoryActions(final List<InventoryActionData> actions) {
         return actions.stream()
-                .filter(action -> action.source().type() == InventorySourceType.ContainerInventory)
-                .filter(action -> action.source().containerId() == ContainerID.CONTAINER_ID_INVENTORY.getValue())
+                .filter(CraftingSimulatorStackLimitsTest::isInventoryAction)
                 .toList();
+    }
+
+    private static boolean isInventoryAction(final InventoryActionData action) {
+        return action.source().type() == InventorySourceType.ContainerInventory
+                && action.source().containerId() == ContainerID.CONTAINER_ID_INVENTORY.getValue();
+    }
+
+    private static int primaryOutputAmount(final List<InventoryActionData> actions) {
+        return actions.stream()
+                .filter(action -> action.source().type() == InventorySourceType.NonImplementedFeatureTODO)
+                .filter(action -> action.source().containerId() == -4)
+                .findFirst().orElseThrow().fromItem().amount();
+    }
+
+    private static int ingredientAmount(final List<InventoryActionData> actions) {
+        return actions.stream()
+                .filter(action -> action.source().type() == InventorySourceType.NonImplementedFeatureTODO)
+                .filter(action -> action.source().containerId() == -5)
+                .filter(action -> action.fromItem().isEmpty())
+                .findFirst().orElseThrow().toItem().amount();
+    }
+
+    private static void assertConservesItems(final List<InventoryActionData> actions) {
+        final Map<Integer, Integer> fromAmounts = new HashMap<>();
+        final Map<Integer, Integer> toAmounts = new HashMap<>();
+        for (final InventoryActionData action : actions) {
+            if (!action.fromItem().isEmpty()) {
+                fromAmounts.merge(action.fromItem().identifier(), action.fromItem().amount(), Integer::sum);
+            }
+            if (!action.toItem().isEmpty()) {
+                toAmounts.merge(action.toItem().identifier(), action.toItem().amount(), Integer::sum);
+            }
+        }
+        assertEquals(fromAmounts, toAmounts);
     }
 
     private static BedrockItem item(final int id, final int amount) {
