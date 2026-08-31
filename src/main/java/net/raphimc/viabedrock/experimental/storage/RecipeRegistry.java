@@ -70,6 +70,52 @@ public class RecipeRegistry extends StoredObject {
         return bestMatch;
     }
 
+    /** Returns the largest number of complete recipe executions supported by the current grid. */
+    public int maxCraftMultiplier(final BedrockRecipe recipe, final BedrockItem[] gridItems, final boolean is3x3) {
+        if (recipe == null) return 0;
+
+        int upperBound = Integer.MAX_VALUE;
+        for (final BedrockItem item : gridItems) {
+            if (!item.isEmpty()) upperBound = Math.min(upperBound, item.amount());
+        }
+        if (upperBound == Integer.MAX_VALUE) return 0;
+
+        for (int multiplier = upperBound; multiplier >= 1; multiplier--) {
+            if (recipe.type() == BedrockRecipe.RecipeType.SHAPED
+                    ? matchesShaped(recipe, gridItems, is3x3, multiplier)
+                    : matchesShapeless(recipe, gridItems, multiplier)) {
+                return multiplier;
+            }
+        }
+        return 0;
+    }
+
+    /** Returns the number of items one craft consumes from a matched grid slot. */
+    public int ingredientCountForGridSlot(final BedrockRecipe recipe, final BedrockItem[] gridItems,
+                                          final boolean is3x3, final int gridIndex) {
+        if (recipe == null || recipe.type() != BedrockRecipe.RecipeType.SHAPED) return 1;
+        final int gridWidth = is3x3 ? 3 : 2;
+        final int gridHeight = is3x3 ? 3 : 2;
+        final int maxMirror = recipe.assumeSymmetry() ? 1 : 0;
+        for (int mirror = 0; mirror <= maxMirror; mirror++) {
+            for (int offX = 0; offX <= gridWidth - recipe.width(); offX++) {
+                for (int offY = 0; offY <= gridHeight - recipe.height(); offY++) {
+                    if (!matchShapedAt(recipe, gridItems, gridWidth, gridHeight, offX, offY, mirror == 1)) continue;
+                    final int x = gridIndex % gridWidth;
+                    final int y = gridIndex / gridWidth;
+                    final int recipeX = mirror == 1 ? (recipe.width() - 1 - (x - offX)) : (x - offX);
+                    final int recipeY = y - offY;
+                    if (recipeX >= 0 && recipeX < recipe.width() && recipeY >= 0 && recipeY < recipe.height()) {
+                        final RecipeIngredient ingredient = recipe.ingredients().get(recipeY * recipe.width() + recipeX);
+                        return ingredient.runtimeId() == 0 ? 1 : Math.max(1, ingredient.count());
+                    }
+                    return 1;
+                }
+            }
+        }
+        return 1;
+    }
+
     private static boolean matchShapeless(final BedrockRecipe recipe, final BedrockItem[] gridItems) {
         final List<RecipeIngredient> ingredients = recipe.ingredients();
 
@@ -103,6 +149,42 @@ public class RecipeRegistry extends StoredObject {
         }
 
         return true;
+    }
+
+    private static boolean matchesShapeless(final BedrockRecipe recipe, final BedrockItem[] gridItems, final int multiplier) {
+        final List<RecipeIngredient> ingredients = recipe.ingredients();
+        int nonEmptyGridCount = 0;
+        for (final BedrockItem item : gridItems) {
+            if (!item.isEmpty()) nonEmptyGridCount++;
+        }
+        int totalIngredientCount = 0;
+        for (final RecipeIngredient ingredient : ingredients) totalIngredientCount += ingredient.count();
+        if (totalIngredientCount != nonEmptyGridCount) return false;
+
+        final List<RecipeIngredient> expanded = new ArrayList<>(totalIngredientCount);
+        for (final RecipeIngredient ingredient : ingredients) {
+            for (int i = 0; i < ingredient.count(); i++) {
+                expanded.add(new RecipeIngredient(ingredient.runtimeId(), ingredient.damage(), 1));
+            }
+        }
+        final boolean[] used = new boolean[gridItems.length];
+        return matchShapelessIngredients(expanded, gridItems, multiplier, 0, used);
+    }
+
+    private static boolean matchShapelessIngredients(final List<RecipeIngredient> ingredients,
+                                                     final BedrockItem[] gridItems, final int multiplier,
+                                                     final int ingredientIndex, final boolean[] used) {
+        if (ingredientIndex == ingredients.size()) return true;
+        final RecipeIngredient ingredient = ingredients.get(ingredientIndex);
+        for (int slot = 0; slot < gridItems.length; slot++) {
+            final BedrockItem item = gridItems[slot];
+            if (used[slot] || item.isEmpty() || !ingredient.matches(item)
+                    || item.amount() < ingredient.count() * multiplier) continue;
+            used[slot] = true;
+            if (matchShapelessIngredients(ingredients, gridItems, multiplier, ingredientIndex + 1, used)) return true;
+            used[slot] = false;
+        }
+        return false;
     }
 
     private static boolean matchShaped(final BedrockRecipe recipe, final BedrockItem[] gridItems, final int gridWidth, final int gridHeight) {
@@ -143,6 +225,49 @@ public class RecipeRegistry extends StoredObject {
                     }
                 } else {
                     if (!gridItem.isEmpty()) return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private static boolean matchesShaped(final BedrockRecipe recipe, final BedrockItem[] gridItems,
+                                         final boolean is3x3, final int multiplier) {
+        final int gridWidth = is3x3 ? 3 : 2;
+        final int gridHeight = is3x3 ? 3 : 2;
+        if (recipe.width() > gridWidth || recipe.height() > gridHeight) return false;
+
+        final int maxMirror = recipe.assumeSymmetry() ? 1 : 0;
+        for (int mirror = 0; mirror <= maxMirror; mirror++) {
+            for (int offX = 0; offX <= gridWidth - recipe.width(); offX++) {
+                for (int offY = 0; offY <= gridHeight - recipe.height(); offY++) {
+                    if (matchesShapedAt(recipe, gridItems, gridWidth, gridHeight, offX, offY, mirror == 1, multiplier)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean matchesShapedAt(final BedrockRecipe recipe, final BedrockItem[] gridItems,
+                                           final int gridWidth, final int gridHeight, final int offX,
+                                           final int offY, final boolean mirror, final int multiplier) {
+        for (int y = 0; y < gridHeight; y++) {
+            for (int x = 0; x < gridWidth; x++) {
+                final BedrockItem gridItem = gridItems[y * gridWidth + x];
+                final int recipeX = mirror ? (recipe.width() - 1 - (x - offX)) : (x - offX);
+                final int recipeY = y - offY;
+                if (recipeX >= 0 && recipeX < recipe.width() && recipeY >= 0 && recipeY < recipe.height()) {
+                    final RecipeIngredient ingredient = recipe.ingredients().get(recipeY * recipe.width() + recipeX);
+                    if (ingredient.runtimeId() == 0) {
+                        if (!gridItem.isEmpty()) return false;
+                    } else if (gridItem.isEmpty() || !ingredient.matches(gridItem)
+                            || gridItem.amount() < ingredient.count() * multiplier) {
+                        return false;
+                    }
+                } else if (!gridItem.isEmpty()) {
+                    return false;
                 }
             }
         }

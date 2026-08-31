@@ -75,7 +75,7 @@ public class CraftingSimulator {
         // decrements the slot by 1. This mirrors the real Bedrock client packets so the server's
         // CraftingTransaction collects the inputs and validates (single merged -5 with slot=0 and no grid
         // change made canExecute fail, leaving a stale transaction that corrupted the next craft).
-        addGridConsumption(actions, is3x3, tracker);
+        addGridConsumption(actions, is3x3, tracker, recipe, 1);
 
         // ACTION 2: SOURCE_TODO(-4) — set primaryOutput
         actions.add(new InventoryActionData(
@@ -114,16 +114,31 @@ public class CraftingSimulator {
             return null;
         }
 
-        final BedrockItem primaryOutput = recipe.primaryOutput().copy();
-        final int maxStackSize = stackLimits.maxStackSize(primaryOutput);
+        final BedrockItem recipeOutput = recipe.primaryOutput().copy();
+        final int maxStackSize = stackLimits.maxStackSize(recipeOutput);
         if (maxStackSize <= 0) {
             return null;
         }
 
+        // Nukkit supports accumulated crafting transactions: one Shift-click can consume every
+        // complete recipe available in the grid and advertise the combined primary output.
+        // Bedrock item counts are unsigned bytes, so cap a single transaction before encoding.
+        int multiplier = registry.maxCraftMultiplier(recipe, gridItems, is3x3);
+        multiplier = Math.min(multiplier, 255 / Math.max(1, recipeOutput.amount()));
+        while (multiplier > 0 && !canFitOutput(tracker, recipeOutput, recipeOutput.amount() * multiplier, maxStackSize)) {
+            multiplier--;
+        }
+        if (multiplier <= 0) {
+            return null;
+        }
+        final BedrockItem primaryOutput = recipeOutput.copy();
+        primaryOutput.setAmount(recipeOutput.amount() * multiplier);
+
         final List<InventoryActionData> actions = new ArrayList<>();
 
-        // ACTION 1: per grid slot consumption (-5 USE_INGREDIENT + explicit grid SlotChange decrement)
-        addGridConsumption(actions, is3x3, tracker);
+        // ACTION 1: per grid slot consumption (-5 USE_INGREDIENT + explicit grid SlotChange decrement).
+        // For quick-move, the ingredient count is the number of accumulated crafts.
+        addGridConsumption(actions, is3x3, tracker, recipe, multiplier);
 
         // ACTION 2: SOURCE_TODO(-4) — set primaryOutput
         actions.add(new InventoryActionData(
@@ -156,6 +171,30 @@ public class CraftingSimulator {
         }
 
         return actions;
+    }
+
+    private static boolean canFitOutput(final InventoryTracker tracker, final BedrockItem output, final int amount,
+                                        final int maxStackSize) {
+        int remaining = amount;
+        for (int invSlot = 9; invSlot <= 35 && remaining > 0; invSlot++) {
+            final BedrockItem target = tracker.getInventoryContainer().getItem(invSlot);
+            if (!target.isEmpty() && !target.isDifferent(output) && target.amount() < maxStackSize) {
+                remaining -= Math.min(remaining, maxStackSize - target.amount());
+            }
+        }
+        for (int invSlot = 0; invSlot <= 8 && remaining > 0; invSlot++) {
+            final BedrockItem target = tracker.getInventoryContainer().getItem(invSlot);
+            if (!target.isEmpty() && !target.isDifferent(output) && target.amount() < maxStackSize) {
+                remaining -= Math.min(remaining, maxStackSize - target.amount());
+            }
+        }
+        for (int invSlot = 9; invSlot <= 35 && remaining > 0; invSlot++) {
+            if (tracker.getInventoryContainer().getItem(invSlot).isEmpty()) remaining -= Math.min(remaining, maxStackSize);
+        }
+        for (int invSlot = 0; invSlot <= 8 && remaining > 0; invSlot++) {
+            if (tracker.getInventoryContainer().getItem(invSlot).isEmpty()) remaining -= Math.min(remaining, maxStackSize);
+        }
+        return remaining <= 0;
     }
 
     private static int tryMergeIntoSlot(final List<InventoryActionData> actions, final InventoryTracker tracker,
@@ -213,9 +252,12 @@ public class CraftingSimulator {
      *   1. SOURCE_TODO(-5 USE_INGREDIENT) with slot = grid-relative index (0-based), fromItem empty,
      *      toItem the consumed ingredient (count 1) — this feeds the server's CraftingTransaction inputs.
      *   2. A ContainerInventory SlotChange on the HUD/UI container (id 124) at the absolute grid slot,
-     *      decrementing the stack by 1 (or clearing it) — the actual grid mutation the server validates.
+     *      decrementing the stack by the requested craft count (or clearing it) — the actual grid
+     *      mutation the server validates.
      */
-    private static void addGridConsumption(final List<InventoryActionData> actions, final boolean is3x3, final InventoryTracker tracker) {
+    private static void addGridConsumption(final List<InventoryActionData> actions, final boolean is3x3,
+                                           final InventoryTracker tracker, final BedrockRecipe recipe,
+                                           final int multiplier) {
         final var hudContainer = tracker.getHudContainer();
         final int startSlot = is3x3 ? 32 : 28;
         final int gridSize = is3x3 ? 9 : 4;
@@ -225,16 +267,19 @@ public class CraftingSimulator {
             if (gridItem.isEmpty()) continue;
 
             final BedrockItem ingredient = gridItem.copy();
-            ingredient.setAmount(1);
+            final int perCraft = tracker.user().get(RecipeRegistry.class)
+                    .ingredientCountForGridSlot(recipe, getGridItems(is3x3, tracker), is3x3, i);
+            final int consumed = Math.min(gridItem.amount(), perCraft * multiplier);
+            ingredient.setAmount(consumed);
             actions.add(new InventoryActionData(
                     new InventorySource(InventorySourceType.NonImplementedFeatureTODO, TODO_USE_INGREDIENT, InventorySource_InventorySourceFlags.NoFlag),
                     i, BedrockItem.empty(), ingredient
             ));
 
             final BedrockItem newGrid;
-            if (gridItem.amount() > 1) {
+            if (gridItem.amount() > consumed) {
                 newGrid = gridItem.copy();
-                newGrid.setAmount(gridItem.amount() - 1);
+                newGrid.setAmount(gridItem.amount() - consumed);
             } else {
                 newGrid = BedrockItem.empty();
             }

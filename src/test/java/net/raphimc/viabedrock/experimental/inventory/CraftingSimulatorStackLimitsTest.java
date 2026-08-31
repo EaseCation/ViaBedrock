@@ -95,6 +95,28 @@ class CraftingSimulatorStackLimitsTest {
     }
 
     @Test
+    void quickMoveAccumulatesAllCraftsAvailableInTheGrid() {
+        this.prepareRecipe(4, 16);
+
+        final List<InventoryActionData> actions = CraftingSimulator.simulateCraftQuickMove(
+                false, this.tracker, ignored -> 64);
+
+        assertNotNull(actions);
+        assertEquals(0, actions.stream()
+                .filter(action -> action.source().type() == InventorySourceType.ContainerInventory)
+                .filter(action -> action.source().containerId() == ContainerID.CONTAINER_ID_PLAYER_ONLY_UI.getValue())
+                .filter(action -> action.slot() == 28)
+                .findFirst().orElseThrow().toItem().amount());
+        final List<InventoryActionData> inventoryActions = inventoryActions(actions);
+        assertEquals(1, inventoryActions.size());
+        assertEquals(64, inventoryActions.get(0).toItem().amount());
+        assertEquals(16, actions.stream()
+                .filter(action -> action.source().type() == InventorySourceType.NonImplementedFeatureTODO)
+                .filter(action -> action.source().containerId() == -5)
+                .findFirst().orElseThrow().toItem().amount());
+    }
+
+    @Test
     void unresolvedCraftOutputLimitUsesAuthoritativeRollback() {
         this.prepareRecipe(1);
 
@@ -104,10 +126,14 @@ class CraftingSimulatorStackLimitsTest {
     }
 
     private void prepareRecipe(final int outputAmount) {
+        prepareRecipe(outputAmount, 1);
+    }
+
+    private void prepareRecipe(final int outputAmount, final int ingredientAmount) {
         this.recipes.clear();
         this.tracker.getHudContainer().clearItems();
         this.tracker.getInventoryContainer().clearItems();
-        this.tracker.getHudContainer().setItemSilent(28, item(INGREDIENT_ID, 1));
+        this.tracker.getHudContainer().setItemSilent(28, item(INGREDIENT_ID, ingredientAmount));
         this.recipes.addRecipe(new BedrockRecipe(
                 "test:armor",
                 BedrockRecipe.RecipeType.SHAPELESS,
