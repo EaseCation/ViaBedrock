@@ -17,8 +17,6 @@
  */
 package net.raphimc.viabedrock.experimental.inventory;
 
-import com.viaversion.viaversion.api.minecraft.item.HashedItem;
-import com.viaversion.viaversion.api.minecraft.item.Item;
 import net.raphimc.viabedrock.experimental.model.inventory.BedrockRecipe;
 import net.raphimc.viabedrock.experimental.model.inventory.InventoryActionData;
 import net.raphimc.viabedrock.experimental.model.inventory.InventorySource;
@@ -28,7 +26,6 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventorySourceType;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventorySource_InventorySourceFlags;
 import net.raphimc.viabedrock.protocol.model.BedrockItem;
-import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 
 import java.util.*;
@@ -118,13 +115,6 @@ public class CraftingSimulator {
 
     static List<InventoryActionData> simulateCraftQuickMove(final boolean is3x3, final InventoryTracker tracker,
                                                             final JavaItemStackLimits.Resolver stackLimits) {
-        return simulateCraftQuickMove(is3x3, tracker, stackLimits, null, null);
-    }
-
-    static List<InventoryActionData> simulateCraftQuickMove(
-            final boolean is3x3, final InventoryTracker tracker,
-            final JavaItemStackLimits.Resolver stackLimits,
-            final Map<Short, HashedItem> changedSlots, final HashedItem carriedItem) {
         final BedrockItem[] gridItems = getGridItems(is3x3, tracker);
         final RecipeRegistry registry = tracker.user().get(RecipeRegistry.class);
         final RecipeMatch match = registry.matchRecipeWithPlacement(gridItems, is3x3);
@@ -140,8 +130,6 @@ public class CraftingSimulator {
         }
 
         final BedrockItem[] inventoryItems = copyInventoryItems(tracker);
-        final BedrockItem[] originalInventoryItems = copyItems(inventoryItems);
-        final BedrockItem[] originalGridItems = copyItems(gridItems);
         int craftCount = registry.maxCraftMultiplier(match, gridItems);
         while (craftCount > 0 && !canFitOutputs(recipe, craftCount, inventoryItems, stackLimits)) craftCount--;
         if (craftCount <= 0) return null;
@@ -164,8 +152,7 @@ public class CraftingSimulator {
         if (!addOutputToInventory(actions, inventoryItems, primaryOutput, primaryAmount, maxStackSize)) return null;
         if (!addExtraOutputs(actions, recipe, craftCount, inventoryItems, stackLimits)) return null;
 
-        return matchesJavaPrediction(is3x3, tracker, originalGridItems, gridItems,
-                originalInventoryItems, inventoryItems, changedSlots, carriedItem) ? actions : null;
+        return actions;
     }
 
     private static boolean canFitOutputs(final BedrockRecipe recipe, final int craftCount,
@@ -301,50 +288,6 @@ public class CraftingSimulator {
             ));
             gridItems[i] = newGrid;
         }
-    }
-
-    private static boolean matchesJavaPrediction(final boolean is3x3, final InventoryTracker tracker,
-                                                 final BedrockItem[] originalGridItems, final BedrockItem[] gridItems,
-                                                 final BedrockItem[] originalInventoryItems, final BedrockItem[] inventoryItems,
-                                                 final Map<Short, HashedItem> changedSlots, final HashedItem carriedItem) {
-        if (changedSlots == null && carriedItem == null) return true;
-        if (changedSlots == null || carriedItem == null) return false;
-
-        final ItemRewriter itemRewriter = tracker.user().get(ItemRewriter.class);
-        final Item javaCursor = itemRewriter.javaItem(SlotMapper.getCursorItem(tracker).copy());
-        if (!ClickSimulator.samePredictedStack(javaCursor, carriedItem)) return false;
-
-        for (int gridSlot = 0; gridSlot < gridItems.length; gridSlot++) {
-            if (!matchesSlotPrediction(itemRewriter, (short) (gridSlot + 1),
-                    originalGridItems[gridSlot], gridItems[gridSlot], changedSlots)) return false;
-        }
-        for (int inventorySlot = 0; inventorySlot < inventoryItems.length; inventorySlot++) {
-            final int javaSlot = inventorySlot < 9
-                    ? (is3x3 ? 37 : 36) + inventorySlot
-                    : (is3x3 ? 10 : 9) + inventorySlot - 9;
-            if (!matchesSlotPrediction(itemRewriter, (short) javaSlot,
-                    originalInventoryItems[inventorySlot], inventoryItems[inventorySlot], changedSlots)) return false;
-        }
-
-        final HashedItem predictedOutput = changedSlots.get((short) 0);
-        if (predictedOutput != null) {
-            final BedrockRecipe finalRecipe = tracker.user().get(RecipeRegistry.class).matchRecipe(gridItems, is3x3);
-            final BedrockItem output = finalRecipe != null ? finalRecipe.primaryOutput() : BedrockItem.empty();
-            if (!ClickSimulator.samePredictedStack(itemRewriter.javaItem(output.copy()), predictedOutput)) return false;
-        }
-        return true;
-    }
-
-    private static boolean matchesSlotPrediction(final ItemRewriter itemRewriter, final short javaSlot,
-                                                 final BedrockItem originalItem, final BedrockItem finalItem,
-                                                 final Map<Short, HashedItem> changedSlots) {
-        final HashedItem predictedItem = changedSlots.get(javaSlot);
-        if (predictedItem == null) return sameStack(originalItem, finalItem);
-        return ClickSimulator.samePredictedStack(itemRewriter.javaItem(finalItem.copy()), predictedItem);
-    }
-
-    private static boolean sameStack(final BedrockItem first, final BedrockItem second) {
-        return first.amount() == second.amount() && !first.isDifferent(second);
     }
 
     private static BedrockItem[] copyInventoryItems(final InventoryTracker tracker) {

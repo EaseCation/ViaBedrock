@@ -149,7 +149,7 @@ class CraftingSimulatorStackLimitsTest {
         this.prepareRecipe(4, 64);
 
         final List<InventoryActionData> actions = CraftingSimulator.simulateCraftQuickMove(
-                false, this.tracker, ignored -> 64, null, null);
+                false, this.tracker, ignored -> 64);
 
         assertNotNull(actions);
         assertEquals(256, primaryOutputAmount(actions));
