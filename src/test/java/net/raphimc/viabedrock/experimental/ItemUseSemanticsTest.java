@@ -149,7 +149,8 @@ class ItemUseSemanticsTest {
         assertTrue(ItemUseSemantics.javaUsingVisible(true, true, 31));
         assertFalse(ItemUseSemantics.javaUsingVisible(true, true, 32));
         assertTrue(ItemUseSemantics.javaUsingVisible(true, false, 40));
-        assertTrue(ItemUseSemantics.ignoreJavaConsumableRelease(true, true));
+        assertFalse(ItemUseSemantics.ignoreJavaConsumableRelease(true, true),
+                "two-arg helper must not swallow an early Java RELEASE_USE_ITEM");
         assertFalse(ItemUseSemantics.ignoreJavaConsumableRelease(false, true));
         assertFalse(ItemUseSemantics.ignoreJavaConsumableRelease(true, false));
         assertFalse(ItemUseSemantics.ignoreJavaConsumableRelease(true, true, false, 0),

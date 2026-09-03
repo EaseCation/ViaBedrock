@@ -548,7 +548,7 @@ public final class ItemUseSemantics {
      * reach MOT so its {@code TYPE_RELEASE_ITEM} handler can clear using-state.
      */
     static boolean ignoreJavaConsumableRelease(final boolean emulateNetEase, final boolean consumable) {
-        return emulateNetEase && consumable;
+        return ignoreJavaConsumableRelease(emulateNetEase, consumable, false);
     }
 
     static boolean ignoreJavaConsumableRelease(final boolean emulateNetEase, final boolean consumable,
