@@ -137,9 +137,9 @@ public class ResourcePackRewriter {
     public static String rewriterFingerprint() {
         try {
             final MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            // v2 also fingerprints the converted Java pack envelope, which now carries the
-            // ordered embedded Bedrock stack manifest consumed by VBU.
-            digest.update("ViaBedrock-Rewriters-v2\0".getBytes(StandardCharsets.US_ASCII));
+            // v3 keeps the manifest and embedded archive set identical when one logical pack UUID
+            // occurs in multiple version layers.
+            digest.update("ViaBedrock-Rewriters-v3\0".getBytes(StandardCharsets.US_ASCII));
             for (Rewriter rewriter : REWRITERS) {
                 updateFingerprint(digest, rewriter.getClass().getName());
                 updateFingerprint(digest, rewriter.artifactFingerprint());

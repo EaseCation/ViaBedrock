@@ -810,18 +810,21 @@ public class ResourcePackHttpServer {
             throw new IOException("Converted resource pack already contains reserved path "
                     + BEDROCK_PACK_STACK_PATH);
         }
+        final List<ResourcePack> embeddedPackStack = embeddedPackStackBottomToTop(resourcePackStorage);
         generatedEntries.put(BEDROCK_PACK_STACK_PATH,
-                buildBedrockPackStackManifest(resourcePackStorage));
+                buildBedrockPackStackManifest(embeddedPackStack));
         outputPaths.add(BEDROCK_PACK_STACK_PATH);
         final Path embeddedDirectory = Files.createDirectory(outputDirectory.resolve(".embedded-packs"));
-        for (ResourcePack pack : resourcePackStorage.getPackStackTopToBottom()) {
+        for (ResourcePack pack : embeddedPackStack) {
             final String mcpackPath = "bedrock/" + pack.id() + ".mcpack";
-            if (uniquePaths.add(mcpackPath)) {
-                final Path packTemp = Files.createTempFile(embeddedDirectory, pack.id() + "-", ".mcpack.tmp");
-                embeddedPacks.put(mcpackPath, packTemp);
-                pack.content().writeZip(packTemp);
-                outputPaths.add(mcpackPath);
+            if (!uniquePaths.add(mcpackPath)) {
+                throw new IOException("Converted resource pack already contains reserved path "
+                        + mcpackPath);
             }
+            final Path packTemp = Files.createTempFile(embeddedDirectory, pack.id() + "-", ".mcpack.tmp");
+            embeddedPacks.put(mcpackPath, packTemp);
+            pack.content().writeZip(packTemp);
+            outputPaths.add(mcpackPath);
         }
 
         outputPaths.sort(String::compareTo);
@@ -853,11 +856,15 @@ public class ResourcePackHttpServer {
     }
 
     static byte[] buildBedrockPackStackManifest(ResourcePackStorage resourcePackStorage) {
+        return buildBedrockPackStackManifest(embeddedPackStackBottomToTop(resourcePackStorage));
+    }
+
+    private static byte[] buildBedrockPackStackManifest(List<ResourcePack> embeddedPackStack) {
         final JsonObject root = new JsonObject();
         root.addProperty("format_version", 1);
         root.addProperty("order", "bottom_to_top");
         final JsonArray packs = new JsonArray();
-        for (ResourcePack pack : resourcePackStorage.getPackStackBottomToTop()) {
+        for (ResourcePack pack : embeddedPackStack) {
             final JsonObject entry = new JsonObject();
             entry.addProperty("path", "bedrock/" + pack.id() + ".mcpack");
             entry.addProperty("uuid", pack.id().toString());
@@ -867,6 +874,18 @@ public class ResourcePackHttpServer {
         }
         root.add("packs", packs);
         return GsonUtil.getGson().toJson(root).getBytes(StandardCharsets.UTF_8);
+    }
+
+    /** Mirrors the UUID-based archive paths: the topmost occurrence of one pack identity wins. */
+    static List<ResourcePack> embeddedPackStackBottomToTop(ResourcePackStorage resourcePackStorage) {
+        final List<ResourcePack> selectedTopToBottom = new ArrayList<>();
+        final Set<UUID> selectedIds = new HashSet<>();
+        for (ResourcePack pack : resourcePackStorage.getPackStackTopToBottom()) {
+            if (selectedIds.add(pack.id())) {
+                selectedTopToBottom.add(pack);
+            }
+        }
+        return List.copyOf(selectedTopToBottom.reversed());
     }
 
     private static MessageDigest sha1Digest() {

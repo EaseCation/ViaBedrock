@@ -109,6 +109,38 @@ class ResourcePackHttpServerTest {
                 .get(1).getAsJsonObject().get("path").getAsString());
     }
 
+    @Test
+    void embeddedManifestKeepsOnlyTheTopmostVersionOfRepeatedPackIdentity(
+            @TempDir final Path tempDir) throws Exception {
+        final UUID repeatedId = UUID.fromString("00000000-0000-0000-0000-000000000001");
+        final UUID middleId = UUID.fromString("00000000-0000-0000-0000-000000000002");
+        final ResourcePack bottom = testPack(
+                tempDir.resolve("bottom"), repeatedId, "bottom", "1,0,0");
+        final ResourcePack middle = testPack(
+                tempDir.resolve("middle"), middleId, "middle", "1,0,0");
+        final ResourcePack top = testPack(
+                tempDir.resolve("top"), repeatedId, "top", "2,0,0");
+        final ResourcePackStorage storage = ResourcePackStorage.createUnshared(
+                List.of(top, middle, bottom));
+
+        final List<ResourcePack> embedded =
+                ResourcePackHttpServer.embeddedPackStackBottomToTop(storage);
+        final var manifest = JsonParser.parseString(new String(
+                ResourcePackHttpServer.buildBedrockPackStackManifest(storage),
+                StandardCharsets.UTF_8)).getAsJsonObject();
+
+        assertEquals(List.of(middle, top), embedded);
+        assertEquals(2, manifest.getAsJsonArray("packs").size());
+        assertEquals("bedrock/" + middleId + ".mcpack", manifest.getAsJsonArray("packs")
+                .get(0).getAsJsonObject().get("path").getAsString());
+        assertEquals("bedrock/" + repeatedId + ".mcpack", manifest.getAsJsonArray("packs")
+                .get(1).getAsJsonObject().get("path").getAsString());
+        assertEquals("2.0.0", manifest.getAsJsonArray("packs")
+                .get(1).getAsJsonObject().get("version").getAsString());
+        assertEquals("top", manifest.getAsJsonArray("packs")
+                .get(1).getAsJsonObject().get("name").getAsString());
+    }
+
     private static final String HASH = "0123456789abcdef0123456789abcdef01234567";
 
     @Test
@@ -851,10 +883,15 @@ class ResourcePackHttpServerTest {
     }
 
     private static ResourcePack testPack(Path directory, UUID id, String name) throws Exception {
+        return testPack(directory, id, name, "1,0,0");
+    }
+
+    private static ResourcePack testPack(
+            Path directory, UUID id, String name, String version) throws Exception {
         Files.createDirectories(directory);
         Files.writeString(directory.resolve("manifest.json"), """
-                {"format_version":2,"header":{"uuid":"%s","version":[1,0,0],"name":"%s"}}
-                """.formatted(id, name), StandardCharsets.UTF_8);
+                {"format_version":2,"header":{"uuid":"%s","version":[%s],"name":"%s"}}
+                """.formatted(id, version, name), StandardCharsets.UTF_8);
         return new ResourcePack(new DirectoryContent(directory.toAbsolutePath()));
     }
 
