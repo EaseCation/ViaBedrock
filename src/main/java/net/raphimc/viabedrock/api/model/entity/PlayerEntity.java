@@ -36,6 +36,7 @@ import net.raphimc.viabedrock.protocol.data.generated.java.Attributes;
 import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
 import net.raphimc.viabedrock.protocol.model.EntityAttribute;
 import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
+import net.raphimc.viabedrock.experimental.storage.GlowProjectionTracker;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -45,6 +46,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class PlayerEntity extends LivingEntity {
 
     protected PlayerAbilities abilities;
+    private String teamPrefix = "";
+    private boolean teamNameTagVisible = true;
 
     public PlayerEntity(final UserConnection user, final long runtimeId, final int javaId, final UUID javaUuid, final PlayerAbilities abilities) {
         super(user, abilities.entityUniqueId(), runtimeId, "minecraft:player", javaId, javaUuid, EntityTypes1_21_11.PLAYER);
@@ -60,11 +63,15 @@ public class PlayerEntity extends LivingEntity {
         setPlayerTeam.write(Types.BYTE, (byte) 3); // flags
         setPlayerTeam.write(Types.VAR_INT, TeamVisibility.ALWAYS.ordinal()); // name tag visibility
         setPlayerTeam.write(Types.VAR_INT, TeamCollisionRule.NEVER.ordinal()); // collision rule
-        setPlayerTeam.write(Types.VAR_INT, TextFormatting.RESET.getOrdinal()); // color
+        setPlayerTeam.write(Types.VAR_INT, this.glowTeamColorOrdinal()); // color
         setPlayerTeam.write(Types.TAG, TextUtil.stringToNbt("")); // prefix
         setPlayerTeam.write(Types.TAG, TextUtil.stringToNbt("")); // suffix
-        setPlayerTeam.write(Types.STRING_ARRAY, new String[]{StringUtil.encodeUUID(this.javaUuid)}); // players
+        setPlayerTeam.write(Types.STRING_ARRAY, new String[]{this.javaTeamMemberName()}); // players
         setPlayerTeam.send(BedrockProtocol.class);
+    }
+
+    protected String javaTeamMemberName() {
+        return StringUtil.encodeUUID(this.javaUuid);
     }
 
     public final void updateName(final String name) {
@@ -74,10 +81,12 @@ public class PlayerEntity extends LivingEntity {
         // raw stored name from entity data and overrides this prefix for genuine multiline names.
         final String trimmed = TextUtil.trimBlankLines(name);
         final boolean hasVisibleName = trimmed != null && !TextUtil.stripFormatting(trimmed).isEmpty();
-        this.sendTeamUpdate(hasVisibleName ? trimmed : "", hasVisibleName);
+        this.updateTeamPresentation(hasVisibleName ? trimmed : "", hasVisibleName);
     }
 
-    private void sendTeamUpdate(final String prefix, final boolean nameTagVisible) {
+    public final void updateTeamPresentation(final String prefix, final boolean nameTagVisible) {
+        this.teamPrefix = prefix;
+        this.teamNameTagVisible = nameTagVisible;
         final PacketWrapper setPlayerTeam = PacketWrapper.create(ClientboundPackets26_1.SET_PLAYER_TEAM, this.user);
         setPlayerTeam.write(Types.STRING, "vb_" + this.javaId); // team name
         setPlayerTeam.write(Types.BYTE, (byte) PlayerTeamMethod.CHANGE.ordinal()); // mode
@@ -85,10 +94,19 @@ public class PlayerEntity extends LivingEntity {
         setPlayerTeam.write(Types.BYTE, (byte) 3); // flags
         setPlayerTeam.write(Types.VAR_INT, (nameTagVisible ? TeamVisibility.ALWAYS : TeamVisibility.NEVER).ordinal()); // name tag visibility
         setPlayerTeam.write(Types.VAR_INT, TeamCollisionRule.NEVER.ordinal()); // collision rule
-        setPlayerTeam.write(Types.VAR_INT, TextFormatting.RESET.getOrdinal()); // color
+        setPlayerTeam.write(Types.VAR_INT, this.glowTeamColorOrdinal()); // color
         setPlayerTeam.write(Types.TAG, TextUtil.stringToNbt(prefix)); // prefix
         setPlayerTeam.write(Types.TAG, TextUtil.stringToNbt("")); // suffix
         setPlayerTeam.send(BedrockProtocol.class);
+    }
+
+    public final void refreshGlowTeam() {
+        this.updateTeamPresentation(this.teamPrefix, this.teamNameTagVisible);
+    }
+
+    private int glowTeamColorOrdinal() {
+        final GlowProjectionTracker tracker = this.user.get(GlowProjectionTracker.class);
+        return tracker == null ? TextFormatting.RESET.getOrdinal() : tracker.colorOrdinal(this.uniqueId());
     }
 
     public final void sendInitialEntityData() {
@@ -135,7 +153,7 @@ public class PlayerEntity extends LivingEntity {
                 final byte alwaysShow = (byte) entityData.getValue();
                 final String currentName = TextUtil.trimBlankLines(this.name());
                 final boolean hasVisibleName = alwaysShow == 1 && currentName != null && !TextUtil.stripFormatting(currentName).isEmpty();
-                this.sendTeamUpdate(hasVisibleName ? currentName : "", hasVisibleName);
+                this.updateTeamPresentation(hasVisibleName ? currentName : "", hasVisibleName);
             }
         }
         return super.translateEntityData(id, entityData, javaEntityData);
