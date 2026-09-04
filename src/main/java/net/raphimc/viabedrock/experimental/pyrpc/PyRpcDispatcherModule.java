@@ -22,6 +22,8 @@ import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.experimental.FeatureModule;
+import net.raphimc.viabedrock.experimental.storage.GlowProjectionTracker;
+import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
@@ -46,6 +48,11 @@ public class PyRpcDispatcherModule implements FeatureModule {
             wrapper.cancel();
             final byte[] data = wrapper.read(BedrockTypes.BYTE_ARRAY); // MsgPack data
             wrapper.read(BedrockTypes.INT_LE); // msgId (not needed for S2C forwarding)
+
+            final GlowProjectionTracker glow = wrapper.user().get(GlowProjectionTracker.class);
+            if (glow != null) {
+                GlowModEventCodec.decode(data).ifPresent(glow::apply);
+            }
 
             final ChannelStorage channels = wrapper.user().get(ChannelStorage.class);
             if (!channels.hasChannel(CHANNEL)) {
@@ -75,6 +82,27 @@ public class PyRpcDispatcherModule implements FeatureModule {
             ViaBedrock.getPlatform().getLogger().severe("[PY_RPC] Failed to forward JE C2S payload: " + e.getMessage());
         }
         return true;
+    }
+
+    @Override
+    public void onStorageRegistration(final com.viaversion.viaversion.api.connection.UserConnection user) {
+        user.put(new GlowProjectionTracker(user));
+    }
+
+    @Override
+    public void onEntityAdded(final com.viaversion.viaversion.api.connection.UserConnection user, final Entity entity) {
+        final GlowProjectionTracker glow = user.get(GlowProjectionTracker.class);
+        if (glow != null) {
+            glow.onEntityAdded(entity);
+        }
+    }
+
+    @Override
+    public void onEntityRemoved(final com.viaversion.viaversion.api.connection.UserConnection user, final Entity entity) {
+        final GlowProjectionTracker glow = user.get(GlowProjectionTracker.class);
+        if (glow != null) {
+            glow.onEntityRemoved(entity);
+        }
     }
 
 }
