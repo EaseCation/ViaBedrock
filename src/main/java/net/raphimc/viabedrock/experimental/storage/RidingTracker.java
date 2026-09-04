@@ -34,6 +34,7 @@ import net.raphimc.viabedrock.experimental.riding.RidingAnchorHelper;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorDataIDs;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAuthInputPacket_InputData;
 import net.raphimc.viabedrock.protocol.data.enums.java.InputFlag;
+import net.raphimc.viabedrock.protocol.data.enums.java.Relative;
 import net.raphimc.viabedrock.protocol.model.EntityLink;
 import net.raphimc.viabedrock.protocol.model.Position3f;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
@@ -81,7 +82,7 @@ public class RidingTracker extends StoredObject {
 
         final Entity vehicle = entityTracker.getEntityByUid(this.localVehicleUniqueId);
         if (vehicle == null) {
-            this.clearLocalRiding();
+            this.finishLocalDismount(this.localVehicleUniqueId, null);
         }
         return vehicle;
     }
@@ -126,7 +127,10 @@ public class RidingTracker extends StoredObject {
         final Position3f authInputPosition = this.authInputPosition(vehicle, clientPlayer, mode);
         final Position3f safeDismountPosition = this.safeDismountPosition(vehicle, clientPlayer, mode, authInputPosition);
         if (this.isPendingDismount(vehicle)) {
-            context.setPosition(this.lastSafeDismountPosition != null ? this.lastSafeDismountPosition : safeDismountPosition);
+            if (this.lastSafeDismountPosition == null) {
+                this.lastSafeDismountPosition = safeDismountPosition;
+            }
+            context.setPosition(this.lastSafeDismountPosition);
             context.setDelta(Position3f.ZERO);
             this.tickPendingDismount();
             this.lastMoveVehicleInputFresh = false;
@@ -160,8 +164,12 @@ public class RidingTracker extends StoredObject {
         final byte type = link.type();
 
         if (type == LINK_REMOVE) {
+            final boolean localDismount = this.isLocalPassenger(vehicleUniqueId, passengerUniqueId);
+            final Position3f fallbackPosition = localDismount ? this.currentSafeDismountPosition(vehicleUniqueId) : null;
             this.removePassenger(vehicleUniqueId, passengerUniqueId);
-            this.updateLocalVehicle(passengerUniqueId, null);
+            if (localDismount) {
+                this.finishLocalDismount(vehicleUniqueId, fallbackPosition);
+            }
             return;
         }
 
@@ -200,6 +208,8 @@ public class RidingTracker extends StoredObject {
     }
 
     public void onEntityRemoved(final Entity entity) {
+        final boolean localVehicleRemoved = this.localVehicleUniqueId != null && this.localVehicleUniqueId == entity.uniqueId();
+        final Position3f fallbackPosition = localVehicleRemoved ? this.currentSafeDismountPosition(entity.uniqueId()) : null;
         final JavaPassengerTracker passengerTracker = this.user().get(JavaPassengerTracker.class);
         final LongList passengers = this.vehiclePassengers.remove(entity.uniqueId());
         if (passengers != null) {
@@ -228,8 +238,8 @@ public class RidingTracker extends StoredObject {
             this.refreshVehicle(vehicleUniqueId);
         }
 
-        if (this.localVehicleUniqueId != null && (this.localVehicleUniqueId == entity.uniqueId() || isLocalPlayer(entity))) {
-            this.clearLocalRiding();
+        if (localVehicleRemoved) {
+            this.finishLocalDismount(entity.uniqueId(), fallbackPosition);
         }
     }
 
@@ -499,7 +509,7 @@ public class RidingTracker extends StoredObject {
         clientPlayer.authInputData().remove(PlayerAuthInputPacket_InputData.PaddlingRight);
     }
 
-    private void updateLocalVehicle(final long passengerUniqueId, final Long vehicleUniqueId) {
+    private void updateLocalVehicle(final long passengerUniqueId, final long vehicleUniqueId) {
         final EntityTracker entityTracker = this.user().get(EntityTracker.class);
         if (entityTracker == null) {
             return;
@@ -507,12 +517,8 @@ public class RidingTracker extends StoredObject {
 
         final Entity clientPlayer = entityTracker.getClientPlayer();
         if (clientPlayer != null && clientPlayer.uniqueId() == passengerUniqueId) {
-            if (vehicleUniqueId == null) {
-                this.clearLocalRiding();
-                return;
-            }
-
             this.localVehicleUniqueId = vehicleUniqueId;
+            this.lastSafeDismountPosition = null;
             this.clearPendingDismount();
             this.lastMoveVehicleInput = null;
             this.lastMoveVehicleInputFresh = false;
@@ -527,6 +533,59 @@ public class RidingTracker extends StoredObject {
         this.lastMoveVehicleInputFresh = false;
         this.lastSafeDismountPosition = null;
         this.clearPendingDismount();
+    }
+
+    private boolean isLocalPassenger(final long vehicleUniqueId, final long passengerUniqueId) {
+        if (this.localVehicleUniqueId == null || this.localVehicleUniqueId != vehicleUniqueId) {
+            return false;
+        }
+
+        final EntityTracker entityTracker = this.user().get(EntityTracker.class);
+        final ClientPlayerEntity clientPlayer = entityTracker != null ? entityTracker.getClientPlayer() : null;
+        return clientPlayer != null && clientPlayer.uniqueId() == passengerUniqueId;
+    }
+
+    private Position3f currentSafeDismountPosition(final long vehicleUniqueId) {
+        final EntityTracker entityTracker = this.user().get(EntityTracker.class);
+        if (entityTracker == null) {
+            return null;
+        }
+
+        final Entity vehicle = entityTracker.getEntityByUid(vehicleUniqueId);
+        final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
+        if (vehicle == null || clientPlayer == null) {
+            return null;
+        }
+
+        final LocalRidingMode mode = this.localRidingMode(vehicle, clientPlayer);
+        final Position3f authInputPosition = this.authInputPosition(vehicle, clientPlayer, mode);
+        return this.safeDismountPosition(vehicle, clientPlayer, mode, authInputPosition);
+    }
+
+    private void finishLocalDismount(final long vehicleUniqueId, final Position3f fallbackPosition) {
+        if (this.localVehicleUniqueId == null || this.localVehicleUniqueId != vehicleUniqueId) {
+            return;
+        }
+
+        final Position3f position = this.lastSafeDismountPosition != null ? this.lastSafeDismountPosition : fallbackPosition;
+        this.clearLocalRiding();
+        if (position == null) {
+            return;
+        }
+
+        synchronizeLocalDismountPosition(this.user(), position);
+    }
+
+    private static void synchronizeLocalDismountPosition(final UserConnection user, final Position3f position) {
+        final EntityTracker entityTracker = user.get(EntityTracker.class);
+        final ClientPlayerEntity clientPlayer = entityTracker != null ? entityTracker.getClientPlayer() : null;
+        if (clientPlayer == null) {
+            return;
+        }
+
+        // Java keeps the client-side passenger attachment position after a server-driven unlink.
+        clientPlayer.setPosition(position);
+        clientPlayer.beginPositionSync(Relative.ROTATION);
     }
 
     private boolean isPendingDismount(final Entity vehicle) {
