@@ -66,8 +66,12 @@ public class PlayerEntity extends LivingEntity {
         setPlayerTeam.write(Types.VAR_INT, this.glowTeamColorOrdinal()); // color
         setPlayerTeam.write(Types.TAG, TextUtil.stringToNbt("")); // prefix
         setPlayerTeam.write(Types.TAG, TextUtil.stringToNbt("")); // suffix
-        setPlayerTeam.write(Types.STRING_ARRAY, new String[]{StringUtil.encodeUUID(this.javaUuid)}); // players
+        setPlayerTeam.write(Types.STRING_ARRAY, new String[]{this.javaTeamMemberName()}); // players
         setPlayerTeam.send(BedrockProtocol.class);
+    }
+
+    protected String javaTeamMemberName() {
+        return StringUtil.encodeUUID(this.javaUuid);
     }
 
     public final void updateName(final String name) {
