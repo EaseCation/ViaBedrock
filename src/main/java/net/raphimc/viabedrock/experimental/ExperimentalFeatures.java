@@ -1601,18 +1601,21 @@ public class ExperimentalFeatures {
                     stopUsingItem(wrapper.user(), clientPlayer);
                     return;
                 }
-                if (releaseAction == ItemReleaseInventoryTransaction_ActionType.Use) {
-                    finishConsumableUse(wrapper.user(), inventoryTransactionRewriter, clientPlayer);
-                    if (!ItemUseSemantics.keepLocalUsingAfterConsumableFinish(ViaBedrock.getConfig().shouldEmulateNetEaseClient(), true, clientPlayer.isConsumableFinishSent())) {
-                        stopUsingItem(wrapper.user(), clientPlayer);
-                    }
-                    return;
-                }
+                // Duration-ready Java RELEASE_USE_ITEM is completed by CLIENT_TICK_END.
+                // Check that before the Use branch so this skip actually runs. Early
+                // releases are not duration-ready and must still reach MOT.
                 if (ItemUseSemantics.ignoreJavaConsumableRelease(
                         ViaBedrock.getConfig().shouldEmulateNetEaseClient(),
                         isConsumableUseItem(wrapper.user().get(ItemRewriter.class), selectedItem),
                         releaseAction == ItemReleaseInventoryTransaction_ActionType.Use,
                         clientPlayer.usingItemTicks())) {
+                    return;
+                }
+                if (releaseAction == ItemReleaseInventoryTransaction_ActionType.Use) {
+                    finishConsumableUse(wrapper.user(), inventoryTransactionRewriter, clientPlayer);
+                    if (!ItemUseSemantics.keepLocalUsingAfterConsumableFinish(ViaBedrock.getConfig().shouldEmulateNetEaseClient(), true, clientPlayer.isConsumableFinishSent())) {
+                        stopUsingItem(wrapper.user(), clientPlayer);
+                    }
                     return;
                 }
                 if (ItemUseSemantics.emulateShieldAsSneak(ViaBedrock.getConfig().shouldEmulateNetEaseClient(), isShield(wrapper.user().get(ItemRewriter.class), selectedItem))) {
