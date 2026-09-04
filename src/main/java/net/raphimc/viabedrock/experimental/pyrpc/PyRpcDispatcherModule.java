@@ -21,6 +21,7 @@ import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import net.raphimc.viabedrock.ViaBedrock;
+import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
 import net.raphimc.viabedrock.experimental.FeatureModule;
 import net.raphimc.viabedrock.experimental.storage.GlowProjectionTracker;
 import net.raphimc.viabedrock.api.model.entity.Entity;
@@ -54,13 +55,15 @@ public class PyRpcDispatcherModule implements FeatureModule {
                 GlowModEventCodec.decode(data).ifPresent(glow::apply);
             }
 
+            final String routedChannel = ExperimentalFeatures.dispatchResolveClientboundPyRpcChannel(data);
+            final String targetChannel = routedChannel != null ? routedChannel : CHANNEL;
             final ChannelStorage channels = wrapper.user().get(ChannelStorage.class);
-            if (!channels.hasChannel(CHANNEL)) {
+            if (!channels.hasChannel(targetChannel)) {
                 return;
             }
 
             final PacketWrapper msg = PacketWrapper.create(ClientboundPackets26_1.CUSTOM_PAYLOAD, wrapper.user());
-            msg.write(Types.STRING, CHANNEL);
+            msg.write(Types.STRING, targetChannel);
             msg.write(Types.REMAINING_BYTES, data);
             msg.scheduleSend(BedrockProtocol.class);
         });
