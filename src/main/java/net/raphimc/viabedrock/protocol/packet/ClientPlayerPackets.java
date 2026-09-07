@@ -276,7 +276,7 @@ public class ClientPlayerPackets {
                         return;
                     }
 
-                    clientPlayer.setPosition(position);
+                    clientPlayer.setPositionFromServer(position);
                     clientPlayer.setOnGround(onGround);
                     clientPlayer.writePlayerPositionPacketToClient(wrapper, Relative.union(Relative.ROTATION, Relative.VELOCITY), true);
                 }

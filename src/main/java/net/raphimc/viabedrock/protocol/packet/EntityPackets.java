@@ -245,7 +245,7 @@ public class EntityPackets {
                     wrapper.cancel();
                     return;
                 }
-                entity.setPosition(position);
+                entityTracker.getClientPlayer().setPositionFromServer(position);
                 ExperimentalFeatures.dispatchEntityMoved(wrapper.user(), entity);
 
                 if (teleported) {
@@ -323,7 +323,7 @@ public class EntityPackets {
                 if (hasZ) {
                     z = wrapper.read(BedrockTypes.FLOAT_LE);
                 }
-                entity.setPosition(new Position3f(x, y, z));
+                entityTracker.getClientPlayer().setPositionFromServer(new Position3f(x, y, z));
                 ExperimentalFeatures.dispatchEntityMoved(wrapper.user(), entity);
 
                 wrapper.clearPacket();

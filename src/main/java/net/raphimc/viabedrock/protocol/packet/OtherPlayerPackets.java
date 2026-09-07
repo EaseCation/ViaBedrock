@@ -186,7 +186,7 @@ public class OtherPlayerPackets {
                     wrapper.cancel();
                     return;
                 }
-                entity.setPosition(position);
+                clientPlayer.setPositionFromServer(position);
                 entity.setRotation(rotation);
                 entity.setOnGround(onGround);
                 ExperimentalFeatures.dispatchEntityMoved(wrapper.user(), entity);

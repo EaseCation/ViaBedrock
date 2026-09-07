@@ -32,6 +32,7 @@ import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 import net.raphimc.viabedrock.protocol.storage.ClientSettingsStorage;
 import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.experimental.model.inventory.BedrockInventoryTransaction;
+import net.raphimc.viabedrock.experimental.storage.RidingTracker;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.enums.Direction;
@@ -344,6 +345,14 @@ public class ClientPlayerEntity extends PlayerEntity {
         this.prevPosition = position;
     }
 
+    public void setPositionFromServer(final Position3f position) {
+        this.setPosition(position);
+        final RidingTracker riding = this.user.get(RidingTracker.class);
+        if (riding != null) {
+            riding.onPlayerPositionCorrection(position);
+        }
+    }
+
     @Override
     public void setOnGround(final boolean onGround) {
         super.setOnGround(onGround);
@@ -599,11 +608,6 @@ public class ClientPlayerEntity extends PlayerEntity {
     private boolean preMove(final Position3f newPosition, final Position3f newRotation, final boolean newOnGround) {
         final ChunkTracker chunkTracker = this.user.get(ChunkTracker.class);
 
-        // Allow position packet which is sent immediately after confirming a teleport
-        if (this.serverSideTeleportConfirmed) {
-            this.serverSideTeleportConfirmed = false;
-            return true;
-        }
         // Waiting for position sync. Silently drops movement (no rubber-band) until the client confirms
         // the sync teleport. Deterministic deadlock this used to cause, and how it is now prevented:
         //   1. Player switches world / cross-server; their position momentarily lands in a not-yet-loaded
@@ -625,6 +629,11 @@ public class ClientPlayerEntity extends PlayerEntity {
         // so the real teleport in step 2 (or the fake confirm in step 3) resolves it. See confirmTeleport().
         if (this.waitingForPositionSync) {
             return false;
+        }
+        // An older teleport acknowledgement must not bypass a newer position sync.
+        if (this.serverSideTeleportConfirmed) {
+            this.serverSideTeleportConfirmed = false;
+            return true;
         }
         // Not spawned yet or respawning
         if (!this.initiallySpawned || this.dimensionChangeInfo != null) {
