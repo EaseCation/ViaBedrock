@@ -27,6 +27,7 @@ import com.viaversion.viaversion.protocols.v1_21_7to1_21_9.packet.ClientboundCon
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorDataIDs;
 import net.raphimc.viabedrock.protocol.model.SkinData;
+import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
 import net.raphimc.viabedrock.protocol.storage.JavaPlayerStateStorage;
 import net.raphimc.viabedrock.protocol.types.primitive.ImageType;
 
@@ -43,6 +44,8 @@ public class ViaBedrockUtilityInterface {
 
     public static final String CHANNEL = "viabedrockutility:data";
     public static final String PLAYER_STATE_CHANNEL = "viabedrockutility:player_state";
+    public static final String PLAYER_VISUAL_STATE_V1_CAPABILITY = "viabedrockutility:player_visual_state_v1";
+    public static final String CUSTOM_SPECTATOR_PROPERTY = "easecation:custom_spectator";
     /** Client capability: unmapped Bedrock particle effects can use anchor-aware V2 requests. */
     public static final String PARTICLE_RUNTIME_V2_CAPABILITY = "viabedrockutility:particle_runtime_v2";
     static final int MAX_PAYLOAD_SIZE = 1_048_576;
@@ -219,7 +222,22 @@ public class ViaBedrockUtilityInterface {
         CONFIRM, MODEL_REQUEST, ANIMATE,
         CAPE, SKIN_INFORMATION, SKIN_DATA,
         SKIN_ANIMATION_INFO, SKIN_ANIMATION_DATA,
-        SPAWN_PARTICLE, SPAWN_PARTICLE_V2
+        SPAWN_PARTICLE, SPAWN_PARTICLE_V2,
+        PLAYER_VISUAL_STATE
+    }
+
+    public static void sendPlayerVisualState(final UserConnection user, final UUID uuid, final boolean customSpectator) {
+        final ChannelStorage channels = user.get(ChannelStorage.class);
+        if (channels == null || !channels.hasChannel(PLAYER_VISUAL_STATE_V1_CAPABILITY)) {
+            return;
+        }
+
+        final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets26_1.CUSTOM_PAYLOAD, user);
+        pluginMessage.write(Types.STRING, CHANNEL);
+        pluginMessage.write(Types.INT, PayloadType.PLAYER_VISUAL_STATE.ordinal());
+        pluginMessage.write(Types.UUID, uuid);
+        pluginMessage.write(Types.UNSIGNED_BYTE, (short) (customSpectator ? 1 : 0));
+        pluginMessage.scheduleSend(BedrockProtocol.class);
     }
 
     public static void spawnParticle(final UserConnection user, final String identifier, final float x, final float y, final float z) {

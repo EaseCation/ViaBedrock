@@ -139,6 +139,7 @@ public class OtherPlayerPackets {
 
             entity.sendInitialEntityData();
             entity.updateEntityData(entityData);
+            entity.updateEntityProperties(entityProperties);
             ExperimentalFeatures.dispatchEntityLinks(wrapper.user(), entityLinks);
         });
         protocol.registerClientbound(ClientboundBedrockPackets.MOVE_PLAYER, ClientboundPackets26_1.ENTITY_POSITION_SYNC, wrapper -> {

@@ -392,12 +392,14 @@ public class JoinPackets {
                     wrapper.read(BedrockTypes.STRING); // multiplayer correlation id
                     final boolean inventoryServerAuthoritative = wrapper.read(Types.BOOLEAN); // server authoritative inventories
                     final String serverEngine = wrapper.read(BedrockTypes.STRING); // server engine
-                    wrapper.read(BedrockTypes.NETWORK_TAG); // player property data
+                    final CompoundTag playerPropertyData = (CompoundTag) wrapper.read(BedrockTypes.NETWORK_TAG); // player property data
                     wrapper.read(BedrockTypes.LONG_LE); // block registry checksum
                     wrapper.read(BedrockTypes.UUID); // world template id
                     wrapper.read(Types.BOOLEAN); // client side generation
                     final boolean hashedRuntimeBlockIds = wrapper.read(Types.BOOLEAN); // use hashed block runtime ids
                     wrapper.read(Types.BOOLEAN); // server authoritative sounds
+
+                    gameSession.setPlayerEntityProperties(playerPropertyData);
                     if (wrapper.read(Types.BOOLEAN)) { // has server join information
                         if (wrapper.read(Types.BOOLEAN)) { // has gathering join information
                             wrapper.read(BedrockTypes.UUID); // experience id

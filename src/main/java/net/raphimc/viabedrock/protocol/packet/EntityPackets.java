@@ -594,6 +594,9 @@ public class EntityPackets {
 
             final List<EntityData> javaEntityData = new ArrayList<>();
             entity.updateEntityData(entityData, javaEntityData);
+            if (entity instanceof PlayerEntity playerEntity) {
+                playerEntity.updateEntityProperties(entityProperties);
+            }
             wrapper.write(Types.VAR_INT, entity.javaId()); // entity id
             wrapper.write(VersionedTypes.V26_1.entityDataList, javaEntityData); // entity data
         });
