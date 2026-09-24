@@ -56,6 +56,7 @@ public final class NeighborAwareBlockRewriter {
         this.rules = List.of(
                 new StairShapeRule(javaBlockStates),
                 new BlockConnectionRule(javaBlockStates),
+                new NetherPortalAxisRule(javaBlockStates),
                 new LinkedBlockRule(javaBlockStates)
         );
     }
