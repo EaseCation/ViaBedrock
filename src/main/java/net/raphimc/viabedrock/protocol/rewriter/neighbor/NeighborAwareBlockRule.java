@@ -42,4 +42,13 @@ public interface NeighborAwareBlockRule {
      */
     int recompute(final BlockNeighborView view, final BlockPosition pos, final int javaBlockStateId);
 
+    /**
+     * @return whether a stale value of this rule can be visually broken when the neighbor it depends on lives in a
+     * chunk that had not arrived yet (and therefore was not re-checked). Only such rules make it worth re-running the
+     * fix on an already sent neighbor chunk; they must be rare, as that costs a chunk resend.
+     */
+    default boolean affectsNeighborChunks() {
+        return false;
+    }
+
 }

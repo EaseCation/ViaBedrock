@@ -53,6 +53,13 @@ public final class NetherPortalAxisRule implements NeighborAwareBlockRule {
     }
 
     @Override
+    public boolean affectsNeighborChunks() {
+        // A portal plane routinely straddles a chunk border; the column in the earlier chunk would otherwise keep the
+        // static unknown -> axis=x guess and render as a plane perpendicular to the frame.
+        return true;
+    }
+
+    @Override
     public int recompute(final BlockNeighborView view, final BlockPosition pos, final int javaBlockStateId) {
         if (this.xId == -1 || this.zId == -1) return javaBlockStateId;
         final boolean alongX = isPortal(view.getJavaBlockState(pos.getRelative(BlockFace.EAST)))
