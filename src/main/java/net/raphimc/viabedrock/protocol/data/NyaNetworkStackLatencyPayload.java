@@ -9,7 +9,11 @@
  */
 package net.raphimc.viabedrock.protocol.data;
 
-/** NyaAC 与 ViaBedrock 共用的 43 位 NSL 事务载荷。 */
+/**
+ * NyaAC 用这个特殊 NSL 载荷请求 ViaBedrock 定位处理完前序包后的首个 PlayerAuthInput。
+ * 普通 Java Pong 只能证明客户端收到了 Ping，不能指出哪一帧移动体现了前面的传送和动量；
+ * 载荷限制为 43 位，确保回写 Bedrock NSL 时乘以 1,000,000 仍在正 long 范围内。
+ */
 public final class NyaNetworkStackLatencyPayload {
 
     private static final long MAGIC = 0x4E59L;

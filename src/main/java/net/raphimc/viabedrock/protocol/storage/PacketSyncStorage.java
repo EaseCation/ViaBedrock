@@ -46,6 +46,7 @@ public class PacketSyncStorage extends StoredObject {
     private final AtomicInteger ID_COUNTER = new AtomicInteger(0);
     private final Int2ObjectMap<NetworkStackLatencyResponse> pendingNetworkStackLatencyResponses = new Int2ObjectOpenHashMap<>();
     private final Int2ObjectMap<Runnable> pendingActions = new Int2ObjectOpenHashMap<>();
+    // 特殊 Pong 必须等待其后的 Java movement；这样 ACK 后的 PAI 才是 NyaAC 要验证的那一帧。
     private final Deque<ClientTickEndBoundary> clientTickEndBoundaries = new ArrayDeque<>();
     private long javaMovementSequence;
     private int latencyMillis = UNKNOWN_LATENCY;
@@ -79,6 +80,9 @@ public class PacketSyncStorage extends StoredObject {
         return this.pendingNetworkStackLatencyResponses.remove(id);
     }
 
+    /**
+     * Pong 到达前已经收到的 movement 不能代表前序传送/动量，因此边界只接受下一个序号。
+     */
     public synchronized void deferClientTickEndBoundary(final long timestamp) {
         if (this.clientTickEndBoundaries.size() >= MAX_CLIENT_TICK_END_BOUNDARIES) {
             this.clientTickEndBoundaries.removeFirst();
@@ -87,10 +91,14 @@ public class PacketSyncStorage extends StoredObject {
                 timestamp, this.javaMovementSequence + 1L));
     }
 
+    /** 记录 Java movement 的处理顺序，不检查或信任包内运动数据。 */
     public synchronized void recordJavaMovementFrame() {
         this.javaMovementSequence++;
     }
 
+    /**
+     * 由 CLIENT_TICK_END 调用；只释放已经越过目标 movement 的边界，未满足的继续等待。
+     */
     public synchronized long[] consumeClientTickEndBoundaries() {
         final LongArrayList ready = new LongArrayList();
         while (!this.clientTickEndBoundaries.isEmpty()) {

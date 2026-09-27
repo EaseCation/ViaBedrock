@@ -520,6 +520,7 @@ public class ClientPlayerPackets {
             wrapper.write(BedrockTypes.POSITION_3F, entity.position().add((float) location.x(), (float) location.y(), (float) location.z())); // click position
             wrapper.read(Types.BOOLEAN); // using secondary action
         });
+        // 四种 movement 变体共用同一个序号；这里只记录包序，不信任坐标或状态内容。
         protocol.registerServerbound(ServerboundPackets26_1.MOVE_PLAYER_STATUS_ONLY, null, wrapper -> {
             wrapper.cancel();
             final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
@@ -700,6 +701,7 @@ public class ClientPlayerPackets {
             wrapper.write(BedrockTypes.POSITION_3F, MathUtil.calculateCameraOrientation(clientPlayer.rotation().y(), clientPlayer.rotation().x())); // camera orientation
             wrapper.write(BedrockTypes.POSITION_2F, immobile ? new Position2f(0F, 0F) : MathUtil.calculateMovementDirections(clientPlayer.authInputData(), false)); // raw move vector
 
+            // 先发特殊 ACK，再让当前 wrapper 发出 PAI；NyaAC 因而能唯一定位紧随 ACK 的 AuthInput。
             final long[] clientTickEndBoundaries = wrapper.user().get(PacketSyncStorage.class)
                     .consumeClientTickEndBoundaries();
             for (long timestamp : clientTickEndBoundaries) {
