@@ -110,6 +110,13 @@ public class MultiStatePackets {
         final int id = wrapper.read(Types.INT); // parameter
         final PacketSyncStorage.NetworkStackLatencyResponse response = packetSyncStorage.getNetworkStackLatencyResponse(id);
         if (response != null) {
+            if (response.clientTickEndBoundary()) {
+                // 普通 Pong 可立即回给服务端；特殊 Pong 要等下一帧 Java movement，
+                // 再把 ACK 放到该 movement 生成的 PlayerAuthInput 前面。
+                wrapper.cancel();
+                packetSyncStorage.deferClientTickEndBoundary(response.timestamp());
+                return;
+            }
             if (wrapper.user().getProtocolInfo().getServerState() != State.LOGIN) {
                 final long nowNanos = System.nanoTime();
                 final int serverTransportLatencyMillis = Via.getManager().getProviders().get(NettyPipelineProvider.class).getServerTransportLatencyMillis(wrapper.user());

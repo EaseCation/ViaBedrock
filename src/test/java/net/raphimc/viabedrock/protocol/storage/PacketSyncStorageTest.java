@@ -24,6 +24,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.TimeUnit;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -81,6 +82,29 @@ class PacketSyncStorageTest {
         this.storage.updateLatency(TimeUnit.MILLISECONDS.toNanos(25L), -1);
 
         assertTrue(this.storage.shouldPublishLatency(101L));
+    }
+
+    @Test
+    void clientTickEndBoundaryWaitsForMovementAfterPong() {
+        this.storage.deferClientTickEndBoundary(11L);
+
+        assertArrayEquals(new long[0], this.storage.consumeClientTickEndBoundaries());
+
+        this.storage.recordJavaMovementFrame();
+        assertArrayEquals(new long[]{11L}, this.storage.consumeClientTickEndBoundaries());
+        assertArrayEquals(new long[0], this.storage.consumeClientTickEndBoundaries());
+    }
+
+    @Test
+    void clientTickEndBoundariesKeepTheirOwnMovementThreshold() {
+        this.storage.deferClientTickEndBoundary(21L);
+        this.storage.recordJavaMovementFrame();
+        this.storage.deferClientTickEndBoundary(22L);
+
+        assertArrayEquals(new long[]{21L}, this.storage.consumeClientTickEndBoundaries());
+
+        this.storage.recordJavaMovementFrame();
+        assertArrayEquals(new long[]{22L}, this.storage.consumeClientTickEndBoundaries());
     }
 
 }
