@@ -524,21 +524,25 @@ public class ClientPlayerPackets {
             wrapper.cancel();
             final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
             clientPlayer.updatePlayerPosition(wrapper.read(Types.UNSIGNED_BYTE));
+            wrapper.user().get(PacketSyncStorage.class).recordJavaMovementFrame();
         });
         protocol.registerServerbound(ServerboundPackets26_1.MOVE_PLAYER_POS, null, wrapper -> {
             wrapper.cancel();
             final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
             clientPlayer.updatePlayerPosition(wrapper.read(Types.DOUBLE), wrapper.read(Types.DOUBLE), wrapper.read(Types.DOUBLE), wrapper.read(Types.UNSIGNED_BYTE));
+            wrapper.user().get(PacketSyncStorage.class).recordJavaMovementFrame();
         });
         protocol.registerServerbound(ServerboundPackets26_1.MOVE_PLAYER_POS_ROT, null, wrapper -> {
             wrapper.cancel();
             final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
             clientPlayer.updatePlayerPosition(wrapper.read(Types.DOUBLE), wrapper.read(Types.DOUBLE), wrapper.read(Types.DOUBLE), MathUtil.wrapDegrees(wrapper.read(Types.FLOAT)), wrapper.read(Types.FLOAT), wrapper.read(Types.UNSIGNED_BYTE));
+            wrapper.user().get(PacketSyncStorage.class).recordJavaMovementFrame();
         });
         protocol.registerServerbound(ServerboundPackets26_1.MOVE_PLAYER_ROT, null, wrapper -> {
             wrapper.cancel();
             final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
             clientPlayer.updatePlayerPosition(MathUtil.wrapDegrees(wrapper.read(Types.FLOAT)), wrapper.read(Types.FLOAT), wrapper.read(Types.UNSIGNED_BYTE));
+            wrapper.user().get(PacketSyncStorage.class).recordJavaMovementFrame();
         });
         protocol.registerServerbound(ServerboundPackets26_1.ACCEPT_TELEPORTATION, null, wrapper -> {
             wrapper.cancel();
@@ -695,6 +699,16 @@ public class ClientPlayerPackets {
             wrapper.write(BedrockTypes.POSITION_2F, new Position2f(0F, 0F)); // analog move vector
             wrapper.write(BedrockTypes.POSITION_3F, MathUtil.calculateCameraOrientation(clientPlayer.rotation().y(), clientPlayer.rotation().x())); // camera orientation
             wrapper.write(BedrockTypes.POSITION_2F, immobile ? new Position2f(0F, 0F) : MathUtil.calculateMovementDirections(clientPlayer.authInputData(), false)); // raw move vector
+
+            final long[] clientTickEndBoundaries = wrapper.user().get(PacketSyncStorage.class)
+                    .consumeClientTickEndBoundaries();
+            for (long timestamp : clientTickEndBoundaries) {
+                final PacketWrapper latency = PacketWrapper.create(
+                        ServerboundBedrockPackets.NETWORK_STACK_LATENCY, wrapper.user());
+                latency.write(BedrockTypes.LONG_LE, timestamp * 1_000_000L); // timestamp
+                latency.write(Types.BOOLEAN, true); // from server
+                latency.sendToServer(BedrockProtocol.class);
+            }
 
             clientPlayer.authInputData().clear();
             clientPlayer.authInputBlockActions().clear();

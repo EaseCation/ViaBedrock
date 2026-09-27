@@ -110,6 +110,11 @@ public class MultiStatePackets {
         final int id = wrapper.read(Types.INT); // parameter
         final PacketSyncStorage.NetworkStackLatencyResponse response = packetSyncStorage.getNetworkStackLatencyResponse(id);
         if (response != null) {
+            if (response.clientTickEndBoundary()) {
+                wrapper.cancel();
+                packetSyncStorage.deferClientTickEndBoundary(response.timestamp());
+                return;
+            }
             if (wrapper.user().getProtocolInfo().getServerState() != State.LOGIN) {
                 final long nowNanos = System.nanoTime();
                 final int serverTransportLatencyMillis = Via.getManager().getProviders().get(NettyPipelineProvider.class).getServerTransportLatencyMillis(wrapper.user());
