@@ -110,11 +110,16 @@ public class MultiStatePackets {
         final int id = wrapper.read(Types.INT); // parameter
         final PacketSyncStorage.NetworkStackLatencyResponse response = packetSyncStorage.getNetworkStackLatencyResponse(id);
         if (response != null) {
-            if (response.clientTickEndBoundary()) {
-                // 普通 Pong 可立即回给服务端；特殊 Pong 要等下一帧 Java movement，
-                // 再把 ACK 放到该 movement 生成的 PlayerAuthInput 前面。
+            if (response.nyaBoundaryPayload()) {
+                // 专属 Pong 只登记客户端处理边界，不在这里回传 ACK，也不参与普通延迟采样。
+                // 新版在下一份 AuthInput 字段构建完成后立即释放，旧版只保留原有兼容门控。
+                // 未知版本、家族或策略仍取消回包，不能降级为普通 Pong 提前确认。
+                // 不带专属 magic 的普通 NSL（包括逐包 metadata 事务）继续走下面的即时回包路径。
                 wrapper.cancel();
-                packetSyncStorage.deferClientTickEndBoundary(response.timestamp());
+                if (response.boundaryDescriptor() != null) {
+                    packetSyncStorage.deferClientTickEndBoundary(
+                            response.timestamp(), response.boundaryDescriptor());
+                }
                 return;
             }
             if (wrapper.user().getProtocolInfo().getServerState() != State.LOGIN) {
