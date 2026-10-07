@@ -520,7 +520,7 @@ public class ClientPlayerPackets {
             wrapper.write(BedrockTypes.POSITION_3F, entity.position().add((float) location.x(), (float) location.y(), (float) location.z())); // click position
             wrapper.read(Types.BOOLEAN); // using secondary action
         });
-        // 四种 movement 变体共用同一个序号；这里只记录包序，不信任坐标或状态内容。
+        // movement 序号只为旧版 NyaAC 边界兼容保留；新边界直接以 CLIENT_TICK_END 定位 PAI。
         protocol.registerServerbound(ServerboundPackets26_1.MOVE_PLAYER_STATUS_ONLY, null, wrapper -> {
             wrapper.cancel();
             final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
@@ -701,9 +701,13 @@ public class ClientPlayerPackets {
             wrapper.write(BedrockTypes.POSITION_3F, MathUtil.calculateCameraOrientation(clientPlayer.rotation().y(), clientPlayer.rotation().x())); // camera orientation
             wrapper.write(BedrockTypes.POSITION_2F, immobile ? new Position2f(0F, 0F) : MathUtil.calculateMovementDirections(clientPlayer.authInputData(), false)); // raw move vector
 
-            // 先发特殊 ACK，再让当前 wrapper 发出 PAI；NyaAC 因而能唯一定位紧随 ACK 的 AuthInput。
-            final long[] clientTickEndBoundaries = wrapper.user().get(PacketSyncStorage.class)
-                    .consumeClientTickEndBoundaries();
+            // 当前 AuthInput 的所有字段已构建完成，且已越过未出生/死亡的取消分支。
+            // 在这里立即推进 tick-end 序号并释放就绪 ACK，不等待额外 movement 或其他包。
+            // sendToServer 先发出 ACK，随后当前 wrapper 正常发出 PAI；线上顺序为 ACK → PAI。
+            // 同一边界只消费一次，多个就绪 ACK 按入队顺序共同定位紧随其后的这一份 AuthInput。
+            final PacketSyncStorage packetSyncStorage = wrapper.user().get(PacketSyncStorage.class);
+            packetSyncStorage.recordJavaClientTickEndFrame();
+            final long[] clientTickEndBoundaries = packetSyncStorage.consumeClientTickEndBoundaries();
             for (long timestamp : clientTickEndBoundaries) {
                 final PacketWrapper latency = PacketWrapper.create(
                         ServerboundBedrockPackets.NETWORK_STACK_LATENCY, wrapper.user());

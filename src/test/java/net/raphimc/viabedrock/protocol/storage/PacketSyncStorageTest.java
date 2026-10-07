@@ -19,6 +19,7 @@ package net.raphimc.viabedrock.protocol.storage;
 
 import com.viaversion.viaversion.connection.UserConnectionImpl;
 import io.netty.channel.embedded.EmbeddedChannel;
+import net.raphimc.viabedrock.protocol.data.NyaNetworkStackLatencyPayload;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -46,6 +47,20 @@ class PacketSyncStorageTest {
 
         assertEquals(new PacketSyncStorage.NetworkStackLatencyResponse(1234L, 5678L), this.storage.getNetworkStackLatencyResponse(id));
         assertNull(this.storage.getNetworkStackLatencyResponse(id));
+    }
+
+    @Test
+    void unsupportedNyaBoundaryDoesNotBecomeAnOrdinaryLatencyResponse() {
+        final long valid = NyaNetworkStackLatencyPayload.encode(
+                NyaNetworkStackLatencyPayload.Family.JAVA_CLIENT_BOUNDARY,
+                NyaNetworkStackLatencyPayload.ReleasePolicy.NEXT_CLIENT_TICK_END,
+                7L);
+        final int id = this.storage.addNetworkStackLatencyResponse(valid ^ (0x7L << 24), 5678L);
+
+        final PacketSyncStorage.NetworkStackLatencyResponse response =
+                this.storage.getNetworkStackLatencyResponse(id);
+        assertTrue(response.nyaBoundaryPayload());
+        assertNull(response.boundaryDescriptor());
     }
 
     @Test
@@ -85,8 +100,8 @@ class PacketSyncStorageTest {
     }
 
     @Test
-    void clientTickEndBoundaryWaitsForMovementAfterPong() {
-        this.storage.deferClientTickEndBoundary(11L);
+    void legacyBoundaryWaitsForMovementAfterPong() {
+        this.storage.deferClientTickEndBoundary(11L, legacyBoundary());
 
         assertArrayEquals(new long[0], this.storage.consumeClientTickEndBoundaries());
 
@@ -96,15 +111,57 @@ class PacketSyncStorageTest {
     }
 
     @Test
-    void clientTickEndBoundariesKeepTheirOwnMovementThreshold() {
-        this.storage.deferClientTickEndBoundary(21L);
+    void legacyBoundariesKeepTheirOwnMovementThreshold() {
+        this.storage.deferClientTickEndBoundary(21L, legacyBoundary());
         this.storage.recordJavaMovementFrame();
-        this.storage.deferClientTickEndBoundary(22L);
+        this.storage.deferClientTickEndBoundary(22L, legacyBoundary());
 
         assertArrayEquals(new long[]{21L}, this.storage.consumeClientTickEndBoundaries());
 
         this.storage.recordJavaMovementFrame();
         assertArrayEquals(new long[]{22L}, this.storage.consumeClientTickEndBoundaries());
+    }
+
+    @Test
+    void nextClientTickEndBoundaryDoesNotWaitForMovement() {
+        this.storage.deferClientTickEndBoundary(31L, nextTickEndBoundary());
+
+        assertArrayEquals(new long[0], this.storage.consumeClientTickEndBoundaries());
+        this.storage.recordJavaClientTickEndFrame();
+        assertArrayEquals(new long[]{31L}, this.storage.consumeClientTickEndBoundaries());
+    }
+
+    @Test
+    void readyTickEndBoundaryIsNotBlockedByLegacyMovementBoundary() {
+        this.storage.deferClientTickEndBoundary(41L, legacyBoundary());
+        this.storage.deferClientTickEndBoundary(42L, nextTickEndBoundary());
+
+        this.storage.recordJavaClientTickEndFrame();
+        assertArrayEquals(new long[]{42L}, this.storage.consumeClientTickEndBoundaries());
+
+        this.storage.recordJavaMovementFrame();
+        assertArrayEquals(new long[]{41L}, this.storage.consumeClientTickEndBoundaries());
+    }
+
+    @Test
+    void multipleTickEndBoundariesKeepInsertionOrder() {
+        this.storage.deferClientTickEndBoundary(51L, nextTickEndBoundary());
+        this.storage.deferClientTickEndBoundary(52L, nextTickEndBoundary());
+
+        this.storage.recordJavaClientTickEndFrame();
+        assertArrayEquals(new long[]{51L, 52L}, this.storage.consumeClientTickEndBoundaries());
+    }
+
+    private static NyaNetworkStackLatencyPayload.JavaBoundaryDescriptor legacyBoundary() {
+        return new NyaNetworkStackLatencyPayload.JavaBoundaryDescriptor(
+                NyaNetworkStackLatencyPayload.Family.JAVA_CLIENT_BOUNDARY,
+                NyaNetworkStackLatencyPayload.ReleasePolicy.LEGACY_AFTER_MOVEMENT);
+    }
+
+    private static NyaNetworkStackLatencyPayload.JavaBoundaryDescriptor nextTickEndBoundary() {
+        return new NyaNetworkStackLatencyPayload.JavaBoundaryDescriptor(
+                NyaNetworkStackLatencyPayload.Family.JAVA_CLIENT_BOUNDARY,
+                NyaNetworkStackLatencyPayload.ReleasePolicy.NEXT_CLIENT_TICK_END);
     }
 
 }
