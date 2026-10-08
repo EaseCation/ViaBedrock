@@ -12,6 +12,7 @@ package net.raphimc.viabedrock.protocol.data;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -54,5 +55,31 @@ class NyaNetworkStackLatencyPayloadTest {
         assertTrue(NyaNetworkStackLatencyPayload.isPayload(unknownVersion));
         assertNull(NyaNetworkStackLatencyPayload.decode(unknownPolicy));
         assertNull(NyaNetworkStackLatencyPayload.decode(unknownVersion));
+    }
+    @Test
+    void upstreamV2AndOwnedV2KeepReleasePolicySeparateFromOwnership() {
+        long prefix = 0x4E59L << 27 | 2L << 24;
+        long upstream = prefix | 1L << 20 | 1L << 16 | 123L;
+        long ownedDeferred = prefix | 2L << 20 | 1L << 16 | 123L;
+        long ownedImmediate = prefix | 2L << 20 | 2L << 16 | 123L;
+
+        assertTrue(NyaNetworkStackLatencyPayload.isJavaClientTickEndBoundary(upstream));
+        assertFalse(NyaNetworkStackLatencyPayload.isOwnedBoundary(upstream));
+        assertTrue(NyaNetworkStackLatencyPayload.isJavaClientTickEndBoundary(ownedDeferred));
+        assertTrue(NyaNetworkStackLatencyPayload.isOwnedBoundary(ownedDeferred));
+        assertFalse(NyaNetworkStackLatencyPayload.isJavaClientTickEndBoundary(ownedImmediate));
+        assertTrue(NyaNetworkStackLatencyPayload.isOwnedBoundary(ownedImmediate));
+    }
+
+    @Test
+    void legacyV1RemainsUnownedAndUnknownV2PoliciesDoNotRequestUuid() {
+        long legacy = 0x4E59L << 27 | 1L << 24 | 1L << 20 | 123L;
+        assertTrue(NyaNetworkStackLatencyPayload.isJavaClientTickEndBoundary(legacy));
+        assertFalse(NyaNetworkStackLatencyPayload.isOwnedBoundary(legacy));
+        for (int policy : new int[]{0, 3, 15}) {
+            long unknown = 0x4E59L << 27 | 2L << 24 | 2L << 20 | (long) policy << 16 | 123L;
+            assertFalse(NyaNetworkStackLatencyPayload.isOwnedBoundary(unknown));
+            assertFalse(NyaNetworkStackLatencyPayload.isJavaClientTickEndBoundary(unknown));
+        }
     }
 }

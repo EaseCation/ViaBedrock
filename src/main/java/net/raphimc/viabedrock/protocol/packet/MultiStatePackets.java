@@ -40,6 +40,7 @@ import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.DataValues;
 import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
+import net.raphimc.viabedrock.protocol.data.NyaNetworkStackLatencyPayload;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.Connection_DisconnectFailReason;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.MinecraftPacketIds;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketViolationSeverity;
@@ -101,7 +102,21 @@ public class MultiStatePackets {
             wrapper.cancel();
             return;
         }
-        final int id = wrapper.user().get(PacketSyncStorage.class).addNetworkStackLatencyResponse(timestamp);
+        final int id;
+        if (NyaNetworkStackLatencyPayload.isOwnedBoundary(timestamp)) {
+            final UUID identifier = new UUID(wrapper.read(BedrockTypes.LONG_LE), wrapper.read(BedrockTypes.LONG_LE));
+            if (!Via.getManager().getProviders().get(NettyPipelineProvider.class).supportsFullJavaPingIds(wrapper.user())) {
+                wrapper.cancel();
+                return;
+            }
+            id = wrapper.user().get(PacketSyncStorage.class).addNetworkStackLatencyResponse(timestamp, identifier);
+        } else {
+            id = wrapper.user().get(PacketSyncStorage.class).addNetworkStackLatencyResponse(timestamp);
+        }
+        if (id < 0) {
+            wrapper.cancel();
+            return;
+        }
         wrapper.write(Types.INT, id); // parameter
     };
 
@@ -110,27 +125,26 @@ public class MultiStatePackets {
         final int id = wrapper.read(Types.INT); // parameter
         final PacketSyncStorage.NetworkStackLatencyResponse response = packetSyncStorage.getNetworkStackLatencyResponse(id);
         if (response != null) {
-            if (response.nyaBoundaryPayload()) {
-                // 专属 Pong 只登记客户端处理边界，不在这里回传 ACK，也不参与普通延迟采样。
-                // 新版在下一份 AuthInput 字段构建完成后立即释放，旧版只保留原有兼容门控。
-                // 未知版本、家族或策略仍取消回包，不能降级为普通 Pong 提前确认。
-                // 不带专属 magic 的普通 NSL（包括逐包 metadata 事务）继续走下面的即时回包路径。
+            if (response.cancelled()) {
                 wrapper.cancel();
-                if (response.boundaryDescriptor() != null) {
-                    packetSyncStorage.deferClientTickEndBoundary(
-                            response.timestamp(), response.boundaryDescriptor());
-                }
                 return;
             }
-            if (wrapper.user().getProtocolInfo().getServerState() != State.LOGIN) {
+            if (response.nyaBoundaryPayload() && (response.boundaryDescriptor() == null
+                    || response.boundaryDescriptor().releasePolicy()
+                    != NyaNetworkStackLatencyPayload.ReleasePolicy.AFTER_CLIENT_PONG)) {
+                // 未知专属格式不能降级即时确认；新版在下一次实际生成的 AuthInput 前释放。
+                wrapper.cancel();
+                packetSyncStorage.deferClientTickEndBoundary(response);
+                return;
+            }
+            if (!response.nyaBoundaryPayload() && wrapper.user().getProtocolInfo().getServerState() != State.LOGIN) {
                 final long nowNanos = System.nanoTime();
                 final int serverTransportLatencyMillis = Via.getManager().getProviders().get(NettyPipelineProvider.class).getServerTransportLatencyMillis(wrapper.user());
                 packetSyncStorage.updateLatency(nowNanos - response.requestNanos(), serverTransportLatencyMillis);
                 publishJavaPlayerLatency(wrapper.user(), packetSyncStorage, nowNanos);
             }
 
-            wrapper.write(BedrockTypes.LONG_LE, response.timestamp() * 1_000_000L); // timestamp
-            wrapper.write(Types.BOOLEAN, true); // from server
+            writeNetworkStackLatencyResponse(wrapper, response);
         } else {
             wrapper.cancel();
             if (!packetSyncStorage.handleSyncTask(id)) {
@@ -138,6 +152,16 @@ public class MultiStatePackets {
             }
         }
     };
+
+    static void writeNetworkStackLatencyResponse(final PacketWrapper wrapper,
+                                                final PacketSyncStorage.NetworkStackLatencyResponse response) {
+        wrapper.write(BedrockTypes.LONG_LE, response.timestamp() * 1_000_000L); // timestamp
+        wrapper.write(Types.BOOLEAN, true); // from server
+        if (response.boundaryIdentifier() != null) {
+            wrapper.write(BedrockTypes.LONG_LE, response.boundaryIdentifier().getMostSignificantBits());
+            wrapper.write(BedrockTypes.LONG_LE, response.boundaryIdentifier().getLeastSignificantBits());
+        }
+    }
 
     private static void publishJavaPlayerLatency(final UserConnection user, final PacketSyncStorage packetSyncStorage, final long nowNanos) {
         if (user.getProtocolInfo().getServerState() != State.PLAY || !packetSyncStorage.shouldPublishLatency(nowNanos)) return;

@@ -90,8 +90,20 @@ public final class NyaNetworkStackLatencyPayload {
                 ? null : new JavaBoundaryDescriptor(family, policy);
     }
 
+    public static boolean isJavaClientTickEndBoundary(final long value) {
+        final JavaBoundaryDescriptor descriptor = decode(value);
+        return descriptor != null && descriptor.releasePolicy() != ReleasePolicy.AFTER_CLIENT_PONG;
+    }
+
+    /** UUID 归属复用 v2 家族字段；时序策略与归属身份分开。 */
+    public static boolean isOwnedBoundary(final long value) {
+        final JavaBoundaryDescriptor descriptor = decode(value);
+        return descriptor != null && descriptor.family() == Family.JAVA_OWNED_BOUNDARY;
+    }
+
     public enum Family {
-        JAVA_CLIENT_BOUNDARY(1);
+        JAVA_CLIENT_BOUNDARY(1),
+        JAVA_OWNED_BOUNDARY(2);
 
         private final int wireCode;
 
@@ -115,6 +127,7 @@ public final class NyaNetworkStackLatencyPayload {
 
     public enum ReleasePolicy {
         NEXT_CLIENT_TICK_END(1),
+        AFTER_CLIENT_PONG(2),
         LEGACY_AFTER_MOVEMENT(-1);
 
         private final int wireCode;

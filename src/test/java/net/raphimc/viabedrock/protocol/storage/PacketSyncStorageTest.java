@@ -24,6 +24,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.TimeUnit;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -162,6 +163,91 @@ class PacketSyncStorageTest {
         return new NyaNetworkStackLatencyPayload.JavaBoundaryDescriptor(
                 NyaNetworkStackLatencyPayload.Family.JAVA_CLIENT_BOUNDARY,
                 NyaNetworkStackLatencyPayload.ReleasePolicy.NEXT_CLIENT_TICK_END);
+    }
+
+    @Test
+    void worldBoundaryCancelsPendingOrdinaryAndSpecialPongsWithoutReusingTheirIds() {
+        final int ordinary = this.storage.addNetworkStackLatencyResponse(31L, 1L);
+        final long specialTimestamp = 0x4E59L << 27 | 1L << 24 | 1L << 20 | 1L;
+        assertTrue(NyaNetworkStackLatencyPayload.isJavaClientTickEndBoundary(specialTimestamp));
+        final int special = this.storage.addNetworkStackLatencyResponse(specialTimestamp, 2L);
+        this.storage.invalidateNetworkStackLatencyResponses();
+        this.storage.invalidateNetworkStackLatencyResponses();
+
+        final int replacement = this.storage.addNetworkStackLatencyResponse(specialTimestamp, 3L);
+        assertTrue(replacement != ordinary && replacement != special);
+        final PacketSyncStorage.NetworkStackLatencyResponse ordinaryResponse = this.storage.getNetworkStackLatencyResponse(ordinary);
+        assertTrue(ordinaryResponse.cancelled());
+        assertEquals(31L, ordinaryResponse.timestamp());
+        final PacketSyncStorage.NetworkStackLatencyResponse specialResponse = this.storage.getNetworkStackLatencyResponse(special);
+        assertTrue(specialResponse.cancelled());
+        assertEquals(specialTimestamp, specialResponse.timestamp());
+        assertNull(this.storage.getNetworkStackLatencyResponse(special));
+        assertFalse(this.storage.getNetworkStackLatencyResponse(replacement).cancelled());
+    }
+
+    @Test
+    void worldBoundaryDiscardsAlreadyDeferredAckButNewBoundaryStillWaitsForMovement() {
+        this.storage.deferClientTickEndBoundary(41L, legacyBoundary());
+        this.storage.recordJavaMovementFrame();
+        this.storage.invalidateNetworkStackLatencyResponses();
+        assertArrayEquals(new long[0], this.storage.consumeClientTickEndBoundaries());
+
+        this.storage.deferClientTickEndBoundary(42L, legacyBoundary());
+        assertArrayEquals(new long[0], this.storage.consumeClientTickEndBoundaries());
+        this.storage.recordJavaMovementFrame();
+        assertArrayEquals(new long[]{42L}, this.storage.consumeClientTickEndBoundaries());
+    }
+
+    @Test
+    void pingIdWrapCannotOverwriteOutstandingRequestAndExhaustionIsBounded() {
+        final int oldest = this.storage.addNetworkStackLatencyResponse(51L, 1L);
+        for (int i = 1; i < Short.MAX_VALUE; i++) {
+            assertEquals(i, this.storage.addNetworkStackLatencyResponse(100L + i, i));
+        }
+        this.storage.invalidateNetworkStackLatencyResponses();
+        assertEquals(-1, this.storage.addNetworkStackLatencyResponse(52L, 2L));
+        assertTrue(this.storage.getNetworkStackLatencyResponse(1).cancelled());
+        assertEquals(1, this.storage.addNetworkStackLatencyResponse(53L, 3L));
+        final PacketSyncStorage.NetworkStackLatencyResponse oldestResponse = this.storage.getNetworkStackLatencyResponse(oldest);
+        assertEquals(51L, oldestResponse.timestamp());
+        assertTrue(oldestResponse.cancelled());
+    }
+
+    @Test
+    void ownedRequestsKeepUuidAndNeverReuseConsumedPingIds() {
+        final UUID originalIdentifier = UUID.randomUUID();
+        final int original = this.storage.addNetworkStackLatencyResponse(61L, originalIdentifier);
+        assertEquals(Short.MAX_VALUE, original);
+        assertEquals(originalIdentifier, this.storage.getNetworkStackLatencyResponse(original).boundaryIdentifier());
+        final int replacement = this.storage.addNetworkStackLatencyResponse(61L, UUID.randomUUID());
+        assertEquals(original + 1, replacement);
+        assertNull(this.storage.getNetworkStackLatencyResponse(original));
+        this.storage.invalidateNetworkStackLatencyResponses();
+        assertTrue(this.storage.getNetworkStackLatencyResponse(replacement).cancelled());
+        assertEquals(replacement + 1, this.storage.addNetworkStackLatencyResponse(61L, UUID.randomUUID()));
+        assertEquals(0, this.storage.addNetworkStackLatencyResponse(62L));
+    }
+
+    @Test
+    void deferredOwnedResponseDoesNotLoseItsIdentifierOrTickEndRequirement() {
+        final UUID identifier = UUID.randomUUID();
+        final PacketSyncStorage.NetworkStackLatencyResponse response = new PacketSyncStorage.NetworkStackLatencyResponse(71L, 0L, true, nextTickEndBoundary(), false, identifier);
+        this.storage.deferClientTickEndBoundary(response);
+        assertTrue(this.storage.consumeClientTickEndBoundaryResponses().isEmpty());
+        this.storage.recordJavaClientTickEndFrame();
+        assertEquals(java.util.List.of(response), this.storage.consumeClientTickEndBoundaryResponses());
+        assertTrue(this.storage.consumeClientTickEndBoundaryResponses().isEmpty());
+    }
+
+    @Test
+    void worldInvalidationPreservesCancelledRequestIdentifierForLatePong() {
+        final UUID identifier = UUID.randomUUID();
+        final int id = this.storage.addNetworkStackLatencyResponse(81L, identifier);
+        this.storage.invalidateNetworkStackLatencyResponses();
+        final PacketSyncStorage.NetworkStackLatencyResponse cancelled = this.storage.getNetworkStackLatencyResponse(id);
+        assertTrue(cancelled.cancelled());
+        assertEquals(identifier, cancelled.boundaryIdentifier());
     }
 
 }

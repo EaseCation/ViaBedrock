@@ -62,6 +62,7 @@ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.util.EnumSet;
 import java.util.Locale;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.logging.Level;
@@ -179,6 +180,7 @@ public class ClientPlayerPackets {
             switch (state) {
                 case ReadyToSpawn -> {
                     final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
+                    clientPlayer.resetJavaMovementPosition();
                     clientPlayer.setPosition(position);
 
                     if (clientPlayer.isInitiallySpawned()) {
@@ -707,12 +709,12 @@ public class ClientPlayerPackets {
             // 同一边界只消费一次，多个就绪 ACK 按入队顺序共同定位紧随其后的这一份 AuthInput。
             final PacketSyncStorage packetSyncStorage = wrapper.user().get(PacketSyncStorage.class);
             packetSyncStorage.recordJavaClientTickEndFrame();
-            final long[] clientTickEndBoundaries = packetSyncStorage.consumeClientTickEndBoundaries();
-            for (long timestamp : clientTickEndBoundaries) {
+            final List<PacketSyncStorage.NetworkStackLatencyResponse> clientTickEndBoundaries =
+                    packetSyncStorage.consumeClientTickEndBoundaryResponses();
+            for (PacketSyncStorage.NetworkStackLatencyResponse response : clientTickEndBoundaries) {
                 final PacketWrapper latency = PacketWrapper.create(
                         ServerboundBedrockPackets.NETWORK_STACK_LATENCY, wrapper.user());
-                latency.write(BedrockTypes.LONG_LE, timestamp * 1_000_000L); // timestamp
-                latency.write(Types.BOOLEAN, true); // from server
+                MultiStatePackets.writeNetworkStackLatencyResponse(latency, response);
                 latency.sendToServer(BedrockProtocol.class);
             }
 
