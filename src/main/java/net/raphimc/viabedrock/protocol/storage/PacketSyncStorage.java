@@ -30,9 +30,15 @@ import com.viaversion.viaversion.protocols.v1_21_7to1_21_9.packet.ClientboundCon
 import net.raphimc.viabedrock.ViaBedrock;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.data.NyaNetworkStackLatencyPayload;
+import net.raphimc.viabedrock.protocol.data.NyaNetworkStackLatencyPayload.JavaBoundaryDescriptor;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.Iterator;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
@@ -44,11 +50,14 @@ public class PacketSyncStorage extends StoredObject {
     private static final int MAX_CLIENT_TICK_END_BOUNDARIES = 128;
 
     private final AtomicInteger ID_COUNTER = new AtomicInteger(0);
+    private long nextOwnedPingId = Short.MAX_VALUE;
     private final Int2ObjectMap<NetworkStackLatencyResponse> pendingNetworkStackLatencyResponses = new Int2ObjectOpenHashMap<>();
     private final Int2ObjectMap<Runnable> pendingActions = new Int2ObjectOpenHashMap<>();
-    // 特殊 Pong 必须等待其后的 Java movement；这样 ACK 后的 PAI 才是 NyaAC 要验证的那一帧。
+    // 只保存已收到对应 Java Pong 的专属边界；释放条件来自服务端载荷，不读取运动数据。
+    // 两个序号都是代理侧包序：tick-end 用于新版，movement 仅为第一版兼容保留。
     private final Deque<ClientTickEndBoundary> clientTickEndBoundaries = new ArrayDeque<>();
     private long javaMovementSequence;
+    private long javaClientTickEndSequence;
     private int latencyMillis = UNKNOWN_LATENCY;
     private int lastPublishedLatencyMillis = UNKNOWN_LATENCY;
     private long lastLatencyPublishNanos;
@@ -62,15 +71,23 @@ public class PacketSyncStorage extends StoredObject {
         return this.addNetworkStackLatencyResponse(timestamp, System.nanoTime());
     }
 
+    public synchronized int addNetworkStackLatencyResponse(final long timestamp, final UUID boundaryIdentifier) {
+        return this.addNetworkStackLatencyResponse(timestamp, System.nanoTime(), boundaryIdentifier);
+    }
+
     synchronized int addNetworkStackLatencyResponse(final long timestamp, final long requestNanos) {
-        if (ID_COUNTER.get() >= Short.MAX_VALUE) { // VB compatibility
-            ID_COUNTER.set(0);
-        }
-        final int id = this.ID_COUNTER.getAndIncrement();
-        final boolean clientTickEndBoundary =
-                NyaNetworkStackLatencyPayload.isJavaClientTickEndBoundary(timestamp);
+        return this.addNetworkStackLatencyResponse(timestamp, requestNanos, null);
+    }
+
+    private int addNetworkStackLatencyResponse(final long timestamp, final long requestNanos,
+                                              final @Nullable UUID boundaryIdentifier) {
+        final int id = this.nextPingId(boundaryIdentifier != null);
+        if (id < 0) return id;
+        final boolean nyaBoundaryPayload = NyaNetworkStackLatencyPayload.isPayload(timestamp);
+        final JavaBoundaryDescriptor boundaryDescriptor =
+                NyaNetworkStackLatencyPayload.decode(timestamp);
         if (this.pendingNetworkStackLatencyResponses.put(id,
-                new NetworkStackLatencyResponse(timestamp, requestNanos, clientTickEndBoundary)) != null) {
+                new NetworkStackLatencyResponse(timestamp, requestNanos, nyaBoundaryPayload, boundaryDescriptor, false, boundaryIdentifier)) != null) {
             ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Overwrote pending network stack latency response with id " + id);
         }
         return id;
@@ -80,35 +97,102 @@ public class PacketSyncStorage extends StoredObject {
         return this.pendingNetworkStackLatencyResponses.remove(id);
     }
 
+    /** 有效世界边界作废旧确认；保留其 ID 到 Pong 到达，避免回卷覆盖仍在途的请求。 */
+    public synchronized void invalidateNetworkStackLatencyResponses() {
+        this.clientTickEndBoundaries.clear();
+        this.pendingNetworkStackLatencyResponses.replaceAll((id, response) -> response.cancelled()
+                ? response : new NetworkStackLatencyResponse(response.timestamp(), response.requestNanos(),
+                response.nyaBoundaryPayload(), response.boundaryDescriptor(), true, response.boundaryIdentifier()));
+    }
+
+    private int nextPingId(final boolean owned) {
+        // 保留旧 Java 的 short 编号范围；耗尽时不覆盖任何仍在途的确认或同步任务。
+        if (this.pendingNetworkStackLatencyResponses.size() + this.pendingActions.size() >= Short.MAX_VALUE) {
+            return -1;
+        }
+        if (owned) {
+            return this.nextOwnedPingId < Integer.MAX_VALUE ? (int) this.nextOwnedPingId++ : -1;
+        }
+        for (int attempts = 0; attempts < Short.MAX_VALUE; attempts++) {
+            if (this.ID_COUNTER.get() >= Short.MAX_VALUE) this.ID_COUNTER.set(0);
+            final int id = this.ID_COUNTER.getAndIncrement();
+            if (!this.pendingNetworkStackLatencyResponses.containsKey(id) && !this.pendingActions.containsKey(id)) {
+                return id;
+            }
+        }
+        return -1;
+    }
+
     /**
-     * Pong 到达前已经收到的 movement 不能代表前序传送/动量，因此边界只接受下一个序号。
+     * 仅在消费对应 Java Pong 后入队。目标序号取当前值 + 1，不能用 Pong 之前的包提前确认。
+     * 新版只等待下一份可发出的 AuthInput；旧版 movement 门控仅用于兼容，不影响新版。
+     * 队列满时丢弃最老未释放边界，不伪造 ACK；是否重试由请求边界的服务端处理。
      */
-    public synchronized void deferClientTickEndBoundary(final long timestamp) {
+    public synchronized void deferClientTickEndBoundary(final long timestamp,
+            final JavaBoundaryDescriptor descriptor) {
+        this.deferClientTickEndBoundary(new NetworkStackLatencyResponse(timestamp, 0L, true, descriptor));
+    }
+
+    public synchronized void deferClientTickEndBoundary(final NetworkStackLatencyResponse response) {
+        final JavaBoundaryDescriptor descriptor = response.boundaryDescriptor();
+        if (response.cancelled() || descriptor == null || descriptor.releasePolicy() == null
+                || descriptor.releasePolicy() == NyaNetworkStackLatencyPayload.ReleasePolicy.AFTER_CLIENT_PONG) {
+            return;
+        }
         if (this.clientTickEndBoundaries.size() >= MAX_CLIENT_TICK_END_BOUNDARIES) {
             this.clientTickEndBoundaries.removeFirst();
         }
+        final long requiredMovementSequence = descriptor.releasePolicy()
+                == NyaNetworkStackLatencyPayload.ReleasePolicy.LEGACY_AFTER_MOVEMENT
+                ? this.javaMovementSequence + 1L : -1L;
+        final long requiredClientTickEndSequence = descriptor.releasePolicy()
+                == NyaNetworkStackLatencyPayload.ReleasePolicy.NEXT_CLIENT_TICK_END
+                ? this.javaClientTickEndSequence + 1L : -1L;
         this.clientTickEndBoundaries.addLast(new ClientTickEndBoundary(
-                timestamp, this.javaMovementSequence + 1L));
+                response, requiredMovementSequence, requiredClientTickEndSequence));
     }
 
-    /** 记录 Java movement 的处理顺序，不检查或信任包内运动数据。 */
+    /** 记录 Java movement 的处理顺序，仅为旧版边界兼容保留。 */
     public synchronized void recordJavaMovementFrame() {
         this.javaMovementSequence++;
     }
 
+    /** 在当前 AuthInput 字段构建完成后、释放 ACK 前调用；被取消的 tick-end 不推进序号。 */
+    public synchronized void recordJavaClientTickEndFrame() {
+        this.javaClientTickEndSequence++;
+    }
+
     /**
-     * 由 CLIENT_TICK_END 调用；只释放已经越过目标 movement 的边界，未满足的继续等待。
+     * 由 AuthInput 构建末尾调用，按各自释放条件取出就绪边界，并在返回前移除排队记录。
+     * 就绪 ACK 保持相对入队顺序；未就绪的旧版边界不能阻塞已就绪的新版边界。
      */
     public synchronized long[] consumeClientTickEndBoundaries() {
         final LongArrayList ready = new LongArrayList();
-        while (!this.clientTickEndBoundaries.isEmpty()) {
-            final ClientTickEndBoundary boundary = this.clientTickEndBoundaries.peekFirst();
-            if (boundary.requiredMovementSequence() > this.javaMovementSequence) {
-                break;
-            }
-            ready.add(this.clientTickEndBoundaries.removeFirst().timestamp());
+        for (NetworkStackLatencyResponse response : this.consumeClientTickEndBoundaryResponses()) {
+            ready.add(response.timestamp());
         }
         return ready.toLongArray();
+    }
+
+    public synchronized List<NetworkStackLatencyResponse> consumeClientTickEndBoundaryResponses() {
+        if (this.clientTickEndBoundaries.isEmpty()) return List.of();
+        final List<NetworkStackLatencyResponse> ready = new ArrayList<>();
+        final Iterator<ClientTickEndBoundary> iterator = this.clientTickEndBoundaries.iterator();
+        while (iterator.hasNext()) {
+            final ClientTickEndBoundary boundary = iterator.next();
+            final boolean boundaryReady = switch (boundary.response().boundaryDescriptor().releasePolicy()) {
+                case NEXT_CLIENT_TICK_END -> boundary.requiredClientTickEndSequence()
+                        <= this.javaClientTickEndSequence;
+                case LEGACY_AFTER_MOVEMENT -> boundary.requiredMovementSequence()
+                        <= this.javaMovementSequence;
+                case AFTER_CLIENT_PONG -> false;
+            };
+            if (boundaryReady) {
+                ready.add(boundary.response());
+                iterator.remove();
+            }
+        }
+        return ready;
     }
 
     public int updateLatency(final long clientLatencyNanos, final int serverTransportLatencyMillis) {
@@ -137,11 +221,9 @@ public class PacketSyncStorage extends StoredObject {
         this.hasPublishedLatency = true;
     }
 
-    public void syncWithClient(final Runnable runnable) {
-        if (ID_COUNTER.get() >= Short.MAX_VALUE) { // VB compatibility
-            ID_COUNTER.set(0);
-        }
-        final int id = ID_COUNTER.getAndIncrement();
+    public synchronized void syncWithClient(final Runnable runnable) {
+        final int id = this.nextPingId(false);
+        if (id < 0) return;
         if (this.pendingActions.put(id, runnable) != null) {
             ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Overwrote pending action with id " + id);
         }
@@ -152,7 +234,7 @@ public class PacketSyncStorage extends StoredObject {
         pingPacket.send(BedrockProtocol.class);
     }
 
-    public boolean handleSyncTask(final int id) {
+    public synchronized boolean handleSyncTask(final int id) {
         final Runnable runnable = this.pendingActions.remove(id);
         if (runnable != null) {
             runnable.run();
@@ -163,13 +245,22 @@ public class PacketSyncStorage extends StoredObject {
     }
 
     public record NetworkStackLatencyResponse(long timestamp, long requestNanos,
-                                              boolean clientTickEndBoundary) {
+                                              boolean nyaBoundaryPayload,
+                                              @Nullable JavaBoundaryDescriptor boundaryDescriptor,
+                                              boolean cancelled, @Nullable UUID boundaryIdentifier) {
+        public NetworkStackLatencyResponse(final long timestamp, final long requestNanos,
+                                           final boolean nyaBoundaryPayload,
+                                           final JavaBoundaryDescriptor boundaryDescriptor) {
+            this(timestamp, requestNanos, nyaBoundaryPayload, boundaryDescriptor, false, null);
+        }
+
         public NetworkStackLatencyResponse(final long timestamp, final long requestNanos) {
-            this(timestamp, requestNanos, false);
+            this(timestamp, requestNanos, false, null, false, null);
         }
     }
 
-    private record ClientTickEndBoundary(long timestamp, long requiredMovementSequence) {
+    private record ClientTickEndBoundary(NetworkStackLatencyResponse response,
+                                         long requiredMovementSequence, long requiredClientTickEndSequence) {
     }
 
 }
