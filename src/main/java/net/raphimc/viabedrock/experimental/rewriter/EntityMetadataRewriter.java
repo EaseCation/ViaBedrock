@@ -181,7 +181,9 @@ public class EntityMetadataRewriter {
                     upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.IS_POWERED), VersionedTypes.V26_1.entityDataTypes().booleanType, charged));
 
                     boolean ignited = bedrockFlags.contains(ActorFlags.IGNITED);
-                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.IS_IGNITED), VersionedTypes.V26_1.entityDataTypes().booleanType, ignited));
+                    writeCreeperIgnition(javaEntityData,
+                            entity.getJavaEntityDataIndex(EntityDataFields.IS_IGNITED),
+                            entity.getJavaEntityDataIndex(EntityDataFields.SWELL_DIR), ignited);
                 }
 
                 if (entity.javaType().is(EntityTypes1_21_11.ZOGLIN)) {
@@ -963,6 +965,13 @@ public class EntityMetadataRewriter {
         final Integer color = colorData != null ? readNumber(colorData).intValue() : null;
         final byte spell = spellType(entity.hasEntityFlag(ActorFlags.CASTING), color);
         upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SPELL_CASTING), VersionedTypes.V26_1.entityDataTypes().byteType, spell));
+    }
+
+    static void writeCreeperIgnition(final List<EntityData> javaEntityData, final int ignitionIndex,
+                                    final int swellDirIndex, final boolean ignited) {
+        // Java 取消点燃不会重置膨胀方向，两个字段须在同一批元数据中更新。
+        upsert(javaEntityData, new EntityData(ignitionIndex, VersionedTypes.V26_1.entityDataTypes().booleanType, ignited));
+        upsert(javaEntityData, new EntityData(swellDirIndex, VersionedTypes.V26_1.entityDataTypes().varIntType, ignited ? 1 : -1));
     }
 
     private static void upsert(final List<EntityData> javaEntityData, final EntityData data) {
