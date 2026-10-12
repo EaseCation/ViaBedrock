@@ -51,4 +51,11 @@ public interface NeighborAwareBlockRule {
         return false;
     }
 
+    /**
+     * 区块边缘是否包含会影响另一侧形态的方块。依赖方块本身不一定需要修正，例如紫颂花。
+     */
+    default boolean isCrossChunkSensitive(final int javaBlockStateId) {
+        return this.affectsNeighborChunks() && this.handles(javaBlockStateId);
+    }
+
 }

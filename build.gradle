@@ -78,7 +78,7 @@ dependencies {
     testImplementation "io.netty:netty-transport:4.2.14.Final"
     testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:6.0.3"
     testRuntimeOnly "org.junit.platform:junit-platform-launcher:6.0.3"
-    testRuntimeOnly "com.google.guava:guava:33.6.0-jre"
+    testImplementation "com.google.guava:guava:33.6.0-jre"
     testRuntimeOnly "com.google.code.gson:gson:2.14.0"
     testRuntimeOnly "org.slf4j:slf4j-simple:2.0.16"
 

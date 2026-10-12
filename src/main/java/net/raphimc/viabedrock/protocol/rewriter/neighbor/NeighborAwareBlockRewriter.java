@@ -57,7 +57,9 @@ public final class NeighborAwareBlockRewriter {
                 new StairShapeRule(javaBlockStates),
                 new BlockConnectionRule(javaBlockStates),
                 new NetherPortalAxisRule(javaBlockStates),
-                new LinkedBlockRule(javaBlockStates)
+                new LinkedBlockRule(javaBlockStates),
+                new GrowingPlantRule(javaBlockStates),
+                new ChorusPlantConnectionRule(javaBlockStates)
         );
     }
 
@@ -167,7 +169,7 @@ public final class NeighborAwareBlockRewriter {
 
     private boolean isCrossChunkSensitive(final int javaBlockStateId) {
         for (NeighborAwareBlockRule rule : this.rules) {
-            if (rule.affectsNeighborChunks() && rule.handles(javaBlockStateId)) {
+            if (rule.isCrossChunkSensitive(javaBlockStateId)) {
                 return true;
             }
         }
