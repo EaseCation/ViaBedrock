@@ -9,27 +9,40 @@
  */
 package net.raphimc.viabedrock.experimental.storage;
 
+import com.viaversion.viaversion.api.Via;
+import com.viaversion.viaversion.api.ViaManager;
 import com.viaversion.viaversion.api.connection.UserConnection;
+import com.viaversion.viaversion.api.protocol.Protocol;
+import com.viaversion.viaversion.api.protocol.ProtocolManager;
+import com.viaversion.viaversion.api.protocol.packet.PacketType;
 import com.viaversion.viaversion.api.minecraft.entities.EntityTypes1_21_11;
 import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.type.Types;
+import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
 import com.viaversion.viaversion.connection.UserConnectionImpl;
 import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import io.netty.channel.embedded.EmbeddedChannel;
 import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
 import net.raphimc.viabedrock.api.model.entity.Entity;
+import net.raphimc.viabedrock.api.model.entity.PlayerEntity;
 import net.raphimc.viabedrock.experimental.model.PlayerAuthInputContext;
+import net.raphimc.viabedrock.protocol.BedrockProtocol;
+import net.raphimc.viabedrock.protocol.data.BedrockMappingData;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorDataIDs;
+import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
 import net.raphimc.viabedrock.protocol.data.enums.java.Relative;
 import net.raphimc.viabedrock.protocol.model.EntityLink;
 import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
 import net.raphimc.viabedrock.protocol.model.Position3f;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -41,6 +54,7 @@ import static net.raphimc.viabedrock.experimental.storage.RidingTracker.LocalRid
 import static net.raphimc.viabedrock.experimental.storage.RidingTracker.LocalRidingMode.PASSENGER_ONLY;
 import static net.raphimc.viabedrock.experimental.storage.RidingTracker.LocalRidingMode.VIRTUAL_INPUT_ONLY;
 import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -48,6 +62,12 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RidingTrackerTest {
+
+    @BeforeAll
+    static void initializeProtocolTypes() throws ClassNotFoundException {
+        // Initialize component keys before VersionedTypes, as in the standalone metadata tests.
+        Class.forName("com.viaversion.viaversion.api.minecraft.data.StructuredDataKey");
+    }
 
     private static final long PLAYER_UNIQUE_ID = 7L;
     private static final long BOAT_UNIQUE_ID = 42L;
@@ -309,6 +329,222 @@ class RidingTrackerTest {
             assertTrue(fixture.clientPlayer().hasPendingPositionSync());
             fixture.clientPlayer().confirmTeleport(fixture.clientPlayer().lastPositionPacket.get(Types.VAR_INT, 0));
             assertFalse(fixture.clientPlayer().hasPendingPositionSync());
+        }
+    }
+
+    @Test
+    void localPlayerCarriesAnAnchoredDisplayAboveTheirFeetAndInitializesInterpolationBeforeMounting() throws Exception {
+        try (AnchorFixture fixture = new AnchorFixture()) {
+            fixture.clientPlayer.setPosition(new Position3f(12.5F, 65.62F, -4.5F));
+            final Entity egg = fixture.addDisplay(84L, 3, new Position3f(0F, 2.25F, 0F));
+            fixture.link(fixture.clientPlayer, egg);
+
+            final PacketWrapper spawn = fixture.last(ClientboundPackets26_1.ADD_ENTITY);
+            assertPacketPosition(spawn, 12.5D, 66.25D, -4.5D);
+            final int anchorId = spawn.get(Types.VAR_INT, 0);
+            final PacketWrapper data = fixture.last(ClientboundPackets26_1.SET_ENTITY_DATA);
+            assertEquals(anchorId, data.get(Types.VAR_INT, 0));
+            final List<EntityData> metadata = data.get(VersionedTypes.V26_1.entityDataList, 0);
+            assertEquals(1, metadata.size());
+            assertEquals(3, metadata.getFirst().getValue());
+            final PacketWrapper relation = fixture.last(ClientboundPackets26_1.SET_PASSENGERS);
+            assertEquals(anchorId, relation.get(Types.VAR_INT, 0));
+            assertArrayEquals(new int[]{egg.javaId()}, relation.get(Types.VAR_INT_ARRAY_PRIMITIVE, 0));
+            assertTrue(fixture.packets.indexOf(data) < fixture.packets.indexOf(relation));
+            assertPacketPosition(fixture.last(ClientboundPackets26_1.ENTITY_POSITION_SYNC), 12.5D, 66.25D, -4.5D);
+        }
+    }
+
+    @Test
+    void remotePlayerTurningAndWalkingMovesTheSameLocalSeatAnchorAroundTheirFeet() throws Exception {
+        try (AnchorFixture fixture = new AnchorFixture()) {
+            final PlayerEntity carrier = new PlayerEntity(fixture.user, 420L, 2, UUID.randomUUID(),
+                    new PlayerAbilities(BOAT_UNIQUE_ID, (byte) 0, (byte) 0));
+            carrier.setPosition(new Position3f(12.5F, 65.62F, -4.5F));
+            fixture.entities.vehicles.put(carrier.uniqueId(), carrier);
+            final Entity egg = fixture.addDisplay(84L, 3, new Position3f(0.5F, 2.25F, 1.25F));
+            fixture.link(carrier, egg);
+            final int anchorId = fixture.last(ClientboundPackets26_1.ADD_ENTITY).get(Types.VAR_INT, 0);
+            assertPacketPosition(fixture.last(ClientboundPackets26_1.ENTITY_POSITION_SYNC), 13D, 66.25D, -3.25D);
+            fixture.packets.clear();
+
+            carrier.setRotation(new Position3f(0F, 90F, 90F));
+            fixture.tracker.onEntityMoved(carrier);
+            assertPacketPosition(fixture.last(ClientboundPackets26_1.ENTITY_POSITION_SYNC), 11.25D, 66.25D, -4D);
+
+            carrier.setPosition(new Position3f(20.5F, 71.62F, 8.5F));
+            carrier.setRotation(new Position3f(0F, 180F, 180F));
+            fixture.tracker.onEntityMoved(carrier);
+            final PacketWrapper move = fixture.last(ClientboundPackets26_1.ENTITY_POSITION_SYNC);
+            assertEquals(anchorId, move.get(Types.VAR_INT, 0));
+            assertPacketPosition(move, 20D, 72.25D, 7.25D);
+            assertEquals(180F, move.get(Types.FLOAT, 0));
+            assertFalse(fixture.packets.stream().anyMatch(packet -> packet.getPacketType() == ClientboundPackets26_1.ADD_ENTITY));
+        }
+    }
+
+    @Test
+    void nonPlayerCarrierKeepsItsRootHeightAndRotatesTheLocalSeat() throws Exception {
+        try (AnchorFixture fixture = new AnchorFixture()) {
+            final Entity carrier = new Entity(fixture.user, BOAT_UNIQUE_ID, 420L, "ec:guard", 2,
+                    UUID.randomUUID(), EntityTypes1_21_11.INTERACTION);
+            carrier.setPosition(new Position3f(12.5F, 64F, -4.5F));
+            carrier.setRotation(new Position3f(0F, 90F, 90F));
+            fixture.entities.vehicles.put(carrier.uniqueId(), carrier);
+            final Entity egg = fixture.addDisplay(84L, 3, new Position3f(0.5F, 2.25F, 1.25F));
+            fixture.link(carrier, egg);
+            assertPacketPosition(fixture.last(ClientboundPackets26_1.ENTITY_POSITION_SYNC), 11.25D, 66.25D, -4D);
+        }
+    }
+
+    @Test
+    void fullyLockedDisplayFollowsBodyYawWithSeatRotationWithoutReceivingIndependentPositionPackets() throws Exception {
+        try (AnchorFixture fixture = new AnchorFixture()) {
+            final Entity carrier = new Entity(fixture.user, BOAT_UNIQUE_ID, 420L, "ec:guard", 2,
+                    UUID.randomUUID(), EntityTypes1_21_11.INTERACTION);
+            carrier.setPosition(new Position3f(12.5F, 64F, -4.5F));
+            carrier.setRotation(new Position3f(0F, 90F, 180F));
+            fixture.entities.vehicles.put(carrier.uniqueId(), carrier);
+            final Entity egg = fixture.addDisplay(84L, 3, new Position3f(0F, 2.25F, 1.25F));
+            egg.setRotation(new Position3f(15F, 0F, 0F));
+            fixture.setRotationLock(egg, (byte) 1, 0F, (byte) 1, 30F);
+            fixture.link(carrier, egg);
+            final int anchorId = fixture.last(ClientboundPackets26_1.ADD_ENTITY).get(Types.VAR_INT, 0);
+            final PacketWrapper rotate = fixture.last(ClientboundPackets26_1.MOVE_ENTITY_ROT);
+            assertEquals(egg.javaId(), rotate.get(Types.VAR_INT, 0));
+            assertEquals((byte) 85, rotate.get(Types.BYTE, 0)); // 120 degrees in Java's byte-angle format.
+            assertEquals((byte) 10, rotate.get(Types.BYTE, 1)); // The display keeps its 15-degree pitch.
+            assertEquals(new Position3f(15F, 120F, 120F), egg.rotation());
+            assertPacketPosition(fixture.last(ClientboundPackets26_1.ENTITY_POSITION_SYNC), 11.25D, 66.25D, -4.5D);
+            fixture.packets.clear();
+
+            carrier.setRotation(new Position3f(0F, 180F, 270F));
+            fixture.tracker.onEntityMoved(carrier);
+            assertEquals((byte) -107, fixture.last(ClientboundPackets26_1.MOVE_ENTITY_ROT).get(Types.BYTE, 0)); // 210 degrees.
+            final PacketWrapper move = fixture.last(ClientboundPackets26_1.ENTITY_POSITION_SYNC);
+            assertEquals(anchorId, move.get(Types.VAR_INT, 0));
+            assertPacketPosition(move, 12.5D, 66.25D, -5.75D);
+            assertTrue(fixture.packets.stream().filter(packet -> packet.getPacketType() == ClientboundPackets26_1.ENTITY_POSITION_SYNC)
+                    .allMatch(packet -> packet.get(Types.VAR_INT, 0) == anchorId));
+            fixture.packets.clear();
+            fixture.tracker.onEntityMoved(carrier);
+            assertFalse(fixture.packets.stream().anyMatch(packet -> packet.getPacketType() == ClientboundPackets26_1.MOVE_ENTITY_ROT));
+        }
+    }
+
+    @Test
+    void unlockedAndPartiallyLockedDisplaysKeepTheirOwnYawWhileDisabledSeatRotationIsIgnored() throws Exception {
+        try (AnchorFixture fixture = new AnchorFixture()) {
+            fixture.clientPlayer.setRotation(new Position3f(0F, 90F, 180F));
+            final Entity egg = fixture.addDisplay(84L, 3, new Position3f(0F, 2.25F, 0F));
+            fixture.setRotationLock(egg, (byte) 0, 0F, (byte) 1, 30F);
+            fixture.link(fixture.clientPlayer, egg);
+            fixture.setRotationLock(egg, (byte) 1, 90F, (byte) 1, 30F);
+            fixture.tracker.onEntityDataChanged(egg);
+            assertFalse(fixture.packets.stream().anyMatch(packet -> packet.getPacketType() == ClientboundPackets26_1.MOVE_ENTITY_ROT));
+            assertEquals(Position3f.ZERO, egg.rotation());
+
+            fixture.setRotationLock(egg, (byte) 1, 0F, (byte) 0, 30F);
+            fixture.tracker.onEntityDataChanged(egg);
+            assertEquals((byte) 64, fixture.last(ClientboundPackets26_1.MOVE_ENTITY_ROT).get(Types.BYTE, 0));
+            assertEquals(new Position3f(0F, 90F, 90F), egg.rotation());
+        }
+    }
+
+    private static void assertPacketPosition(final PacketWrapper packet, final double x, final double y, final double z) {
+        assertEquals(x, packet.get(Types.DOUBLE, 0), 0.00001);
+        assertEquals(y, packet.get(Types.DOUBLE, 1), 0.00001);
+        assertEquals(z, packet.get(Types.DOUBLE, 2), 0.00001);
+    }
+
+    private static final class AnchorFixture implements AutoCloseable {
+
+        private final EmbeddedChannel channel = new EmbeddedChannel();
+        private final UserConnectionImpl user = new UserConnectionImpl(this.channel);
+        private final FixtureClientPlayerEntity clientPlayer = new FixtureClientPlayerEntity(this.user, PLAYER_UNIQUE_ID,
+                UUID.randomUUID(), new PlayerAbilities(PLAYER_UNIQUE_ID, (byte) 0, (byte) 0));
+        private final FixtureEntityTracker entities = new FixtureEntityTracker(this.user, this.clientPlayer, this.clientPlayer);
+        private final RidingTracker tracker = new RidingTracker(this.user);
+        private final List<PacketWrapper> packets = new ArrayList<>();
+        private final Field managerField = Via.class.getDeclaredField("manager");
+        private final Field fieldsField = BedrockMappingData.class.getDeclaredField("javaEntityDataFields");
+        private final Field displayIdField = EntityTypes1_21_11.class.getDeclaredField("id");
+        private final int previousDisplayId;
+        private final Object previousManager;
+        private final Object previousFields;
+
+        AnchorFixture() throws Exception {
+            this.managerField.setAccessible(true);
+            this.fieldsField.setAccessible(true);
+            this.displayIdField.setAccessible(true);
+            this.previousDisplayId = this.displayIdField.getInt(EntityTypes1_21_11.TEXT_DISPLAY);
+            this.previousManager = this.managerField.get(null);
+            this.previousFields = this.fieldsField.get(BedrockProtocol.MAPPINGS);
+            // Only the packet transport and metadata registry are fixtures; the riding and packet writers run normally.
+            final ProtocolManager protocolManager = (ProtocolManager) Proxy.newProxyInstance(
+                    ProtocolManager.class.getClassLoader(), new Class[]{ProtocolManager.class}, (proxy, method, args) -> {
+                        if (method.getName().equals("createPacketWrapper")) {
+                            return new PacketWrapperImpl((PacketType) args[0], null, (UserConnection) args[2]) {
+                                @Override
+                                public void send(final Class<? extends Protocol> protocol, final boolean skipCurrentPipeline) {
+                                    packets.add(this);
+                                }
+                            };
+                        }
+                        throw new UnsupportedOperationException(method.getName());
+                    });
+            final ViaManager manager = (ViaManager) Proxy.newProxyInstance(
+                    ViaManager.class.getClassLoader(), new Class[]{ViaManager.class}, (proxy, method, args) -> {
+                        if (method.getName().equals("getProtocolManager")) {
+                            return protocolManager;
+                        }
+                        throw new UnsupportedOperationException(method.getName());
+                    });
+            this.managerField.set(null, manager);
+            this.displayIdField.setInt(EntityTypes1_21_11.TEXT_DISPLAY, 1);
+            this.fieldsField.set(BedrockProtocol.MAPPINGS,
+                    Map.of(EntityTypes1_21_11.TEXT_DISPLAY, List.of(EntityDataFields.POS_ROT_INTERPOLATION_DURATION)));
+            this.clientPlayer.setPosition(new Position3f(0F, 65.62F, 0F));
+            this.user.getStoredObjects().put(EntityTracker.class, this.entities);
+            this.user.put(new JavaPassengerTracker(this.user));
+            this.user.put(this.tracker);
+        }
+
+        Entity addDisplay(final long uniqueId, final int javaId, final Position3f localSeat) {
+            final Entity display = new Entity(this.user, uniqueId, uniqueId * 10, "ec:egg", javaId,
+                    UUID.randomUUID(), EntityTypes1_21_11.INTERACTION);
+            this.entities.vehicles.put(uniqueId, display);
+            display.entityData().put(ActorDataIDs.RESERVED_056,
+                    new EntityData(56, EntityDataTypesBedrock.POSITION_3F, localSeat));
+            this.tracker.onEntityAdded(display);
+            return display;
+        }
+
+        void setRotationLock(final Entity display, final byte lock, final float degrees, final byte offset, final float offsetDegrees) {
+            display.entityData().put(ActorDataIDs.SEAT_LOCK_PASSENGER_ROTATION,
+                    new EntityData(57, EntityDataTypesBedrock.BYTE, lock));
+            display.entityData().put(ActorDataIDs.SEAT_LOCK_PASSENGER_ROTATION_DEGREES,
+                    new EntityData(58, EntityDataTypesBedrock.FLOAT, degrees));
+            display.entityData().put(ActorDataIDs.SEAT_ROTATION_OFFSET,
+                    new EntityData(59, EntityDataTypesBedrock.BYTE, offset));
+            display.entityData().put(ActorDataIDs.SEAT_ROTATION_OFFSET_DEGREES,
+                    new EntityData(60, EntityDataTypesBedrock.FLOAT, offsetDegrees));
+        }
+
+        void link(final Entity carrier, final Entity passenger) {
+            this.tracker.handleLink(new EntityLink(carrier.uniqueId(), passenger.uniqueId(), LINK_RIDE, false, false, 0F));
+        }
+
+        PacketWrapper last(final ClientboundPackets26_1 type) {
+            return this.packets.stream().filter(packet -> packet.getPacketType() == type).reduce((first, second) -> second).orElseThrow();
+        }
+
+        @Override
+        public void close() throws Exception {
+            this.managerField.set(null, this.previousManager);
+            this.displayIdField.setInt(EntityTypes1_21_11.TEXT_DISPLAY, this.previousDisplayId);
+            this.fieldsField.set(BedrockProtocol.MAPPINGS, this.previousFields);
+            this.channel.finishAndReleaseAll();
         }
     }
 

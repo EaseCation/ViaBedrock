@@ -333,7 +333,8 @@ public class RidingTracker extends StoredObject {
 
         final Position3f rawOffset = this.rawSeatOffset(passenger);
         final float anchorYOffset = this.passengerAnchorYOffset(passenger);
-        final Position3f position = vehicle.position().add(this.seatOffset(vehicle, passenger, rawOffset, anchorYOffset));
+        final Position3f vehiclePosition = vehicle.position().subtract(0F, vehicle.eyeOffset(), 0F);
+        final Position3f position = vehiclePosition.add(this.seatOffset(vehicle, passenger, rawOffset, anchorYOffset));
         if (!anchor.spawned) {
             RidingAnchorHelper.spawn(this.user(), anchor.javaId, anchor.uuid, position);
             anchor.spawned = true;
@@ -341,6 +342,30 @@ public class RidingTracker extends StoredObject {
         passengerTracker.setBedrockPassengers(anchor.javaId, passenger.javaId());
         // Force the client to recalculate the passenger position after the relation and zero-height anchor data arrive.
         RidingAnchorHelper.move(this.user(), anchor.javaId, position, vehicle.rotation(), vehicle.isOnGround());
+        this.updateLockedPassengerRotation(vehicle, passenger);
+    }
+
+    private void updateLockedPassengerRotation(final Entity vehicle, final Entity passenger) {
+        final EntityData lockData = passenger.entityData().get(ActorDataIDs.SEAT_LOCK_PASSENGER_ROTATION);
+        final EntityData degreesData = passenger.entityData().get(ActorDataIDs.SEAT_LOCK_PASSENGER_ROTATION_DEGREES);
+        if (lockData == null || !(lockData.getValue() instanceof Number lock) || lock.intValue() == 0
+                || degreesData == null || !(degreesData.getValue() instanceof Number degrees) || degrees.floatValue() != 0F) {
+            return;
+        }
+
+        float yaw = vehicle.rotation().y();
+        final EntityData offsetData = passenger.entityData().get(ActorDataIDs.SEAT_ROTATION_OFFSET);
+        final EntityData offsetDegreesData = passenger.entityData().get(ActorDataIDs.SEAT_ROTATION_OFFSET_DEGREES);
+        if (offsetData != null && offsetData.getValue() instanceof Number offset && offset.intValue() != 0
+                && offsetDegreesData != null && offsetDegreesData.getValue() instanceof Number offsetDegrees) {
+            yaw += offsetDegrees.floatValue();
+        }
+        if (passenger.rotation().y() == yaw) {
+            return;
+        }
+
+        passenger.setRotation(new Position3f(passenger.rotation().x(), yaw, yaw));
+        RidingAnchorHelper.rotatePassenger(this.user(), passenger.javaId(), passenger.rotation(), passenger.isOnGround());
     }
 
     private void removeAnchor(final long passengerUniqueId) {
