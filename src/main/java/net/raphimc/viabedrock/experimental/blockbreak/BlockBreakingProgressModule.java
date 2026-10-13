@@ -42,6 +42,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.AnimatePacke
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.LevelEvent;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerActionType;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAuthInputPacket_InputData;
+import net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.PlayerActionAction;
 import net.raphimc.viabedrock.protocol.model.BlockChangeEntry;
@@ -177,7 +178,9 @@ public final class BlockBreakingProgressModule implements FeatureModule {
         clientPlayer.setBlockBreakingInfo(new ClientPlayerEntity.BlockBreakingInfo(position, direction));
         clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.StartDestroyBlock, position, direction.ordinal()));
 
-        if (this.isInstantBreak(user, chunkTracker, position)) {
+        // Java 创造破坏与瞬间破坏一样只发送 START，不会再发送 STOP，因此本帧就要完成破坏流程。
+        // 同时登记 sequence，让服务端权威方块更新或已有超时恢复发送状态后，再通过 ACK 结束客户端预测。
+        if (clientPlayer.javaGameMode() == GameMode.CREATIVE || this.isInstantBreak(user, chunkTracker, position)) {
             this.finishMining(user, user.get(GameSessionStorage.class), clientPlayer, tracker, chunkTracker, position, direction, sequence);
         }
     }
