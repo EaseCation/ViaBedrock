@@ -149,4 +149,9 @@ public class CustomAttachableResourceRewriter extends ItemModelResourceRewriter 
         return ResourcePackRewriter.RuntimeDataScope.SHARED;
     }
 
+    @Override
+    public String artifactFingerprint() {
+        return "3";
+    }
+
 }
