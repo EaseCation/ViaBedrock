@@ -223,7 +223,20 @@ public class ViaBedrockUtilityInterface {
         CAPE, SKIN_INFORMATION, SKIN_DATA,
         SKIN_ANIMATION_INFO, SKIN_ANIMATION_DATA,
         SPAWN_PARTICLE, SPAWN_PARTICLE_V2,
-        PLAYER_VISUAL_STATE
+        PLAYER_VISUAL_STATE, INPUT_LOCKS
+    }
+
+    public static void sendInputLocks(final UserConnection user, final int flags) {
+        final ChannelStorage channels = user.get(ChannelStorage.class);
+        if (channels == null || !channels.hasChannel(CONFIRM_CHANNEL)) {
+            return;
+        }
+
+        final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets26_1.CUSTOM_PAYLOAD, user);
+        pluginMessage.write(Types.STRING, CHANNEL);
+        pluginMessage.write(Types.INT, PayloadType.INPUT_LOCKS.ordinal());
+        pluginMessage.write(Types.INT, flags);
+        pluginMessage.send(BedrockProtocol.class);
     }
 
     public static void sendPlayerVisualState(final UserConnection user, final UUID uuid, final boolean customSpectator) {

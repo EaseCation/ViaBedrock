@@ -80,7 +80,7 @@ public class OtherPlayerPackets {
             final EntityLink[] entityLinks = wrapper.read(BedrockTypes.ENTITY_LINK_ARRAY); // entity links
 
             final PlayerEntity entity = entityTracker.addEntity(new PlayerEntity(wrapper.user(), entityRuntimeId, entityTracker.getNextJavaEntityId(), uuid, abilities));
-            entity.setPosition(position);
+            entity.setPosition(position.add(0F, entity.eyeOffset(), 0F));
             entity.setRotation(rotation);
             entity.updateName(username);
 
