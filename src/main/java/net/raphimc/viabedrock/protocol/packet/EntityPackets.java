@@ -653,14 +653,14 @@ public class EntityPackets {
         protocol.registerClientbound(ClientboundBedrockPackets.ANIMATE_ENTITY, null, wrapper -> {
             // Java has no MoLang animation system; a server-triggered named animation only makes sense for entities
             // rendered by the ViaBedrockUtility mod: custom entities, and humanoids on the player render path (real
-            // players and player-type NPCs such as leaderboard NPCs). Read the packet, then forward
-            // "entity uuid + animation name" to the mod so it can play the animation.
+            // players and player-type NPCs such as leaderboard NPCs). Capable player renderers receive the
+            // complete runtime-controller request; custom entities and older clients keep the legacy payload.
             final String animation = wrapper.read(BedrockTypes.STRING); // animation
-            wrapper.read(BedrockTypes.STRING); // next state
-            wrapper.read(BedrockTypes.STRING); // stop expression
-            wrapper.read(Types.INT); // stop expression version (big-endian int)
-            wrapper.read(BedrockTypes.STRING); // controller
-            wrapper.read(BedrockTypes.FLOAT_LE); // blend out time
+            final String nextState = wrapper.read(BedrockTypes.STRING); // next state
+            final String stopExpression = wrapper.read(BedrockTypes.STRING); // stop expression
+            final int stopExpressionVersion = wrapper.read(Types.INT); // stop expression version (big-endian int)
+            final String controller = wrapper.read(BedrockTypes.STRING); // controller
+            final float blendOutTime = wrapper.read(BedrockTypes.FLOAT_LE); // blend out time
             final int count = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // runtime entity id count
             final long[] runtimeIds = new long[count];
             for (int i = 0; i < count; i++) {
@@ -675,7 +675,10 @@ public class EntityPackets {
             final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
             for (final long runtimeId : runtimeIds) {
                 final Entity entity = entityTracker.getEntityByRid(runtimeId);
-                if (entity instanceof CustomEntity || entity instanceof PlayerEntity) {
+                if (entity instanceof PlayerEntity) {
+                    ViaBedrockUtilityInterface.sendPlayerAnimation(wrapper.user(), entity.javaUuid(), animation,
+                            nextState, stopExpression, stopExpressionVersion, controller, blendOutTime);
+                } else if (entity instanceof CustomEntity) {
                     ViaBedrockUtilityInterface.sendAnimateEntity(wrapper.user(), entity.javaUuid(), animation);
                 }
             }

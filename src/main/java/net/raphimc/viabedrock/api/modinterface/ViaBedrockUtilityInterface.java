@@ -45,6 +45,7 @@ public class ViaBedrockUtilityInterface {
     public static final String CHANNEL = "viabedrockutility:data";
     public static final String PLAYER_STATE_CHANNEL = "viabedrockutility:player_state";
     public static final String PLAYER_VISUAL_STATE_V1_CAPABILITY = "viabedrockutility:player_visual_state_v1";
+    public static final String PLAYER_ANIMATION_V1_CAPABILITY = "viabedrockutility:player_animation_v1";
     public static final String CUSTOM_SPECTATOR_PROPERTY = "easecation:custom_spectator";
     /** Client capability: unmapped Bedrock particle effects can use anchor-aware V2 requests. */
     public static final String PARTICLE_RUNTIME_V2_CAPABILITY = "viabedrockutility:particle_runtime_v2";
@@ -223,7 +224,7 @@ public class ViaBedrockUtilityInterface {
         CAPE, SKIN_INFORMATION, SKIN_DATA,
         SKIN_ANIMATION_INFO, SKIN_ANIMATION_DATA,
         SPAWN_PARTICLE, SPAWN_PARTICLE_V2,
-        PLAYER_VISUAL_STATE, INPUT_LOCKS
+        PLAYER_VISUAL_STATE, PLAYER_ANIMATE, INPUT_LOCKS
     }
 
     public static void sendInputLocks(final UserConnection user, final int flags) {
@@ -313,10 +314,55 @@ public class ViaBedrockUtilityInterface {
 
     public static void sendAnimateEntity(final UserConnection user, final UUID uuid, final String animationName) {
         final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets26_1.CUSTOM_PAYLOAD, user);
+        writeAnimateEntity(pluginMessage, uuid, animationName);
+        pluginMessage.scheduleSend(BedrockProtocol.class);
+    }
+
+    public static void sendPlayerAnimation(final UserConnection user, final UUID uuid, final String animationName,
+                                           final String nextState, final String stopExpression, final int stopExpressionVersion,
+                                           final String controller, final float blendOutTime) {
+        final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets26_1.CUSTOM_PAYLOAD, user);
+        writePlayerAnimation(pluginMessage, uuid, animationName, nextState, stopExpression, stopExpressionVersion, controller, blendOutTime);
+        pluginMessage.scheduleSend(BedrockProtocol.class);
+    }
+
+    static void writePlayerAnimation(final PacketWrapper pluginMessage, final UUID uuid, final String animationName,
+                                     final String nextState, final String stopExpression, final int stopExpressionVersion,
+                                     final String controller, final float blendOutTime) {
+        final ChannelStorage channels = pluginMessage.user().get(ChannelStorage.class);
+        if (channels == null || !channels.hasChannel(PLAYER_ANIMATION_V1_CAPABILITY)) {
+            writeAnimateEntity(pluginMessage, uuid, animationName);
+            return;
+        }
+        if (!Float.isFinite(blendOutTime) || blendOutTime < 0F) {
+            throw new IllegalArgumentException("Player animation blend out time must be finite and non-negative");
+        }
+        long payloadSize = Integer.BYTES + 2 * Long.BYTES + 4 * Integer.BYTES + Integer.BYTES + Float.BYTES;
+        for (final String value : new String[]{animationName, nextState, stopExpression, controller}) {
+            if (value == null) {
+                throw new IllegalArgumentException("Player animation strings cannot be null");
+            }
+            payloadSize += value.getBytes(StandardCharsets.UTF_8).length;
+        }
+        if (payloadSize > MAX_PAYLOAD_SIZE) {
+            throw new IllegalArgumentException("Player animation payload exceeds " + MAX_PAYLOAD_SIZE + " bytes");
+        }
+
+        pluginMessage.write(Types.STRING, CHANNEL);
+        pluginMessage.write(Types.INT, PayloadType.PLAYER_ANIMATE.ordinal());
+        pluginMessage.write(Types.UUID, uuid);
+        writeString(pluginMessage, animationName);
+        writeString(pluginMessage, nextState);
+        writeString(pluginMessage, stopExpression);
+        pluginMessage.write(Types.INT, stopExpressionVersion);
+        writeString(pluginMessage, controller);
+        pluginMessage.write(Types.FLOAT, blendOutTime);
+    }
+
+    static void writeAnimateEntity(final PacketWrapper pluginMessage, final UUID uuid, final String animationName) {
         pluginMessage.write(Types.STRING, CHANNEL); // Channel
         pluginMessage.write(Types.INT, PayloadType.ANIMATE.ordinal()); // Type
         pluginMessage.write(Types.UUID, uuid);
         writeString(pluginMessage, animationName);
-        pluginMessage.scheduleSend(BedrockProtocol.class);
     }
 }

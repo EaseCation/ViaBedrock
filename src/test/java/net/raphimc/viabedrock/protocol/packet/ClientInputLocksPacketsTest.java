@@ -34,7 +34,7 @@ class ClientInputLocksPacketsTest {
             fixture.lock(4);
             PacketWrapper message = fixture.last(ClientboundPackets26_1.CUSTOM_PAYLOAD);
             assertEquals("viabedrockutility:data", message.get(Types.STRING, 0));
-            assertEquals(11, message.get(Types.INT, 0));
+            assertEquals(12, message.get(Types.INT, 0));
             assertEquals(4, message.get(Types.INT, 1));
 
             fixture.move(fixture.client.runtimeId(), new Position3f(12.5F, 66.62F, -4.5F), Position3f.ZERO, (byte) 2);
