@@ -25,6 +25,7 @@ import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import com.viaversion.viaversion.util.Pair;
 import net.raphimc.viabedrock.ViaBedrock;
+import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
 import net.raphimc.viabedrock.api.util.EnumUtil;
 import net.raphimc.viabedrock.api.util.StringUtil;
 import net.raphimc.viabedrock.platform.ViaBedrockConfig;
@@ -89,6 +90,7 @@ public class ClientPlayerEntity extends PlayerEntity {
     private final Set<PlayerAuthInputPacket_InputData> authInputData = EnumSet.noneOf(PlayerAuthInputPacket_InputData.class);
     private final List<AuthInputBlockAction> authInputBlockActions = new ArrayList<>();
     private BedrockInventoryTransaction authInputItemInteraction;
+    private int inputLockFlags;
     private Set<InputFlag> inputFlags = EnumSet.noneOf(InputFlag.class);
     private Set<InputFlag> prevInputFlags = EnumSet.noneOf(InputFlag.class);
     private boolean horizontalCollision;
@@ -470,7 +472,22 @@ public class ClientPlayerEntity extends PlayerEntity {
     }
 
     public void setInputFlags(final Set<InputFlag> inputFlags) {
-        this.inputFlags = inputFlags;
+        this.inputFlags = this.isMovementInputLocked() ? EnumSet.noneOf(InputFlag.class) : inputFlags;
+    }
+
+    public void setInputLocks(final int flags) {
+        if (this.inputLockFlags == flags) {
+            return;
+        }
+        this.inputLockFlags = flags;
+        if (this.isMovementInputLocked()) {
+            this.inputFlags = EnumSet.noneOf(InputFlag.class);
+        }
+        ViaBedrockUtilityInterface.sendInputLocks(this.user, flags);
+    }
+
+    public boolean isMovementInputLocked() {
+        return (this.inputLockFlags & (1 << 2)) != 0;
     }
 
     public Set<InputFlag> prevInputFlags() {

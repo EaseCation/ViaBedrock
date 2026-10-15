@@ -166,6 +166,11 @@ public class ClientPlayerPackets {
     }
 
     public static void register(final BedrockProtocol protocol) {
+        protocol.registerClientbound(ClientboundBedrockPackets.UPDATE_CLIENT_INPUT_LOCKS, null, wrapper -> {
+            wrapper.cancel();
+            final int flags = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
+            wrapper.user().get(EntityTracker.class).getClientPlayer().setInputLocks(flags);
+        });
         protocol.registerClientbound(ClientboundBedrockPackets.RESPAWN, ClientboundPackets26_1.RESPAWN, wrapper -> {
             final Position3f position = wrapper.read(BedrockTypes.POSITION_3F); // position
             final byte rawState = wrapper.read(Types.BYTE); // state
@@ -654,6 +659,9 @@ public class ClientPlayerPackets {
                 velocity = new Position3f(dx * 0.91F, dy * 0.98F, dz * 0.91F);
             }
 
+            if (clientPlayer.isMovementInputLocked()) {
+                removeImmobileMovementInput(clientPlayer.authInputData());
+            }
             final PlayerAuthInputContext authInputContext = new PlayerAuthInputContext(clientPlayer.position(), velocity);
             ExperimentalFeatures.dispatchPlayerAuthInput(wrapper.user(), clientPlayer, authInputContext);
             if (immobile) {

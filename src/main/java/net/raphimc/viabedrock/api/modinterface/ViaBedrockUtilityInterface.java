@@ -46,6 +46,7 @@ public class ViaBedrockUtilityInterface {
     public static final String PLAYER_STATE_CHANNEL = "viabedrockutility:player_state";
     public static final String PLAYER_VISUAL_STATE_V1_CAPABILITY = "viabedrockutility:player_visual_state_v1";
     public static final String PLAYER_ANIMATION_V1_CAPABILITY = "viabedrockutility:player_animation_v1";
+    public static final String INPUT_LOCKS_V1_CAPABILITY = "viabedrockutility:input_locks_v1";
     public static final String CUSTOM_SPECTATOR_PROPERTY = "easecation:custom_spectator";
     /** Client capability: unmapped Bedrock particle effects can use anchor-aware V2 requests. */
     public static final String PARTICLE_RUNTIME_V2_CAPABILITY = "viabedrockutility:particle_runtime_v2";
@@ -224,7 +225,21 @@ public class ViaBedrockUtilityInterface {
         CAPE, SKIN_INFORMATION, SKIN_DATA,
         SKIN_ANIMATION_INFO, SKIN_ANIMATION_DATA,
         SPAWN_PARTICLE, SPAWN_PARTICLE_V2,
-        PLAYER_VISUAL_STATE, PLAYER_ANIMATE
+        PLAYER_VISUAL_STATE, PLAYER_ANIMATE, INPUT_LOCKS
+    }
+
+    public static void sendInputLocks(final UserConnection user, final int flags) {
+        final ChannelStorage channels = user.get(ChannelStorage.class);
+        if (channels == null || !channels.hasChannel(INPUT_LOCKS_V1_CAPABILITY)) {
+            return;
+        }
+
+        final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets26_1.CUSTOM_PAYLOAD, user);
+        pluginMessage.write(Types.STRING, CHANNEL);
+        pluginMessage.write(Types.INT, PayloadType.INPUT_LOCKS.ordinal());
+        // v1只表示镜头和整体移动锁，其余基岩细粒度权限保留在代理原始状态中。
+        pluginMessage.write(Types.INT, flags & ((1 << 1) | (1 << 2)));
+        pluginMessage.send(BedrockProtocol.class);
     }
 
     public static void sendPlayerVisualState(final UserConnection user, final UUID uuid, final boolean customSpectator) {
