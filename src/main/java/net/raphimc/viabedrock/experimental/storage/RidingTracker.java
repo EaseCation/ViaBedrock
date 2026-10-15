@@ -333,7 +333,8 @@ public class RidingTracker extends StoredObject {
 
         final Position3f rawOffset = this.rawSeatOffset(passenger);
         final float anchorYOffset = this.passengerAnchorYOffset(passenger);
-        final Position3f vehiclePosition = vehicle.position().subtract(0F, vehicle.eyeOffset(), 0F);
+        // Seat metadata is relative to the Bedrock network origin, including the carrier base offset.
+        final Position3f vehiclePosition = vehicle.position();
         final Position3f position = vehiclePosition.add(this.seatOffset(vehicle, passenger, rawOffset, anchorYOffset));
         if (!anchor.spawned) {
             RidingAnchorHelper.spawn(this.user(), anchor.javaId, anchor.uuid, position);

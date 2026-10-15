@@ -336,7 +336,7 @@ class RidingTrackerTest {
     void localPlayerCarriesAnAnchoredDisplayAboveTheirFeetAndInitializesInterpolationBeforeMounting() throws Exception {
         try (AnchorFixture fixture = new AnchorFixture()) {
             fixture.clientPlayer.setPosition(new Position3f(12.5F, 65.62F, -4.5F));
-            final Entity egg = fixture.addDisplay(84L, 3, new Position3f(0F, 2.25F, 0F));
+            final Entity egg = fixture.addDisplay(84L, 3, new Position3f(0F, 0.63F, 0F));
             fixture.link(fixture.clientPlayer, egg);
 
             final PacketWrapper spawn = fixture.last(ClientboundPackets26_1.ADD_ENTITY);
@@ -362,7 +362,7 @@ class RidingTrackerTest {
                     new PlayerAbilities(BOAT_UNIQUE_ID, (byte) 0, (byte) 0));
             carrier.setPosition(new Position3f(12.5F, 65.62F, -4.5F));
             fixture.entities.vehicles.put(carrier.uniqueId(), carrier);
-            final Entity egg = fixture.addDisplay(84L, 3, new Position3f(0.5F, 2.25F, 1.25F));
+            final Entity egg = fixture.addDisplay(84L, 3, new Position3f(0.5F, 0.63F, 1.25F));
             fixture.link(carrier, egg);
             final int anchorId = fixture.last(ClientboundPackets26_1.ADD_ENTITY).get(Types.VAR_INT, 0);
             assertPacketPosition(fixture.last(ClientboundPackets26_1.ENTITY_POSITION_SYNC), 13D, 66.25D, -3.25D);
@@ -394,6 +394,20 @@ class RidingTrackerTest {
             final Entity egg = fixture.addDisplay(84L, 3, new Position3f(0.5F, 2.25F, 1.25F));
             fixture.link(carrier, egg);
             assertPacketPosition(fixture.last(ClientboundPackets26_1.ENTITY_POSITION_SYNC), 11.25D, 66.25D, -4D);
+        }
+    }
+
+    @Test
+    void eggSeatFromNativeCaptureStaysAtTheSameHeightForTheJavaCarrier() throws Exception {
+        try (AnchorFixture fixture = new AnchorFixture()) {
+            // Native acceptance: feet Y=65, eye/network Y=66.62, seat Y=0.48, egg bottom Y=67.10.
+            fixture.clientPlayer.setPosition(new Position3f(12.5F, 66.62F, -4.5F));
+            final Entity egg = fixture.addDisplay(84L, 3, new Position3f(0F, 0.48F, 0F));
+            fixture.link(fixture.clientPlayer, egg);
+            assertPacketPosition(fixture.last(ClientboundPackets26_1.ADD_ENTITY), 12.5D, 67.10D, -4.5D);
+            fixture.clientPlayer.setPosition(new Position3f(13.5F, 66.62F, -4.5F));
+            fixture.tracker.onEntityMoved(fixture.clientPlayer);
+            assertPacketPosition(fixture.last(ClientboundPackets26_1.ENTITY_POSITION_SYNC), 13.5D, 67.10D, -4.5D);
         }
     }
 
