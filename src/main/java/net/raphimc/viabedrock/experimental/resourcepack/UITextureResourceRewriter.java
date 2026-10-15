@@ -28,17 +28,22 @@ import java.util.Locale;
 import java.util.logging.Level;
 
 /**
- * Copies Bedrock UI textures (textures/ui/, textures/gui/) and their nine-slice JSON
- * definitions into the Java resource pack so that ModUIClient can render HUD elements.
+ * Copies Bedrock UI textures, nine-slice definitions and sfx/frame navigation sprites
+ * into the Java resource pack for ModUIClient.
  * Always active — the extra files have no side effects for clients without ModUIClient.
  * (Cannot gate on ModUIClient channel because resource pack conversion runs in
  * Configuration phase, before ModUIClient registers its channel in Play phase.)
  */
 public class UITextureResourceRewriter implements ResourcePackRewriter.Rewriter {
 
-    private static final String[] TEXTURE_PREFIXES = {"textures/ui/", "textures/gui/"};
+    private static final String[] TEXTURE_PREFIXES = {"textures/ui/", "textures/gui/", "sfx/frame/"};
     private static final String[] COPY_EXTENSIONS = {".png", ".json"};
     private static final String[] IMAGE_EXTENSIONS = {".jpg", ".jpeg"};
+
+    @Override
+    public String artifactFingerprint() {
+        return "2";
+    }
 
     @Override
     public void apply(final ResourcePackStorage resourcePackStorage, final Content javaContent) {
@@ -81,7 +86,7 @@ public class UITextureResourceRewriter implements ResourcePackRewriter.Rewriter 
         }
 
         if (count > 0) {
-            ViaBedrock.getPlatform().getLogger().log(Level.INFO, "Copied " + count + " UI texture files for ModUIClient");
+            ViaBedrock.getPlatform().getLogger().log(Level.INFO, "Copied " + count + " UI/navigation resource files for ModUIClient");
         }
     }
 
