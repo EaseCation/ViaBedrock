@@ -497,7 +497,13 @@ public class EntityPackets {
                     }
                 }
                 case DEATH -> {
-                    wrapper.cancel();
+                    if (entity instanceof CustomEntity) {
+                        // 自定义实体使用 Interaction 载体，需独立转发死亡状态供客户端渲染。
+                        wrapper.write(Types.INT, entity.javaId()); // entity id
+                        wrapper.write(Types.BYTE, net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent.DEATH.getValue()); // event
+                    } else {
+                        wrapper.cancel();
+                    }
                     if (entity instanceof LivingEntity livingEntity) {
                         livingEntity.setHealth(0F);
                         livingEntity.sendAttribute("minecraft:health");
