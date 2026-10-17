@@ -103,6 +103,8 @@ public class ClientPlayerEntity extends PlayerEntity {
     private boolean cancelNextSwingPacket;
     private BlockBreakingInfo blockBreakingInfo;
     private boolean usingItem;
+    private boolean blockItemUse;
+    private boolean serverUsingItem;
     private int usingItemStartAge = -1;
     private ItemUseSnapshot itemUseSnapshot;
     private boolean crossbowChargeFinishSent;
@@ -597,6 +599,7 @@ public class ClientPlayerEntity extends PlayerEntity {
             throw new IllegalArgumentException("Starting item use requires a hand and item snapshot");
         }
         this.usingItem = usingItem;
+        this.blockItemUse = false;
         this.usingItemStartAge = -1;
         this.itemUseSnapshot = null;
         this.crossbowChargeFinishSent = false;
@@ -604,9 +607,26 @@ public class ClientPlayerEntity extends PlayerEntity {
 
     public void startUsingItem(final InteractionHand hand, final byte containerId, final int containerSlot, final int transactionHotbarSlot, final BedrockItem item) {
         this.usingItem = true;
+        this.blockItemUse = false;
         this.usingItemStartAge = this.age;
         this.itemUseSnapshot = new ItemUseSnapshot(hand, containerId, containerSlot, transactionHotbarSlot, item);
         this.crossbowChargeFinishSent = false;
+    }
+
+    public void prepareBlockItemUse(final InteractionHand hand, final byte containerId, final int containerSlot, final int transactionHotbarSlot, final BedrockItem item) {
+        this.startUsingItem(hand, containerId, containerSlot, transactionHotbarSlot, item);
+        this.usingItem = false;
+        this.blockItemUse = true;
+    }
+
+    public void updateServerItemUse(final boolean usingItem) {
+        if (this.serverUsingItem == usingItem) {
+            return;
+        }
+        this.serverUsingItem = usingItem;
+        if (this.blockItemUse && this.itemUseSnapshot != null) {
+            this.usingItem = usingItem;
+        }
     }
 
     public InteractionHand usingItemHand() {

@@ -802,6 +802,10 @@ public class ExperimentalFeatures {
                 }
 
                 if (!clientPlayer.isUsingItem()) {
+                    if (clientPlayer.itemUseSnapshot() != null) {
+                        cancelUsingItem(wrapper.user(), inventoryTransactionRewriter, clientPlayer);
+                        return;
+                    }
                     // The injected Java consumable produces a release packet, but Bedrock swords have no
                     // corresponding continuous-use state to release.
                     if (ExperimentalItemRewriter.isSwordBlockingAnimationItem(wrapper.user().get(ItemRewriter.class), inventoryTracker.getInventoryContainer().getSelectedHotbarItem())) {
@@ -924,15 +928,19 @@ public class ExperimentalFeatures {
             final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
             final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
             final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
-            if (!clientPlayer.isUsingItem()) {
+            if (clientPlayer.itemUseSnapshot() == null) {
                 return;
             }
 
             final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
             final ItemUseHandContext handContext = ItemUseHandContext.resolve(inventoryTracker, clientPlayer.usingItemHand());
             final BedrockItem selectedItem = handContext.item();
-            if (!matchesUseItem(handContext, clientPlayer) || !isContinuousUseItem(itemRewriter, selectedItem)) {
+            if (inventoryTracker.isAnyScreenOpen() || !matchesUseItem(handContext, clientPlayer) || !isContinuousUseItem(itemRewriter, selectedItem)) {
                 cancelUsingItem(wrapper.user(), wrapper.user().get(InventoryTransactionRewriter.class), clientPlayer);
+                return;
+            }
+
+            if (!clientPlayer.isUsingItem()) {
                 return;
             }
 
@@ -1045,22 +1053,13 @@ public class ExperimentalFeatures {
             final int sequence = wrapper.read(Types.VAR_INT);
 
             final ItemUseHandContext handContext = ItemUseHandContext.resolve(inventoryTracker, hand);
-            final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
             final BedrockItem selectedItem = handContext.item();
-            if (isContinuousUseItem(itemRewriter, selectedItem)) {
-                clientPlayer.startUsingItem(handContext.hand(), handContext.containerId(), handContext.containerSlot(), handContext.transactionHotbarSlot(), selectedItem);
-                clientPlayer.addAuthInputData(PlayerAuthInputPacket_InputData.StartUsingItem);
-                clientPlayer.setAuthInputItemInteraction(createUseItemTransaction(handContext, clientPlayer));
-                if (shouldSendStandaloneUseTransaction(itemRewriter, selectedItem)) {
-                    sendUseItemTransaction(wrapper.user(), inventoryTransactionRewriter, handContext, clientPlayer);
-                }
-
-                if (sequence > 0) {
-                    PacketFactory.sendJavaBlockChangedAck(wrapper.user(), sequence);
-                }
-                return;
+            if (isContinuousUseItem(wrapper.user().get(ItemRewriter.class), selectedItem)) {
+                // 放置型食物失败时 Java 不再发送 USE_ITEM，等待服务端确认是否开始食用。
+                clientPlayer.prepareBlockItemUse(handContext.hand(), handContext.containerId(), handContext.containerSlot(), handContext.transactionHotbarSlot(), selectedItem);
+            } else {
+                clientPlayer.setUsingItem(false);
             }
-
             sendItemUseOnBlock(wrapper.user(), clientPlayer, handContext, inventoryTransactionRewriter, chunkTracker, position, faceInt, face, clickPosition, insideBlock, sequence);
         });
         protocol.registerClientbound(ClientboundBedrockPackets.INVENTORY_TRANSACTION, null, wrapper -> {
