@@ -38,6 +38,8 @@ import net.raphimc.viabedrock.protocol.data.generated.java.Attributes;
 import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
 import net.raphimc.viabedrock.api.util.TextUtil;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
+import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
+import net.raphimc.viabedrock.experimental.inventory.ItemUseHandContext;
 import net.raphimc.viabedrock.experimental.storage.GlowProjectionTracker;
 import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand;
 import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
@@ -80,6 +82,19 @@ public class EntityMetadataRewriter {
 
                 upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SILENT), VersionedTypes.V26_1.entityDataTypes().booleanType, bedrockFlags.contains(ActorFlags.SILENT)));
                 upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.NO_GRAVITY), VersionedTypes.V26_1.entityDataTypes().booleanType, noGravity(entity.javaType(), bedrockFlags)));
+
+                if (id == ActorDataIDs.RESERVED_0 && entity == entityTracker.getClientPlayer()) {
+                    final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
+                    final ClientPlayerEntity.ItemUseSnapshot snapshot = clientPlayer.itemUseSnapshot();
+                    if (snapshot != null) {
+                        final InventoryTracker inventoryTracker = user.get(InventoryTracker.class);
+                        final ItemUseHandContext handContext = ItemUseHandContext.resolve(inventoryTracker, snapshot.hand());
+                        if (inventoryTracker.isAnyScreenOpen() || !snapshot.matches(handContext.hand(), handContext.containerId(), handContext.containerSlot(), handContext.transactionHotbarSlot(), handContext.item())) {
+                            clientPlayer.setUsingItem(false);
+                        }
+                    }
+                    clientPlayer.updateServerItemUse(bedrockFlags.contains(ActorFlags.USINGITEM));
+                }
 
                 if (entity instanceof LivingEntity) {
                     final byte livingFlags = entity == entityTracker.getClientPlayer()
