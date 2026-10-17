@@ -83,7 +83,7 @@ public class EntityMetadataRewriter {
                 upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SILENT), VersionedTypes.V26_1.entityDataTypes().booleanType, bedrockFlags.contains(ActorFlags.SILENT)));
                 upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.NO_GRAVITY), VersionedTypes.V26_1.entityDataTypes().booleanType, noGravity(entity.javaType(), bedrockFlags)));
 
-                if (id == ActorDataIDs.RESERVED_0 && entity == entityTracker.getClientPlayer()) {
+                if (entity == entityTracker.getClientPlayer()) {
                     final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
                     final ClientPlayerEntity.ItemUseSnapshot snapshot = clientPlayer.itemUseSnapshot();
                     if (snapshot != null) {
