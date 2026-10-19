@@ -214,6 +214,7 @@ public class MultiStatePackets {
                 wrapper.user().get(ChannelStorage.class).addChannels(List.of(ViaBedrockUtilityInterface.CHANNEL));
                 ViaBedrockUtilityInterface.confirmPresence(wrapper.user());
             }
+            ViaBedrockUtilityInterface.confirmCustomEntityMotion(wrapper.user());
             ExperimentalFeatures.dispatchChannelRegistered(wrapper.user(), new java.util.HashSet<>(channels));
             if (wrapper.user().getProtocolInfo().getClientState() == State.CONFIGURATION
                     && channels.contains(ECClientLightInterface.CONFIRM_CHANNEL)) {

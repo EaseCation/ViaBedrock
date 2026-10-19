@@ -271,6 +271,10 @@ public class EntityPackets {
             entity.setOnGround(onGround);
             ExperimentalFeatures.dispatchEntityMoved(wrapper.user(), entity);
 
+            if (ViaBedrockUtilityInterface.writeCustomEntityTeleport(wrapper, entity, teleported)) {
+                PacketFactory.sendJavaRotateHead(wrapper.user(), entity);
+                return;
+            }
             wrapper.write(Types.VAR_INT, entity.javaId()); // entity id
             wrapper.write(Types.DOUBLE, (double) position.x()); // x
             wrapper.write(Types.DOUBLE, (double) position.y() - entity.eyeOffset()); // y
@@ -367,6 +371,9 @@ public class EntityPackets {
             entity.setOnGround(onGround);
             ExperimentalFeatures.dispatchEntityMoved(wrapper.user(), entity);
 
+            if (ViaBedrockUtilityInterface.writeCustomEntityTeleport(wrapper, entity, teleported)) {
+                return;
+            }
             wrapper.write(Types.VAR_INT, entity.javaId()); // entity id
             wrapper.write(Types.DOUBLE, (double) entity.position().x()); // x
             wrapper.write(Types.DOUBLE, (double) entity.position().y() - entity.eyeOffset()); // y

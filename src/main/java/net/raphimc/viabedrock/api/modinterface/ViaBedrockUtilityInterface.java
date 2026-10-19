@@ -25,6 +25,8 @@ import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import com.viaversion.viaversion.protocols.v1_21_7to1_21_9.packet.ClientboundConfigurationPackets1_21_9;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
+import net.raphimc.viabedrock.api.model.entity.CustomEntity;
+import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorDataIDs;
 import net.raphimc.viabedrock.protocol.model.SkinData;
 import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
@@ -47,6 +49,7 @@ public class ViaBedrockUtilityInterface {
     public static final String PLAYER_VISUAL_STATE_V1_CAPABILITY = "viabedrockutility:player_visual_state_v1";
     public static final String PLAYER_ANIMATION_V1_CAPABILITY = "viabedrockutility:player_animation_v1";
     public static final String INPUT_LOCKS_V1_CAPABILITY = "viabedrockutility:input_locks_v1";
+    public static final String CUSTOM_ENTITY_MOTION_V1_CAPABILITY = "viabedrockutility:custom_entity_motion_v1";
     public static final String CUSTOM_SPECTATOR_PROPERTY = "easecation:custom_spectator";
     /** Client capability: unmapped Bedrock particle effects can use anchor-aware V2 requests. */
     public static final String PARTICLE_RUNTIME_V2_CAPABILITY = "viabedrockutility:particle_runtime_v2";
@@ -225,7 +228,49 @@ public class ViaBedrockUtilityInterface {
         CAPE, SKIN_INFORMATION, SKIN_DATA,
         SKIN_ANIMATION_INFO, SKIN_ANIMATION_DATA,
         SPAWN_PARTICLE, SPAWN_PARTICLE_V2,
-        PLAYER_VISUAL_STATE, PLAYER_ANIMATE, INPUT_LOCKS
+        PLAYER_VISUAL_STATE, PLAYER_ANIMATE, INPUT_LOCKS, CUSTOM_ENTITY_MOTION
+    }
+
+    /** 确认新代理能区分普通移动与瞬移，旧代理不会误启用客户端插值。 */
+    public static void confirmCustomEntityMotion(final UserConnection user) {
+        if (!supportsCustomEntityMotion(user)) {
+            return;
+        }
+        final PacketWrapper confirmation = PacketWrapper.create(
+                user.getProtocolInfo().getClientState() == State.CONFIGURATION
+                        ? ClientboundConfigurationPackets1_21_9.CUSTOM_PAYLOAD
+                        : ClientboundPackets26_1.CUSTOM_PAYLOAD, user);
+        confirmation.write(Types.STRING, CHANNEL);
+        confirmation.write(Types.INT, PayloadType.CUSTOM_ENTITY_MOTION.ordinal());
+        confirmation.write(Types.UNSIGNED_BYTE, (short) 0);
+        confirmation.send(BedrockProtocol.class);
+    }
+
+    /** 仅替换已协商客户端的自定义实体瞬移包，保持普通位置包和旧客户端行为。 */
+    public static boolean writeCustomEntityTeleport(final PacketWrapper wrapper, final Entity entity,
+                                                    final boolean teleported) {
+        if (!teleported || !(entity instanceof CustomEntity) || !supportsCustomEntityMotion(wrapper.user())) {
+            return false;
+        }
+        wrapper.clearPacket();
+        wrapper.setPacketType(ClientboundPackets26_1.CUSTOM_PAYLOAD);
+        wrapper.write(Types.STRING, CHANNEL);
+        wrapper.write(Types.INT, PayloadType.CUSTOM_ENTITY_MOTION.ordinal());
+        wrapper.write(Types.UNSIGNED_BYTE, (short) 1);
+        wrapper.write(Types.UUID, entity.javaUuid());
+        wrapper.write(Types.DOUBLE, (double) entity.position().x());
+        wrapper.write(Types.DOUBLE, (double) entity.position().y() - entity.eyeOffset());
+        wrapper.write(Types.DOUBLE, (double) entity.position().z());
+        wrapper.write(Types.FLOAT, entity.rotation().y());
+        wrapper.write(Types.FLOAT, entity.rotation().x());
+        wrapper.write(Types.BOOLEAN, entity.isOnGround());
+        return true;
+    }
+
+    private static boolean supportsCustomEntityMotion(final UserConnection user) {
+        final ChannelStorage channels = user.get(ChannelStorage.class);
+        return channels != null && channels.hasChannel(CONFIRM_CHANNEL)
+                && channels.hasChannel(CUSTOM_ENTITY_MOTION_V1_CAPABILITY);
     }
 
     public static void sendInputLocks(final UserConnection user, final int flags) {
