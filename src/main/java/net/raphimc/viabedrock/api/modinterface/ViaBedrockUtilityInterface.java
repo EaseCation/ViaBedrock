@@ -20,6 +20,7 @@ package net.raphimc.viabedrock.api.modinterface;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
+import com.viaversion.viaversion.api.protocol.packet.PacketType;
 import com.viaversion.viaversion.api.protocol.packet.State;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
@@ -60,10 +61,18 @@ public class ViaBedrockUtilityInterface {
     static final int SKIN_ANIMATION_DATA_CHUNK_SIZE = MAX_PAYLOAD_SIZE - SKIN_ANIMATION_DATA_HEADER_SIZE;
 
     public static void confirmPresence(final UserConnection user) {
-        final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundConfigurationPackets1_21_9.CUSTOM_PAYLOAD, user);
+        final PacketWrapper pluginMessage = PacketWrapper.create(customPayloadType(user), user);
         pluginMessage.write(Types.STRING, CHANNEL); // Channel
         pluginMessage.write(Types.INT, PayloadType.CONFIRM.ordinal()); // Type
         pluginMessage.send(BedrockProtocol.class);
+    }
+
+    private static PacketType customPayloadType(final UserConnection user) {
+        // FINISH_CONFIGURATION advances the outbound stream before its acknowledgement arrives.
+        // clientState can still be CONFIGURATION after the client has switched to PLAY.
+        return user.getProtocolInfo().getServerState() == State.CONFIGURATION
+                ? ClientboundConfigurationPackets1_21_9.CUSTOM_PAYLOAD
+                : ClientboundPackets26_1.CUSTOM_PAYLOAD;
     }
 
     public static void handlePlayerState(final UserConnection user, final byte[] payload) {
@@ -236,10 +245,7 @@ public class ViaBedrockUtilityInterface {
         if (!supportsCustomEntityMotion(user)) {
             return;
         }
-        final PacketWrapper confirmation = PacketWrapper.create(
-                user.getProtocolInfo().getClientState() == State.CONFIGURATION
-                        ? ClientboundConfigurationPackets1_21_9.CUSTOM_PAYLOAD
-                        : ClientboundPackets26_1.CUSTOM_PAYLOAD, user);
+        final PacketWrapper confirmation = PacketWrapper.create(customPayloadType(user), user);
         confirmation.write(Types.STRING, CHANNEL);
         confirmation.write(Types.INT, PayloadType.CUSTOM_ENTITY_MOTION.ordinal());
         confirmation.write(Types.UNSIGNED_BYTE, (short) 0);

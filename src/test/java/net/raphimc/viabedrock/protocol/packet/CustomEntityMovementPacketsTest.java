@@ -23,10 +23,13 @@ import io.netty.channel.embedded.EmbeddedChannel;
 import net.raphimc.viabedrock.api.model.entity.CustomEntity;
 import net.raphimc.viabedrock.api.model.entity.Entity;
 import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
+import net.raphimc.viabedrock.ViaBedrock;
+import net.raphimc.viabedrock.platform.ViaBedrockConfig;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.model.Position3f;
 import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
+import net.raphimc.viabedrock.protocol.storage.ClientChannelDiscoveryStorage;
 import net.raphimc.viabedrock.protocol.storage.EntityTracker;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 import org.junit.jupiter.api.BeforeAll;
@@ -34,6 +37,7 @@ import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Proxy;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -95,6 +99,7 @@ class CustomEntityMovementPacketsTest {
             fixture.user.get(ChannelStorage.class).addChannels(
                     List.of(ViaBedrockUtilityInterface.CUSTOM_ENTITY_MOTION_V1_CAPABILITY));
             fixture.user.getProtocolInfo().setClientState(State.CONFIGURATION);
+            fixture.user.getProtocolInfo().setServerState(State.CONFIGURATION);
             ViaBedrockUtilityInterface.confirmCustomEntityMotion(fixture.user);
             assertEquals(ClientboundConfigurationPackets1_21_9.CUSTOM_PAYLOAD, fixture.sent.getLast().getPacketType());
             final ByteBuf wire = fixture.serialize(fixture.sent.getLast());
@@ -113,20 +118,68 @@ class CustomEntityMovementPacketsTest {
         }
     }
 
+    @Test
+    void registrationRepliesFollowTheOutboundPhaseWhileAcknowledgementsArePending() throws Exception {
+        for (State clientState : new State[]{State.CONFIGURATION, State.PLAY}) {
+            for (State serverState : new State[]{State.CONFIGURATION, State.PLAY}) {
+                try (Fixture fixture = new Fixture(true, true)) {
+                    fixture.user.getProtocolInfo().setClientState(clientState);
+                    fixture.user.getProtocolInfo().setServerState(serverState);
+                    fixture.registerChannels(MultiStatePackets.CUSTOM_PAYLOAD_HANDLER);
+                    assertEquals(2, fixture.sent.size());
+                    for (PacketWrapper reply : fixture.sent) {
+                        assertEquals(serverState == State.CONFIGURATION
+                                ? ClientboundConfigurationPackets1_21_9.CUSTOM_PAYLOAD
+                                : ClientboundPackets26_1.CUSTOM_PAYLOAD, reply.getPacketType());
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    void motionConfirmationUsesPlayAfterFinishConfigurationBeforeItsAcknowledgement() throws Exception {
+        try (Fixture fixture = new Fixture(true, true)) {
+            fixture.user.getProtocolInfo().setClientState(State.CONFIGURATION);
+            fixture.user.getProtocolInfo().setServerState(State.PLAY);
+            ViaBedrockUtilityInterface.confirmCustomEntityMotion(fixture.user);
+            final PacketWrapper reply = fixture.sent.getLast();
+            assertEquals(ClientboundPackets26_1.CUSTOM_PAYLOAD, reply.getPacketType());
+            final ByteBuf wire = Unpooled.buffer();
+            fixture.buffers.add(wire);
+            reply.writeToBuffer(wire);
+            assertEquals(29, wire.readableBytes());
+            assertEquals(ClientboundPackets26_1.CUSTOM_PAYLOAD.getId(), Types.VAR_INT.readPrimitive(wire));
+            assertEquals(ViaBedrockUtilityInterface.CHANNEL, Types.STRING.read(wire));
+            assertEquals(13, wire.readInt());
+            assertEquals(0, wire.readUnsignedByte());
+            assertFalse(wire.isReadable());
+        }
+    }
+
     private static final class Fixture implements AutoCloseable {
         private final EmbeddedChannel channel = new EmbeddedChannel();
         private final UserConnectionImpl user = new UserConnectionImpl(channel);
         private final List<ByteBuf> buffers = new ArrayList<>();
         private final List<PacketWrapper> sent = new ArrayList<>();
         private final Field managerField = Via.class.getDeclaredField("manager");
+        private final Field configField = ViaBedrock.class.getDeclaredField("config");
         private final Object oldManager;
+        private final Object oldConfig;
         private final Entity entity;
         private PacketHandler absolute;
         private PacketHandler delta;
 
         private Fixture(boolean capable, boolean custom) throws Exception {
             managerField.setAccessible(true);
+            configField.setAccessible(true);
             oldManager = managerField.get(null);
+            oldConfig = configField.get(null);
+            configField.set(null, Proxy.newProxyInstance(ViaBedrockConfig.class.getClassLoader(),
+                    new Class[]{ViaBedrockConfig.class}, (proxy, method, args) -> {
+                        if (method.getName().equals("shouldBridgeJavaCustomPayloads")) return false;
+                        throw new UnsupportedOperationException(method.getName());
+                    }));
             final ProtocolManager protocolManager = (ProtocolManager) Proxy.newProxyInstance(
                     ProtocolManager.class.getClassLoader(), new Class[]{ProtocolManager.class}, (proxy, method, args) -> {
                         if (method.getName().equals("createPacketWrapper")) {
@@ -150,6 +203,7 @@ class CustomEntityMovementPacketsTest {
             channels.addChannels(List.of(ViaBedrockUtilityInterface.CONFIRM_CHANNEL));
             if (capable) channels.addChannels(List.of(ViaBedrockUtilityInterface.CUSTOM_ENTITY_MOTION_V1_CAPABILITY));
             user.put(channels);
+            user.put(new ClientChannelDiscoveryStorage());
             entity = custom ? new CustomEntity(user, 1, 2, "easecation:ghosarea_hunter_2", 300, null) {
                 @Override
                 public void setPosition(Position3f position) {
@@ -196,9 +250,21 @@ class CustomEntityMovementPacketsTest {
             return buffer;
         }
 
+        private void registerChannels(PacketHandler handler) throws Exception {
+            final ByteBuf input = Unpooled.buffer();
+            buffers.add(input);
+            Types.STRING.write(input, "minecraft:register");
+            input.writeBytes((ViaBedrockUtilityInterface.CONFIRM_CHANNEL + "\0"
+                    + ViaBedrockUtilityInterface.CUSTOM_ENTITY_MOTION_V1_CAPABILITY)
+                    .getBytes(StandardCharsets.UTF_8));
+            handler.handle(new PacketWrapperImpl(-1, input, user));
+            assertFalse(input.isReadable());
+        }
+
         @Override
         public void close() throws Exception {
             managerField.set(null, oldManager);
+            configField.set(null, oldConfig);
             buffers.forEach(ByteBuf::release);
             channel.finishAndReleaseAll();
         }
