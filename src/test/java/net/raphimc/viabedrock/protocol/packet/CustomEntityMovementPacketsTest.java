@@ -157,6 +157,80 @@ class CustomEntityMovementPacketsTest {
         }
     }
 
+    @Test
+    void skullMotionNeedsItsOwnCapabilityAndUsesTheOutboundProtocolPhase() throws Exception {
+        for (State phase : new State[]{State.CONFIGURATION, State.PLAY}) {
+            try (Fixture fixture = new Fixture(true, false)) {
+                ViaBedrockUtilityInterface.confirmWitherSkullMotion(fixture.user);
+                assertTrue(fixture.sent.isEmpty());
+                fixture.user.get(ChannelStorage.class).addChannels(
+                        List.of(ViaBedrockUtilityInterface.WITHER_SKULL_MOTION_V1_CAPABILITY));
+                fixture.user.getProtocolInfo().setServerState(phase);
+                ViaBedrockUtilityInterface.confirmWitherSkullMotion(fixture.user);
+                final PacketWrapper reply = fixture.sent.getLast();
+                assertEquals(phase == State.PLAY ? ClientboundPackets26_1.CUSTOM_PAYLOAD
+                        : ClientboundConfigurationPackets1_21_9.CUSTOM_PAYLOAD, reply.getPacketType());
+                final ByteBuf wire = fixture.serialize(reply);
+                assertEquals(ViaBedrockUtilityInterface.CHANNEL, Types.STRING.read(wire));
+                assertEquals(13, wire.readInt());
+                assertEquals(2, wire.readUnsignedByte());
+                assertFalse(wire.isReadable());
+                final ChannelStorage skullOnly = new ChannelStorage();
+                skullOnly.addChannels(List.of(ViaBedrockUtilityInterface.WITHER_SKULL_MOTION_V1_CAPABILITY));
+                fixture.user.put(skullOnly);
+                final int sent = fixture.sent.size();
+                ViaBedrockUtilityInterface.confirmWitherSkullMotion(fixture.user);
+                assertEquals(sent, fixture.sent.size());
+            }
+        }
+    }
+
+    @Test
+    void clientRegistrationConfirmsSkullMotionAlongsideExistingCustomEntitySupport() throws Exception {
+        try (Fixture fixture = new Fixture(false, false)) {
+            fixture.user.getProtocolInfo().setServerState(State.PLAY);
+            fixture.registerChannels(MultiStatePackets.CUSTOM_PAYLOAD_HANDLER,
+                    ViaBedrockUtilityInterface.WITHER_SKULL_MOTION_V1_CAPABILITY);
+            assertEquals(3, fixture.sent.size());
+            final ByteBuf wire = fixture.serialize(fixture.sent.getLast());
+            assertEquals(ViaBedrockUtilityInterface.CHANNEL, Types.STRING.read(wire));
+            assertEquals(13, wire.readInt());
+            assertEquals(2, wire.readUnsignedByte());
+            assertFalse(wire.isReadable());
+        }
+    }
+
+    @Test
+    void nativeSkullTeleportsAreExplicitButNormalMovementAndCustomTypeOverridesStayNative() throws Exception {
+        for (boolean delta : new boolean[]{false, true}) {
+            for (Integer customId : new Integer[]{null, 999}) {
+                try (Fixture fixture = new Fixture(false, false, EntityTypes1_21_11.WITHER_SKULL, customId)) {
+                    assertEquals(ClientboundPackets26_1.ENTITY_POSITION_SYNC, fixture.move(delta, true).getPacketType());
+                    fixture.user.get(ChannelStorage.class).addChannels(
+                            List.of(ViaBedrockUtilityInterface.WITHER_SKULL_MOTION_V1_CAPABILITY));
+                    assertEquals(ClientboundPackets26_1.ENTITY_POSITION_SYNC, fixture.move(delta, false).getPacketType());
+                    final PacketWrapper teleport = fixture.move(delta, true);
+                    if (customId != null) {
+                        assertEquals(ClientboundPackets26_1.ENTITY_POSITION_SYNC, teleport.getPacketType());
+                        continue;
+                    }
+                    final ByteBuf wire = fixture.serialize(teleport);
+                    assertEquals(ViaBedrockUtilityInterface.CHANNEL, Types.STRING.read(wire));
+                    assertEquals(13, wire.readInt());
+                    assertEquals(3, wire.readUnsignedByte());
+                    assertEquals(fixture.entity.javaUuid(), Types.UUID.read(wire));
+                    assertEquals(10, wire.readDouble());
+                    assertEquals(64, wire.readDouble());
+                    assertEquals(-2, wire.readDouble());
+                    assertEquals(90, wire.readFloat());
+                    assertEquals(0, wire.readFloat());
+                    assertTrue(wire.readBoolean());
+                    assertFalse(wire.isReadable());
+                }
+            }
+        }
+    }
+
     private static final class Fixture implements AutoCloseable {
         private final EmbeddedChannel channel = new EmbeddedChannel();
         private final UserConnectionImpl user = new UserConnectionImpl(channel);
@@ -171,6 +245,10 @@ class CustomEntityMovementPacketsTest {
         private PacketHandler delta;
 
         private Fixture(boolean capable, boolean custom) throws Exception {
+            this(capable, custom, EntityTypes1_21_11.ZOMBIE, null);
+        }
+
+        private Fixture(boolean capable, boolean custom, EntityTypes1_21_11 type, Integer customTypeId) throws Exception {
             managerField.setAccessible(true);
             configField.setAccessible(true);
             oldManager = managerField.get(null);
@@ -210,7 +288,7 @@ class CustomEntityMovementPacketsTest {
                     this.position = position;
                 }
             }
-                    : new Entity(user, 1, 2, "minecraft:zombie", 300, UUID.randomUUID(), EntityTypes1_21_11.ZOMBIE);
+                    : new Entity(user, 1, 2, type.identifier(), 300, UUID.randomUUID(), type, customTypeId);
             entity.setPosition(Position3f.ZERO);
             user.getStoredObjects().put(EntityTracker.class, new EntityTracker(user) {
                 @Override
@@ -250,12 +328,13 @@ class CustomEntityMovementPacketsTest {
             return buffer;
         }
 
-        private void registerChannels(PacketHandler handler) throws Exception {
+        private void registerChannels(PacketHandler handler, String... additionalChannels) throws Exception {
             final ByteBuf input = Unpooled.buffer();
             buffers.add(input);
             Types.STRING.write(input, "minecraft:register");
             input.writeBytes((ViaBedrockUtilityInterface.CONFIRM_CHANNEL + "\0"
-                    + ViaBedrockUtilityInterface.CUSTOM_ENTITY_MOTION_V1_CAPABILITY)
+                    + ViaBedrockUtilityInterface.CUSTOM_ENTITY_MOTION_V1_CAPABILITY
+                    + (additionalChannels.length == 0 ? "" : "\0" + String.join("\0", additionalChannels)))
                     .getBytes(StandardCharsets.UTF_8));
             handler.handle(new PacketWrapperImpl(-1, input, user));
             assertFalse(input.isReadable());

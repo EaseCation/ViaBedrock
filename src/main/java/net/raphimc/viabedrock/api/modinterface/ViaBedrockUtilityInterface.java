@@ -18,6 +18,7 @@
 package net.raphimc.viabedrock.api.modinterface;
 
 import com.viaversion.viaversion.api.connection.UserConnection;
+import com.viaversion.viaversion.api.minecraft.entities.EntityTypes1_21_11;
 import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 import com.viaversion.viaversion.api.protocol.packet.PacketType;
@@ -51,6 +52,7 @@ public class ViaBedrockUtilityInterface {
     public static final String PLAYER_ANIMATION_V1_CAPABILITY = "viabedrockutility:player_animation_v1";
     public static final String INPUT_LOCKS_V1_CAPABILITY = "viabedrockutility:input_locks_v1";
     public static final String CUSTOM_ENTITY_MOTION_V1_CAPABILITY = "viabedrockutility:custom_entity_motion_v1";
+    public static final String WITHER_SKULL_MOTION_V1_CAPABILITY = "viabedrockutility:wither_skull_motion_v1";
     public static final String CUSTOM_SPECTATOR_PROPERTY = "easecation:custom_spectator";
     /** Client capability: unmapped Bedrock particle effects can use anchor-aware V2 requests. */
     public static final String PARTICLE_RUNTIME_V2_CAPABILITY = "viabedrockutility:particle_runtime_v2";
@@ -252,17 +254,37 @@ public class ViaBedrockUtilityInterface {
         confirmation.send(BedrockProtocol.class);
     }
 
-    /** 仅替换已协商客户端的自定义实体瞬移包，保持普通位置包和旧客户端行为。 */
+    public static void confirmWitherSkullMotion(final UserConnection user) {
+        if (!supportsWitherSkullMotion(user)) {
+            return;
+        }
+        final PacketWrapper confirmation = PacketWrapper.create(customPayloadType(user), user);
+        confirmation.write(Types.STRING, CHANNEL);
+        confirmation.write(Types.INT, PayloadType.CUSTOM_ENTITY_MOTION.ordinal());
+        confirmation.write(Types.UNSIGNED_BYTE, (short) 2);
+        confirmation.send(BedrockProtocol.class);
+    }
+
+    /** 保留已协商实体的瞬移语义，普通移动仍通过原生位置包插值。 */
     public static boolean writeCustomEntityTeleport(final PacketWrapper wrapper, final Entity entity,
                                                     final boolean teleported) {
-        if (!teleported || !(entity instanceof CustomEntity) || !supportsCustomEntityMotion(wrapper.user())) {
+        if (!teleported) {
+            return false;
+        }
+        final int action;
+        if (entity instanceof CustomEntity && supportsCustomEntityMotion(wrapper.user())) {
+            action = 1;
+        } else if (entity.javaType() == EntityTypes1_21_11.WITHER_SKULL && entity.usesVanillaJavaType()
+                && supportsWitherSkullMotion(wrapper.user())) {
+            action = 3;
+        } else {
             return false;
         }
         wrapper.clearPacket();
         wrapper.setPacketType(ClientboundPackets26_1.CUSTOM_PAYLOAD);
         wrapper.write(Types.STRING, CHANNEL);
         wrapper.write(Types.INT, PayloadType.CUSTOM_ENTITY_MOTION.ordinal());
-        wrapper.write(Types.UNSIGNED_BYTE, (short) 1);
+        wrapper.write(Types.UNSIGNED_BYTE, (short) action);
         wrapper.write(Types.UUID, entity.javaUuid());
         wrapper.write(Types.DOUBLE, (double) entity.position().x());
         wrapper.write(Types.DOUBLE, (double) entity.position().y() - entity.eyeOffset());
@@ -277,6 +299,12 @@ public class ViaBedrockUtilityInterface {
         final ChannelStorage channels = user.get(ChannelStorage.class);
         return channels != null && channels.hasChannel(CONFIRM_CHANNEL)
                 && channels.hasChannel(CUSTOM_ENTITY_MOTION_V1_CAPABILITY);
+    }
+
+    private static boolean supportsWitherSkullMotion(final UserConnection user) {
+        final ChannelStorage channels = user.get(ChannelStorage.class);
+        return channels != null && channels.hasChannel(CONFIRM_CHANNEL)
+                && channels.hasChannel(WITHER_SKULL_MOTION_V1_CAPABILITY);
     }
 
     public static void sendInputLocks(final UserConnection user, final int flags) {
