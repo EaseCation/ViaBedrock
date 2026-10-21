@@ -512,7 +512,7 @@ public class ClientPlayerEntity extends PlayerEntity {
 
     private void synchronizeInputLocks(final boolean force) {
         if (!this.initiallySpawned || this.user.getProtocolInfo().getClientState() != State.PLAY) return;
-        final int flags = this.inputLockFlags & 6;
+        final int flags = this.inputLockFlags & ViaBedrockUtilityInterface.INPUT_LOCKS_V3_FLAGS;
         final boolean immobile = this.isImmobile();
         if (!force && flags == this.sentInputLockFlags && immobile == this.sentImmobile) return;
         if (ViaBedrockUtilityInterface.sendInputLocks(this.user, flags, immobile)) {
