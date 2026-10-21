@@ -51,6 +51,7 @@ public class ViaBedrockUtilityInterface {
     public static final String PLAYER_VISUAL_STATE_V1_CAPABILITY = "viabedrockutility:player_visual_state_v1";
     public static final String PLAYER_ANIMATION_V1_CAPABILITY = "viabedrockutility:player_animation_v1";
     public static final String INPUT_LOCKS_V1_CAPABILITY = "viabedrockutility:input_locks_v1";
+    public static final String INPUT_LOCKS_V2_CAPABILITY = "viabedrockutility:input_locks_v2";
     public static final String CUSTOM_ENTITY_MOTION_V1_CAPABILITY = "viabedrockutility:custom_entity_motion_v1";
     public static final String WITHER_SKULL_MOTION_V1_CAPABILITY = "viabedrockutility:wither_skull_motion_v1";
     public static final String CUSTOM_SPECTATOR_PROPERTY = "easecation:custom_spectator";
@@ -239,7 +240,7 @@ public class ViaBedrockUtilityInterface {
         CAPE, SKIN_INFORMATION, SKIN_DATA,
         SKIN_ANIMATION_INFO, SKIN_ANIMATION_DATA,
         SPAWN_PARTICLE, SPAWN_PARTICLE_V2,
-        PLAYER_VISUAL_STATE, PLAYER_ANIMATE, INPUT_LOCKS, CUSTOM_ENTITY_MOTION
+        PLAYER_VISUAL_STATE, PLAYER_ANIMATE, INPUT_LOCKS, CUSTOM_ENTITY_MOTION, INPUT_LOCKS_V2
     }
 
     /** 确认新代理能区分普通移动与瞬移，旧代理不会误启用客户端插值。 */
@@ -307,18 +308,25 @@ public class ViaBedrockUtilityInterface {
                 && channels.hasChannel(WITHER_SKULL_MOTION_V1_CAPABILITY);
     }
 
-    public static void sendInputLocks(final UserConnection user, final int flags) {
-        final ChannelStorage channels = user.get(ChannelStorage.class);
-        if (channels == null || !channels.hasChannel(INPUT_LOCKS_V1_CAPABILITY)) {
-            return;
-        }
-
+    public static boolean sendInputLocks(final UserConnection user, final int flags, final boolean immobile) {
         final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets26_1.CUSTOM_PAYLOAD, user);
-        pluginMessage.write(Types.STRING, CHANNEL);
-        pluginMessage.write(Types.INT, PayloadType.INPUT_LOCKS.ordinal());
-        // v1只表示镜头和整体移动锁，其余基岩细粒度权限保留在代理原始状态中。
-        pluginMessage.write(Types.INT, flags & ((1 << 1) | (1 << 2)));
+        if (!writeInputLocks(pluginMessage, flags, immobile)) return false;
         pluginMessage.send(BedrockProtocol.class);
+        return true;
+    }
+
+    /** 新客户端原子接收权限与定身，v1只降级为禁用输入，不能改写历史位的语义。 */
+    static boolean writeInputLocks(final PacketWrapper pluginMessage, final int flags, final boolean immobile) {
+        final UserConnection user = pluginMessage.user();
+        final ChannelStorage channels = user.get(ChannelStorage.class);
+        if (channels == null) return false;
+        final boolean v2 = channels.hasChannel(INPUT_LOCKS_V2_CAPABILITY);
+        if (!v2 && !channels.hasChannel(INPUT_LOCKS_V1_CAPABILITY)) return false;
+        pluginMessage.write(Types.STRING, CHANNEL);
+        pluginMessage.write(Types.INT, v2 ? PayloadType.INPUT_LOCKS_V2.ordinal() : PayloadType.INPUT_LOCKS.ordinal());
+        pluginMessage.write(Types.INT, (flags & 6) | (!v2 && immobile ? 4 : 0));
+        if (v2) pluginMessage.write(Types.BOOLEAN, immobile);
+        return true;
     }
 
     public static void sendPlayerVisualState(final UserConnection user, final UUID uuid, final boolean customSpectator) {

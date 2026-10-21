@@ -8,8 +8,12 @@ import com.viaversion.viaversion.api.protocol.Protocol;
 import com.viaversion.viaversion.api.protocol.ProtocolManager;
 import com.viaversion.viaversion.api.protocol.packet.PacketType;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
+import com.viaversion.viaversion.api.protocol.packet.State;
+import com.viaversion.viaversion.api.connection.UserConnection;
+import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.connection.UserConnectionImpl;
+import com.viaversion.viaversion.debug.DebugHandlerImpl;
 import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ServerboundPackets26_1;
@@ -25,6 +29,8 @@ import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.BedrockMappingData;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.AbilitiesIndex;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorFlags;
+import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorDataIDs;
+import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAuthInputPacket_InputData;
 import net.raphimc.viabedrock.protocol.data.enums.java.InputFlag;
 import net.raphimc.viabedrock.protocol.data.enums.java.Relative;
@@ -56,6 +62,73 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ClientInputLocksPacketsTest {
+
+    @Test
+    void noAiAndInputPermissionsRemainIndependentInTheAtomicV2Snapshot() throws Exception {
+        try (Fixture fixture = new Fixture(Set.of(ViaBedrockUtilityInterface.INPUT_LOCKS_V2_CAPABILITY))) {
+            fixture.client.noAi(true);
+            assertInputLocksV2Wire(fixture.packets.getLast(), 0, true);
+            fixture.input((byte) 17);
+            assertTrue(fixture.client.inputFlags().isEmpty());
+            fixture.lock(6);
+            assertInputLocksV2Wire(fixture.packets.getLast(), 6, true);
+            fixture.client.noAi(false);
+            assertInputLocksV2Wire(fixture.packets.getLast(), 6, false);
+            assertTrue(fixture.client.isMovementInputLocked());
+            fixture.lock(2);
+            assertInputLocksV2Wire(fixture.packets.getLast(), 2, false);
+            assertFalse(fixture.client.isMovementInputLocked());
+            fixture.client.noAi(true);
+            fixture.lock(0);
+            assertInputLocksV2Wire(fixture.packets.getLast(), 0, true);
+            assertTrue(fixture.client.isMovementInputLocked());
+            fixture.client.setPositionFromServer(new Position3f(12F, 70F, 8F));
+            assertEquals(new Position3f(12F, 70F, 8F), fixture.client.position());
+            fixture.client.resetInputLocks();
+            assertInputLocksV2Wire(fixture.packets.getLast(), 0, false);
+            assertFalse(fixture.client.hasEntityFlag(ActorFlags.NOAI));
+            assertFalse(fixture.client.isMovementInputLocked());
+        }
+    }
+
+    @Test
+    void noAiFallsBackToV1MovementWithoutLockingTheCamera() throws Exception {
+        try (Fixture fixture = new Fixture(Set.of(ViaBedrockUtilityInterface.INPUT_LOCKS_V1_CAPABILITY))) {
+            fixture.client.noAi(true);
+            assertInputLocksWire(fixture.packets.getLast(), 4);
+            fixture.client.noAi(true);
+            assertEquals(1, fixture.packets.size());
+            fixture.client.noAi(false);
+            assertInputLocksWire(fixture.packets.getLast(), 0);
+        }
+    }
+
+    @Test
+    void capabilityArrivingAfterTheLockReceivesTheCurrentSnapshot() throws Exception {
+        try (Fixture fixture = new Fixture(Set.of(ViaBedrockUtilityInterface.CONFIRM_CHANNEL))) {
+            fixture.client.noAi(true);
+            fixture.lock(2);
+            assertTrue(fixture.packets.isEmpty());
+            fixture.user.get(ChannelStorage.class).addChannels(List.of(ViaBedrockUtilityInterface.INPUT_LOCKS_V2_CAPABILITY));
+            fixture.client.resendInputLocks();
+            assertInputLocksV2Wire(fixture.packets.getLast(), 2, true);
+        }
+    }
+
+    private static void assertInputLocksV2Wire(final PacketWrapper packet, final int flags, final boolean immobile) throws Exception {
+        final ByteBuf encoded = Unpooled.buffer();
+        try {
+            packet.setId(-1);
+            packet.writeToBuffer(encoded);
+            assertEquals(ViaBedrockUtilityInterface.CHANNEL, Types.STRING.read(encoded));
+            assertEquals(14, encoded.readInt());
+            assertEquals(flags, encoded.readInt());
+            assertEquals(immobile ? 1 : 0, encoded.readUnsignedByte());
+            assertFalse(encoded.isReadable());
+        } finally {
+            encoded.release();
+        }
+    }
 
     @Test
     void oldVbuConfirmDoesNotReceiveUnsupportedInputLocksPayloads() throws Exception {
@@ -216,7 +289,7 @@ class ClientInputLocksPacketsTest {
         private final Object previousEntities;
         private final Object previousConfig;
         private final TestProtocol protocol = new TestProtocol();
-        private final ClientPlayerEntity client;
+        private final TestClientPlayer client;
 
         private Fixture(final Set<String> capabilities) throws Exception {
             this.managerField.setAccessible(true);
@@ -233,6 +306,7 @@ class ClientInputLocksPacketsTest {
                     });
             this.managerField.set(null, Proxy.newProxyInstance(ViaManager.class.getClassLoader(), new Class[]{ViaManager.class}, (proxy, method, args) -> {
                 if (method.getName().equals("getProtocolManager")) return protocolManager;
+                if (method.getName().equals("debugHandler")) return new DebugHandlerImpl();
                 throw new UnsupportedOperationException(method.getName());
             }));
             this.entitiesField.set(BedrockProtocol.MAPPINGS, HashBiMap.create());
@@ -241,7 +315,7 @@ class ClientInputLocksPacketsTest {
                 throw new UnsupportedOperationException(method.getName());
             }));
             this.user.put(new GameSessionStorage(this.user));
-            this.client = new ClientPlayerEntity(this.user, 70L, UUID.randomUUID(), new PlayerAbilities(7L, (byte) 0, (byte) 0));
+            this.client = new TestClientPlayer(this.user);
             this.client.setPosition(new Position3f(0F, 66.62F, 0F));
             this.client.setRotation(Position3f.ZERO);
             this.client.setInitiallySpawned();
@@ -254,6 +328,7 @@ class ClientInputLocksPacketsTest {
             final ChannelStorage channels = new ChannelStorage();
             channels.addChannels(capabilities);
             this.user.put(channels);
+            this.user.getProtocolInfo().setClientState(State.PLAY);
             ClientPlayerPackets.register(this.protocol);
         }
 
@@ -335,6 +410,18 @@ class ClientInputLocksPacketsTest {
     }
 
     private static final class DimensionResetComplete extends RuntimeException {
+    }
+
+    private static final class TestClientPlayer extends ClientPlayerEntity {
+        private TestClientPlayer(UserConnection user) {
+            super(user, 70L, UUID.randomUUID(), new PlayerAbilities(7L, (byte) 0, (byte) 0));
+        }
+
+        private void noAi(boolean locked) {
+            this.entityData().put(ActorDataIDs.RESERVED_0, new EntityData(ActorDataIDs.RESERVED_0.getValue(),
+                    EntityDataTypesBedrock.LONG, locked ? 1L << ActorFlags.NOAI.getValue() : 0L));
+            this.onEntityDataChanged();
+        }
     }
 
     private static final class TestProtocol extends BedrockProtocol {

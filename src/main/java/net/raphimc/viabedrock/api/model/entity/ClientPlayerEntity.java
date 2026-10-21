@@ -21,6 +21,7 @@ import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.minecraft.BlockPosition;
 import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
 import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
+import com.viaversion.viaversion.api.protocol.packet.State;
 import com.viaversion.viaversion.api.type.Types;
 import com.viaversion.viaversion.protocols.v1_21_11to26_1.packet.ClientboundPackets26_1;
 import com.viaversion.viaversion.util.Pair;
@@ -91,6 +92,8 @@ public class ClientPlayerEntity extends PlayerEntity {
     private final List<AuthInputBlockAction> authInputBlockActions = new ArrayList<>();
     private BedrockInventoryTransaction authInputItemInteraction;
     private int inputLockFlags;
+    private int sentInputLockFlags = -1;
+    private boolean sentImmobile;
     private Set<InputFlag> inputFlags = EnumSet.noneOf(InputFlag.class);
     private Set<InputFlag> prevInputFlags = EnumSet.noneOf(InputFlag.class);
     private boolean horizontalCollision;
@@ -441,6 +444,7 @@ public class ClientPlayerEntity extends PlayerEntity {
 
     public void setInitiallySpawned() {
         this.initiallySpawned = true;
+        this.resendInputLocks();
     }
 
     public DimensionChangeInfo dimensionChangeInfo() {
@@ -452,6 +456,8 @@ public class ClientPlayerEntity extends PlayerEntity {
         if (dimensionChangeInfo != null) {
             this.resetJavaMovementPosition();
             this.dimensionChangeStartAge = this.age; // watchdog timeout baseline
+        } else {
+            this.resendInputLocks();
         }
     }
 
@@ -485,11 +491,46 @@ public class ClientPlayerEntity extends PlayerEntity {
         if (this.isMovementInputLocked()) {
             this.inputFlags = EnumSet.noneOf(InputFlag.class);
         }
-        ViaBedrockUtilityInterface.sendInputLocks(this.user, flags);
+        this.synchronizeInputLocks(false);
     }
 
     public boolean isMovementInputLocked() {
-        return (this.inputLockFlags & (1 << 2)) != 0;
+        return this.isImmobile() || (this.inputLockFlags & (1 << 2)) != 0;
+    }
+
+    /** 元数据完整合批后再观察NOAI，只有本地玩家将其投影为输入与物理锁。 */
+    @Override
+    protected void onEntityDataChanged() {
+        super.onEntityDataChanged();
+        if (this.isMovementInputLocked()) this.inputFlags = EnumSet.noneOf(InputFlag.class);
+        this.synchronizeInputLocks(false);
+    }
+
+    public void resendInputLocks() {
+        this.synchronizeInputLocks(true);
+    }
+
+    private void synchronizeInputLocks(final boolean force) {
+        if (!this.initiallySpawned || this.user.getProtocolInfo().getClientState() != State.PLAY) return;
+        final int flags = this.inputLockFlags & 6;
+        final boolean immobile = this.isImmobile();
+        if (!force && flags == this.sentInputLockFlags && immobile == this.sentImmobile) return;
+        if (ViaBedrockUtilityInterface.sendInputLocks(this.user, flags, immobile)) {
+            this.sentInputLockFlags = flags;
+            this.sentImmobile = immobile;
+        }
+    }
+
+    /** 新世界不继承旧世界的NOAI；其余实体标志仍交给既有重生流程处理。 */
+    public void resetInputLocks() {
+        this.inputLockFlags = 0;
+        final EntityData flags = this.entityData.get(ActorDataIDs.RESERVED_0);
+        if (flags != null) {
+            this.entityData.put(ActorDataIDs.RESERVED_0, new EntityData(flags.id(), flags.dataType(),
+                    flags.<Long>value() & ~(1L << ActorFlags.NOAI.getValue())));
+        }
+        this.inputFlags = EnumSet.noneOf(InputFlag.class);
+        this.resendInputLocks();
     }
 
     public Set<InputFlag> prevInputFlags() {

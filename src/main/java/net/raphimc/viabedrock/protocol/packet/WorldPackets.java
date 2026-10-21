@@ -202,7 +202,7 @@ public class WorldPackets {
             final EntityTracker oldEntityTracker = wrapper.user().get(EntityTracker.class);
             final ClientPlayerEntity clientPlayer = oldEntityTracker.getClientPlayer();
             wrapper.user().get(JavaPlayerStateStorage.class).reset();
-            clientPlayer.setInputLocks(0);
+            clientPlayer.resetInputLocks();
             wrapper.user().get(SpectatorCameraTracker.class).onDimensionChange();
             oldEntityTracker.prepareForRespawn();
             final EntityTracker newEntityTracker = new EntityTracker(wrapper.user());

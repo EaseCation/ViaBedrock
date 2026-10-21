@@ -216,6 +216,11 @@ public class MultiStatePackets {
             }
             ViaBedrockUtilityInterface.confirmCustomEntityMotion(wrapper.user());
             ViaBedrockUtilityInterface.confirmWitherSkullMotion(wrapper.user());
+            if (wrapper.user().getProtocolInfo().getClientState() == State.PLAY
+                    && wrapper.user().get(EntityTracker.class) != null
+                    && wrapper.user().get(EntityTracker.class).getClientPlayer() != null) {
+                wrapper.user().get(EntityTracker.class).getClientPlayer().resendInputLocks();
+            }
             ExperimentalFeatures.dispatchChannelRegistered(wrapper.user(), new java.util.HashSet<>(channels));
             if (wrapper.user().getProtocolInfo().getClientState() == State.CONFIGURATION
                     && channels.contains(ECClientLightInterface.CONFIRM_CHANNEL)) {
