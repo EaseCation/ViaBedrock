@@ -110,7 +110,8 @@ class ClientInputLocksPacketsTest {
             fixture.client.noAi(true);
             assertInputLocksV2Wire(fixture.packets.getLast(), 0, true);
             fixture.input((byte) 17);
-            assertTrue(fixture.client.inputFlags().isEmpty());
+            assertTrue(fixture.client.inputFlags().contains(InputFlag.FORWARD));
+            assertTrue(fixture.client.inputFlags().contains(InputFlag.JUMP));
             fixture.lock(6);
             assertInputLocksV2Wire(fixture.packets.getLast(), 6, true);
             fixture.client.noAi(false);
@@ -122,7 +123,7 @@ class ClientInputLocksPacketsTest {
             fixture.client.noAi(true);
             fixture.lock(0);
             assertInputLocksV2Wire(fixture.packets.getLast(), 0, true);
-            assertTrue(fixture.client.isMovementInputLocked());
+            assertFalse(fixture.client.isMovementInputLocked());
             fixture.client.setPositionFromServer(new Position3f(12F, 70F, 8F));
             assertEquals(new Position3f(12F, 70F, 8F), fixture.client.position());
             fixture.client.resetInputLocks();
@@ -301,6 +302,68 @@ class ClientInputLocksPacketsTest {
             assertFalse(flags.testBit(PlayerAuthInputPacket_InputData.JumpDown.getValue()));
             assertTrue(flags.testBit(PlayerAuthInputPacket_InputData.MissedSwing.getValue()));
             assertFalse(fixture.client.hasEntityFlag(ActorFlags.NOAI));
+        }
+    }
+
+    @Test
+    void immobilePlayerReportsHeldAndReleasedInputWithoutMovingFromTheServerAnchor() throws Exception {
+        try (Fixture fixture = new Fixture(Set.of(ViaBedrockUtilityInterface.INPUT_LOCKS_V3_CAPABILITY))) {
+            final Position3f anchor = new Position3f(12.5F, 66.62F, -4.5F);
+            fixture.client.setPositionFromServer(anchor);
+            final PacketWrapper correction = fixture.packet(ClientboundPackets26_1.PLAYER_POSITION);
+            fixture.client.writePlayerPositionPacketToClient(correction, Relative.NONE, false);
+            fixture.client.confirmTeleport(correction.get(Types.VAR_INT, 0));
+            fixture.client.noAi(true);
+            fixture.input((byte) 17); // The normal Java wire bits for forward + jump.
+            final PacketWrapper moved = fixture.packet(ServerboundPackets26_1.MOVE_PLAYER_POS_ROT);
+            moved.write(Types.DOUBLE, 14.5D);
+            moved.write(Types.DOUBLE, 66D);
+            moved.write(Types.DOUBLE, -4.5D);
+            moved.write(Types.FLOAT, 75F);
+            moved.write(Types.FLOAT, 15F);
+            moved.write(Types.UNSIGNED_BYTE, (short) 0);
+            moved.resetReader();
+            fixture.protocol.handle(ServerboundPackets26_1.MOVE_PLAYER_POS_ROT, moved);
+
+            final PacketWrapper held = fixture.packet(ServerboundPackets26_1.CLIENT_TICK_END);
+            fixture.protocol.handle(ServerboundPackets26_1.CLIENT_TICK_END, held);
+            assertFalse(held.isCancelled());
+            assertEquals(anchor, held.get(BedrockTypes.POSITION_3F, 0));
+            assertEquals(Position3f.ZERO, held.get(BedrockTypes.POSITION_3F, 1));
+            assertEquals(new Position2f(0F, 1F), held.get(BedrockTypes.POSITION_2F, 0));
+            assertEquals(new Position2f(0F, 1F), held.get(BedrockTypes.POSITION_2F, 2));
+            final BigInteger heldFlags = held.get(BedrockTypes.UNSIGNED_VAR_BIG_INTEGER, 0);
+            assertTrue(heldFlags.testBit(PlayerAuthInputPacket_InputData.Up.getValue()));
+            assertTrue(heldFlags.testBit(PlayerAuthInputPacket_InputData.Jumping.getValue()));
+            assertTrue(heldFlags.testBit(PlayerAuthInputPacket_InputData.JumpPressedRaw.getValue()));
+            assertTrue(fixture.client.hasEntityFlag(ActorFlags.NOAI));
+
+            fixture.input((byte) 0);
+            final PacketWrapper released = fixture.packet(ServerboundPackets26_1.CLIENT_TICK_END);
+            fixture.protocol.handle(ServerboundPackets26_1.CLIENT_TICK_END, released);
+            assertEquals(anchor, released.get(BedrockTypes.POSITION_3F, 0));
+            assertEquals(Position3f.ZERO, released.get(BedrockTypes.POSITION_3F, 1));
+            assertEquals(new Position2f(0F, 0F), released.get(BedrockTypes.POSITION_2F, 0));
+            final BigInteger releasedFlags = released.get(BedrockTypes.UNSIGNED_VAR_BIG_INTEGER, 0);
+            assertFalse(releasedFlags.testBit(PlayerAuthInputPacket_InputData.Up.getValue()));
+            assertFalse(releasedFlags.testBit(PlayerAuthInputPacket_InputData.Jumping.getValue()));
+            assertTrue(releasedFlags.testBit(PlayerAuthInputPacket_InputData.JumpReleasedRaw.getValue()));
+        }
+    }
+
+    @Test
+    void explicitJumpPermissionStillFiltersTheNormalJavaInputPacket() throws Exception {
+        try (Fixture fixture = new Fixture(Set.of(ViaBedrockUtilityInterface.INPUT_LOCKS_V3_CAPABILITY))) {
+            fixture.client.noAi(true);
+            fixture.lock(64);
+            fixture.input((byte) 17);
+            final PacketWrapper auth = fixture.packet(ServerboundPackets26_1.CLIENT_TICK_END);
+            fixture.protocol.handle(ServerboundPackets26_1.CLIENT_TICK_END, auth);
+            assertEquals(new Position2f(0F, 1F), auth.get(BedrockTypes.POSITION_2F, 0));
+            final BigInteger flags = auth.get(BedrockTypes.UNSIGNED_VAR_BIG_INTEGER, 0);
+            assertTrue(flags.testBit(PlayerAuthInputPacket_InputData.Up.getValue()));
+            assertFalse(flags.testBit(PlayerAuthInputPacket_InputData.Jumping.getValue()));
+            assertFalse(flags.testBit(PlayerAuthInputPacket_InputData.JumpPressedRaw.getValue()));
         }
     }
 

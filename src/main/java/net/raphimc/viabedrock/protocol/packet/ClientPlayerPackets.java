@@ -69,7 +69,7 @@ import java.util.logging.Level;
 
 public class ClientPlayerPackets {
 
-    private static final Set<PlayerAuthInputPacket_InputData> IMMOBILE_MOVEMENT_INPUTS = EnumSet.of(
+    private static final Set<PlayerAuthInputPacket_InputData> LOCKED_MOVEMENT_INPUTS = EnumSet.of(
             PlayerAuthInputPacket_InputData.Ascend,
             PlayerAuthInputPacket_InputData.Descend,
             PlayerAuthInputPacket_InputData.JumpDown,
@@ -660,12 +660,11 @@ public class ClientPlayerPackets {
             }
 
             if (clientPlayer.isMovementInputLocked()) {
-                removeImmobileMovementInput(clientPlayer.authInputData());
+                removeLockedMovementInput(clientPlayer.authInputData());
             }
             final PlayerAuthInputContext authInputContext = new PlayerAuthInputContext(clientPlayer.position(), velocity);
             ExperimentalFeatures.dispatchPlayerAuthInput(wrapper.user(), clientPlayer, authInputContext);
             if (immobile) {
-                removeImmobileMovementInput(clientPlayer.authInputData());
                 authInputContext.setPosition(clientPlayer.position());
                 authInputContext.setDelta(Position3f.ZERO);
             }
@@ -673,7 +672,7 @@ public class ClientPlayerPackets {
             wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().x()); // pitch
             wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().y()); // yaw
             wrapper.write(BedrockTypes.POSITION_3F, authInputContext.position()); // position
-            wrapper.write(BedrockTypes.POSITION_2F, immobile ? new Position2f(0F, 0F) : MathUtil.calculateMovementDirections(clientPlayer.authInputData(), clientPlayer.isSneaking())); // move vector
+            wrapper.write(BedrockTypes.POSITION_2F, MathUtil.calculateMovementDirections(clientPlayer.authInputData(), clientPlayer.isSneaking())); // move vector
             wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().z()); // head yaw
             wrapper.write(BedrockTypes.UNSIGNED_VAR_BIG_INTEGER, EnumUtil.getBigBitmaskFromEnumSet(clientPlayer.authInputData(), PlayerAuthInputPacket_InputData::getValue)); // input flags
             wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, InputMode.Mouse.getValue()); // input mode
@@ -709,7 +708,7 @@ public class ClientPlayerPackets {
             }
             wrapper.write(BedrockTypes.POSITION_2F, new Position2f(0F, 0F)); // analog move vector
             wrapper.write(BedrockTypes.POSITION_3F, MathUtil.calculateCameraOrientation(clientPlayer.rotation().y(), clientPlayer.rotation().x())); // camera orientation
-            wrapper.write(BedrockTypes.POSITION_2F, immobile ? new Position2f(0F, 0F) : MathUtil.calculateMovementDirections(clientPlayer.authInputData(), false)); // raw move vector
+            wrapper.write(BedrockTypes.POSITION_2F, MathUtil.calculateMovementDirections(clientPlayer.authInputData(), false)); // raw move vector
 
             // 当前 AuthInput 的所有字段已构建完成，且已越过未出生/死亡的取消分支。
             // 在这里立即推进 tick-end 序号并释放就绪 ACK，不等待额外 movement 或其他包。
@@ -788,8 +787,8 @@ public class ClientPlayerPackets {
         });
     }
 
-    static void removeImmobileMovementInput(final Set<PlayerAuthInputPacket_InputData> inputData) {
-        inputData.removeAll(IMMOBILE_MOVEMENT_INPUTS);
+    static void removeLockedMovementInput(final Set<PlayerAuthInputPacket_InputData> inputData) {
+        inputData.removeAll(LOCKED_MOVEMENT_INPUTS);
     }
 
     static PlayerAuthInputPacket_InputData playerCommandInputData(final PlayerCommandAction action) {

@@ -480,7 +480,14 @@ public class ClientPlayerEntity extends PlayerEntity {
     }
 
     public void setInputFlags(final Set<InputFlag> inputFlags) {
-        this.inputFlags = this.isMovementInputLocked() ? EnumSet.noneOf(InputFlag.class) : inputFlags;
+        final Set<InputFlag> allowed = EnumSet.noneOf(InputFlag.class);
+        if (!this.isMovementInputLocked()) allowed.addAll(inputFlags);
+        if ((this.inputLockFlags & (1 << 6)) != 0) allowed.remove(InputFlag.JUMP);
+        final RidingTracker riding = this.user.get(RidingTracker.class);
+        if ((this.inputLockFlags & (1 << 8)) != 0 && riding != null && riding.isLocalRiding()) {
+            allowed.remove(InputFlag.SHIFT);
+        }
+        this.inputFlags = allowed;
     }
 
     public void setInputLocks(final int flags) {
@@ -488,21 +495,18 @@ public class ClientPlayerEntity extends PlayerEntity {
             return;
         }
         this.inputLockFlags = flags;
-        if (this.isMovementInputLocked()) {
-            this.inputFlags = EnumSet.noneOf(InputFlag.class);
-        }
+        this.setInputFlags(this.inputFlags);
         this.synchronizeInputLocks(false);
     }
 
     public boolean isMovementInputLocked() {
-        return this.isImmobile() || (this.inputLockFlags & (1 << 2)) != 0;
+        return (this.inputLockFlags & (1 << 2)) != 0;
     }
 
-    /** 元数据完整合批后再观察NOAI，只有本地玩家将其投影为输入与物理锁。 */
+    /** 元数据完整合批后同步本地玩家的物理定身；输入权限由独立掩码控制。 */
     @Override
     protected void onEntityDataChanged() {
         super.onEntityDataChanged();
-        if (this.isMovementInputLocked()) this.inputFlags = EnumSet.noneOf(InputFlag.class);
         this.synchronizeInputLocks(false);
     }
 
