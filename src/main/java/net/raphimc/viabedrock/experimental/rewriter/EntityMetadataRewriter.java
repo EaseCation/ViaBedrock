@@ -71,13 +71,11 @@ public class EntityMetadataRewriter {
 
                 upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SHARED_FLAGS), VersionedTypes.V26_1.entityDataTypes().byteType, javaBitMask));
 
-                // Bedrock only exposes sneaking as an actor flag, but the Java client derives a player's
-                // *visual* crouch from the POSE entity data (Pose.CROUCHING), not the sharedflags sneaking
-                // bit (that bit only affects eye height / nameplate). Without setting POSE, remote Bedrock
-                // players never visually crouch on the Java side. Toggle the pose for players accordingly.
+                // 远端玩家需要由潜行标志合成 POSE，本地玩家则由输入与碰撞自行计算姿态。
+                // 不让延迟的 actor flags 回传在两次客户端 tick 之间覆盖本地 POSE。
                 if (entity.javaType().is(EntityTypes1_21_11.PLAYER)) {
-                    final int javaPose = bedrockFlags.contains(ActorFlags.SNEAKING) ? 5 : 0; // Pose.CROUCHING : Pose.STANDING
-                    upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.POSE), VersionedTypes.V26_1.entityDataTypes().poseType, javaPose));
+                    writePlayerSneakPose(javaEntityData, entity.getJavaEntityDataIndex(EntityDataFields.POSE),
+                            bedrockFlags.contains(ActorFlags.SNEAKING), entity == entityTracker.getClientPlayer());
                 }
 
                 upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SILENT), VersionedTypes.V26_1.entityDataTypes().booleanType, bedrockFlags.contains(ActorFlags.SILENT)));
@@ -980,6 +978,15 @@ public class EntityMetadataRewriter {
         final Integer color = colorData != null ? readNumber(colorData).intValue() : null;
         final byte spell = spellType(entity.hasEntityFlag(ActorFlags.CASTING), color);
         upsert(javaEntityData, new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SPELL_CASTING), VersionedTypes.V26_1.entityDataTypes().byteType, spell));
+    }
+
+    static void writePlayerSneakPose(final List<EntityData> javaEntityData, final int poseIndex,
+                                     final boolean sneaking, final boolean localPlayer) {
+        if (localPlayer) {
+            return;
+        }
+        final int javaPose = sneaking ? 5 : 0; // Pose.CROUCHING / Pose.STANDING
+        upsert(javaEntityData, new EntityData(poseIndex, VersionedTypes.V26_1.entityDataTypes().poseType, javaPose));
     }
 
     static void writeCreeperIgnition(final List<EntityData> javaEntityData, final int ignitionIndex,
