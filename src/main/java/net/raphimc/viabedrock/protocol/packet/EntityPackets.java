@@ -41,6 +41,7 @@ import net.raphimc.viabedrock.api.model.entity.PlayerEntity;
 import net.raphimc.viabedrock.api.resourcepack.definition.EntityDefinitions;
 import net.raphimc.viabedrock.api.util.MathUtil;
 import net.raphimc.viabedrock.experimental.ExperimentalFeatures;
+import net.raphimc.viabedrock.experimental.storage.RidingTracker;
 import net.raphimc.viabedrock.api.util.PacketFactory;
 import net.raphimc.viabedrock.api.util.RegistryUtil;
 import net.raphimc.viabedrock.api.util.TextUtil;
@@ -271,7 +272,8 @@ public class EntityPackets {
             entity.setOnGround(onGround);
             ExperimentalFeatures.dispatchEntityMoved(wrapper.user(), entity);
 
-            if (ViaBedrockUtilityInterface.writeCustomEntityTeleport(wrapper, entity, teleported)) {
+            if (writeAnchoredPassengerRotation(wrapper, entity)
+                    || ViaBedrockUtilityInterface.writeCustomEntityTeleport(wrapper, entity, teleported)) {
                 PacketFactory.sendJavaRotateHead(wrapper.user(), entity);
                 return;
             }
@@ -371,7 +373,8 @@ public class EntityPackets {
             entity.setOnGround(onGround);
             ExperimentalFeatures.dispatchEntityMoved(wrapper.user(), entity);
 
-            if (ViaBedrockUtilityInterface.writeCustomEntityTeleport(wrapper, entity, teleported)) {
+            if (writeAnchoredPassengerRotation(wrapper, entity)
+                    || ViaBedrockUtilityInterface.writeCustomEntityTeleport(wrapper, entity, teleported)) {
                 return;
             }
             wrapper.write(Types.VAR_INT, entity.javaId()); // entity id
@@ -789,6 +792,21 @@ public class EntityPackets {
             };
         }
         return EquipmentSlot.MAINHAND;
+    }
+
+    private static boolean writeAnchoredPassengerRotation(final PacketWrapper wrapper, final Entity entity) {
+        final RidingTracker riding = wrapper.user().get(RidingTracker.class);
+        if (riding == null || !riding.isAnchoredPassenger(entity.uniqueId())) {
+            return false;
+        }
+
+        // 保留服务端坐标缓存与朝向，但挂载期间只由挂点推进客户端位置，避免两条同步路径互相拉扯。
+        wrapper.setPacketType(ClientboundPackets26_1.MOVE_ENTITY_ROT);
+        wrapper.write(Types.VAR_INT, entity.javaId());
+        wrapper.write(Types.BYTE, MathUtil.float2Byte(entity.rotation().y()));
+        wrapper.write(Types.BYTE, MathUtil.float2Byte(entity.rotation().x()));
+        wrapper.write(Types.BOOLEAN, entity.isOnGround());
+        return true;
     }
 
     static boolean canTranslateTakeItemEntity(final Entity itemEntity, final Entity collectorEntity) {
