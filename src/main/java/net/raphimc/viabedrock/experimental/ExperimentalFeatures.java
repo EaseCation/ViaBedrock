@@ -576,6 +576,8 @@ public class ExperimentalFeatures {
      * bucket / glass bottle fluid branch of USE_ITEM.
      */
     private static void sendItemUseOnBlock(final UserConnection user, final ClientPlayerEntity clientPlayer, final ItemUseHandContext handContext, final InventoryTransactionRewriter inventoryTransactionRewriter, final ChunkTracker chunkTracker, final BlockPosition position, final int faceInt, final BlockFace face, final Position3f clickPosition, final boolean insideBlock, final int sequence) {
+        clientPlayer.swingSourceTracker().recordUse(handContext.hand(),
+                handContext.item().blockRuntimeId() != 0 ? ActorSwingSource.Build : ActorSwingSource.Interact);
         final BlockPosition expectedPos = insideBlock ? position : position.getRelative(face);
         // sequence 0 means there is no Java block-change to acknowledge (e.g. item frame entity interaction). Registering
         // a pending ack for it would leave a phantom sequence-0 ack that flushExpired emits after the timeout.
@@ -971,6 +973,7 @@ public class ExperimentalFeatures {
 
             // Mark as using item and send StartUsingItem flag in the current tick's PlayerAuthInput
             final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
+            clientPlayer.swingSourceTracker().recordUse(hand, ActorSwingSource.UseItem);
             final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
             final ItemUseHandContext handContext = ItemUseHandContext.resolve(inventoryTracker, hand);
             final BedrockItem selectedItem = handContext.item();

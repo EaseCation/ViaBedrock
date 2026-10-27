@@ -104,6 +104,7 @@ public class ClientPlayerEntity extends PlayerEntity {
     private GameType gameType;
     private GameMode javaGameMode;
     private boolean cancelNextSwingPacket;
+    private final JavaSwingSourceTracker swingSourceTracker = new JavaSwingSourceTracker();
     private BlockBreakingInfo blockBreakingInfo;
     private boolean usingItem;
     private boolean blockItemUse;
@@ -130,6 +131,8 @@ public class ClientPlayerEntity extends PlayerEntity {
 
     @Override
     public void tick() {
+        // 使用失败时可能没有 SWING，未消费来源不得越过 Java CLIENT_TICK_END。
+        this.swingSourceTracker.reset();
         super.tick();
 
         this.prevPosition = this.position;
@@ -202,11 +205,17 @@ public class ClientPlayerEntity extends PlayerEntity {
     }
 
     public void sendSwingPacketToServer() {
+        // 明确的实体攻击或挖掘不得继承此前失败的使用动作。
+        this.swingSourceTracker.reset();
+        this.sendSwingPacketToServer(ActorSwingSource.Attack);
+    }
+
+    public void sendSwingPacketToServer(final ActorSwingSource source) {
         final PacketWrapper animate = PacketWrapper.create(ServerboundBedrockPackets.ANIMATE, this.user);
         animate.write(Types.UNSIGNED_BYTE, (short) AnimatePacketPayload_Action.Swing.getValue()); // action
         animate.write(BedrockTypes.UNSIGNED_VAR_LONG, this.runtimeId); // entity runtime id
         animate.write(BedrockTypes.FLOAT_LE, 0F); // data
-        animate.write(BedrockTypes.OPTIONAL_STRING, ActorSwingSource.Attack.name().toLowerCase(Locale.ROOT)); // swing source // TODO: 1.21.130
+        animate.write(BedrockTypes.OPTIONAL_STRING, source.name().toLowerCase(Locale.ROOT)); // swing source
         animate.sendToServer(BedrockProtocol.class);
     }
 
@@ -523,6 +532,7 @@ public class ClientPlayerEntity extends PlayerEntity {
 
     /** 新世界不继承旧世界的NOAI；其余实体标志仍交给既有重生流程处理。 */
     public void resetInputLocks() {
+        this.swingSourceTracker.reset();
         this.inputLockFlags = 0;
         final EntityData flags = this.entityData.get(ActorDataIDs.RESERVED_0);
         if (flags != null) {
@@ -620,7 +630,12 @@ public class ClientPlayerEntity extends PlayerEntity {
     }
 
     public void cancelNextSwingPacket() {
+        this.swingSourceTracker.reset();
         this.cancelNextSwingPacket = true;
+    }
+
+    public JavaSwingSourceTracker swingSourceTracker() {
+        return this.swingSourceTracker;
     }
 
     public BlockBreakingInfo blockBreakingInfo() {

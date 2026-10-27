@@ -34,11 +34,9 @@ import net.raphimc.viabedrock.experimental.storage.BlockBreakingProgressTracker.
 import net.raphimc.viabedrock.experimental.util.ProtocolUtil;
 import net.raphimc.viabedrock.protocol.BedrockProtocol;
 import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
-import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.enums.Direction;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.AbilitiesIndex;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorSwingSource;
-import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.AnimatePacketPayload_Action;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.LevelEvent;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerActionType;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAuthInputPacket_InputData;
@@ -58,7 +56,6 @@ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 
 public final class BlockBreakingProgressModule implements FeatureModule {
 
@@ -217,11 +214,15 @@ public final class BlockBreakingProgressModule implements FeatureModule {
         final UserConnection user = wrapper.user();
         final GameSessionStorage gameSession = user.get(GameSessionStorage.class);
         final ClientPlayerEntity clientPlayer = user.get(EntityTracker.class).getClientPlayer();
+        final ActorSwingSource swingSource = clientPlayer.swingSourceTracker().consume(hand);
         if (hand != InteractionHand.MAIN_HAND || clientPlayer.checkCancelSwingPacket()) {
             return;
         }
 
-        this.sendBedrockSwing(user, clientPlayer);
+        clientPlayer.sendSwingPacketToServer(swingSource);
+        if (swingSource != ActorSwingSource.Attack) {
+            return;
+        }
         final BlockBreakingProgressTracker tracker = user.get(BlockBreakingProgressTracker.class);
         final MiningTarget target = tracker.miningTarget();
         if (target != null && tracker.miningPhase() == MiningPhase.SUSPENDED) {
@@ -272,15 +273,6 @@ public final class BlockBreakingProgressModule implements FeatureModule {
                 ? customMappingSync.access().identifierByJavaBlockStateId(javaBlockStateId) : null;
         return "minecraft:shears".equals(heldIdentifier)
                 && InstantBreakBlocks.isShearsInstantBreak(javaBlockState != null ? javaBlockState.identifier() : null, customIdentifier);
-    }
-
-    private void sendBedrockSwing(final UserConnection user, final ClientPlayerEntity clientPlayer) {
-        final PacketWrapper animate = PacketWrapper.create(ServerboundBedrockPackets.ANIMATE, user);
-        animate.write(Types.UNSIGNED_BYTE, (short) AnimatePacketPayload_Action.Swing.getValue());
-        animate.write(BedrockTypes.UNSIGNED_VAR_LONG, clientPlayer.runtimeId());
-        animate.write(BedrockTypes.FLOAT_LE, 0F);
-        animate.write(BedrockTypes.OPTIONAL_STRING, ActorSwingSource.Attack.name().toLowerCase(Locale.ROOT));
-        animate.sendToServer(BedrockProtocol.class);
     }
 
 }
