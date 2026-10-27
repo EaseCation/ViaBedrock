@@ -51,6 +51,7 @@ import net.raphimc.viabedrock.experimental.inventory.BedrockItemLockPolicy;
 import net.raphimc.viabedrock.experimental.inventory.ClientAuthInventoryModule;
 import net.raphimc.viabedrock.experimental.inventory.CraftingDataModule;
 import net.raphimc.viabedrock.experimental.inventory.ItemUseHandContext;
+import net.raphimc.viabedrock.experimental.inventory.PlacementPrediction;
 import net.raphimc.viabedrock.experimental.pyrpc.PyRpcDispatcherModule;
 import net.raphimc.viabedrock.experimental.dimension.AlternateDimensionModule;
 import net.raphimc.viabedrock.experimental.entity.CustomEntityTypeResolver;
@@ -598,9 +599,20 @@ public class ExperimentalFeatures {
         // This is the main packet that the bedrock client use to interact with block.
         final PacketWrapper transactionPacket = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, user);
 
+        // Java 本地预测失败时仍会发送 USE_ITEM_ON，所以这里按原版自碰撞规则重建预测结果：
+        // 目标格与玩家盒相交时不消费物品，并告知服务端该次放置未成功。
+        final boolean placeBlock = handContext.item().blockRuntimeId() != 0 && !insideBlock;
+        final boolean predictedSuccess = !placeBlock || !PlacementPrediction.intersectsPlayer(
+                expectedPos,
+                clientPlayer.position().x(),
+                clientPlayer.position().y() - clientPlayer.eyeOffset(),
+                clientPlayer.position().z(),
+                clientPlayer.isSneaking());
+
         BedrockItem predictedToItem = handContext.item().copy();
         // This is not entirely correct, but at least it's more accurate than not sending actions or sending the original item data.
-        if (predictedToItem.blockRuntimeId() != 0 && clientPlayer.javaGameMode() != GameMode.CREATIVE) {
+        if (predictedToItem.blockRuntimeId() != 0 && clientPlayer.javaGameMode() != GameMode.CREATIVE
+                && predictedSuccess) {
             predictedToItem.setAmount(predictedToItem.amount() - 1);
         }
         if (predictedToItem.amount() <= 0) {
@@ -629,7 +641,9 @@ public class ExperimentalFeatures {
                         clientPlayer.position(),
                         clickPosition,
                         chunkTracker.getBlockState(position),
-                        ItemUseInventoryTransaction_PredictedResult.Success,
+                        predictedSuccess
+                                ? ItemUseInventoryTransaction_PredictedResult.Success
+                                : ItemUseInventoryTransaction_PredictedResult.Failure,
                         (byte) 0 // TODO: client cooldown state
                 )
         );
