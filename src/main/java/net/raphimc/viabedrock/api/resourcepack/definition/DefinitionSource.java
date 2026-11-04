@@ -16,6 +16,7 @@ public enum DefinitionSource {
     PARTICLES("particles/"),
     ENTITIES("entity/"),
     MODELS("models/"),
+    LEGACY_MODEL("geometry.json"),
     FOGS("fogs/"),
     BIOMES("biomes/"),
     RENDER_CONTROLLERS("render_controllers/");

@@ -51,6 +51,7 @@ import net.raphimc.viabedrock.experimental.inventory.BedrockItemLockPolicy;
 import net.raphimc.viabedrock.experimental.inventory.ClientAuthInventoryModule;
 import net.raphimc.viabedrock.experimental.inventory.CraftingDataModule;
 import net.raphimc.viabedrock.experimental.inventory.ItemUseHandContext;
+import net.raphimc.viabedrock.experimental.inventory.PlacementPrediction;
 import net.raphimc.viabedrock.experimental.pyrpc.PyRpcDispatcherModule;
 import net.raphimc.viabedrock.experimental.dimension.AlternateDimensionModule;
 import net.raphimc.viabedrock.experimental.entity.CustomEntityTypeResolver;
@@ -576,7 +577,15 @@ public class ExperimentalFeatures {
      * bucket / glass bottle fluid branch of USE_ITEM.
      */
     private static void sendItemUseOnBlock(final UserConnection user, final ClientPlayerEntity clientPlayer, final ItemUseHandContext handContext, final InventoryTransactionRewriter inventoryTransactionRewriter, final ChunkTracker chunkTracker, final BlockPosition position, final int faceInt, final BlockFace face, final Position3f clickPosition, final boolean insideBlock, final int sequence) {
-        final BlockPosition expectedPos = insideBlock ? position : position.getRelative(face);
+        clientPlayer.swingSourceTracker().recordUse(handContext.hand(),
+                handContext.item().blockRuntimeId() != 0 ? ActorSwingSource.Build : ActorSwingSource.Interact);
+        // insideBlock 仅表示射线起点在方块内，不决定替换点击格还是在相邻格放置。
+        // 半砖合并的目标、真实形状的自碰撞结果、物品预测与 ACK 必须使用同一次计算。
+        final PlacementPrediction.Result placement = handContext.item().blockRuntimeId() != 0
+                ? PlacementPrediction.predict(user, clientPlayer, handContext.item(), chunkTracker, position, face, clickPosition)
+                : new PlacementPrediction.Result(insideBlock ? position : position.getRelative(face), true);
+        final BlockPosition expectedPos = placement.target();
+        final boolean predictedSuccess = placement.success();
         // sequence 0 means there is no Java block-change to acknowledge (e.g. item frame entity interaction). Registering
         // a pending ack for it would leave a phantom sequence-0 ack that flushExpired emits after the timeout.
         if (sequence > 0) {
@@ -589,7 +598,7 @@ public class ExperimentalFeatures {
                 clientPlayer.runtimeId(),
                 PlayerActionType.StartItemUseOn,
                 position,
-                insideBlock ? position : position.getRelative(face),
+                expectedPos,
                 faceInt
         );
 
@@ -598,7 +607,8 @@ public class ExperimentalFeatures {
 
         BedrockItem predictedToItem = handContext.item().copy();
         // This is not entirely correct, but at least it's more accurate than not sending actions or sending the original item data.
-        if (predictedToItem.blockRuntimeId() != 0 && clientPlayer.javaGameMode() != GameMode.CREATIVE) {
+        if (predictedToItem.blockRuntimeId() != 0 && clientPlayer.javaGameMode() != GameMode.CREATIVE
+                && predictedSuccess) {
             predictedToItem.setAmount(predictedToItem.amount() - 1);
         }
         if (predictedToItem.amount() <= 0) {
@@ -627,7 +637,9 @@ public class ExperimentalFeatures {
                         clientPlayer.position(),
                         clickPosition,
                         chunkTracker.getBlockState(position),
-                        ItemUseInventoryTransaction_PredictedResult.Success,
+                        predictedSuccess
+                                ? ItemUseInventoryTransaction_PredictedResult.Success
+                                : ItemUseInventoryTransaction_PredictedResult.Failure,
                         (byte) 0 // TODO: client cooldown state
                 )
         );
@@ -971,6 +983,7 @@ public class ExperimentalFeatures {
 
             // Mark as using item and send StartUsingItem flag in the current tick's PlayerAuthInput
             final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
+            clientPlayer.swingSourceTracker().recordUse(hand, ActorSwingSource.UseItem);
             final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
             final ItemUseHandContext handContext = ItemUseHandContext.resolve(inventoryTracker, hand);
             final BedrockItem selectedItem = handContext.item();
