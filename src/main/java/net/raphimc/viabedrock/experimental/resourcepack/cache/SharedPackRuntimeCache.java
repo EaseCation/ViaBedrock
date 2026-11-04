@@ -956,7 +956,10 @@ public final class SharedPackRuntimeCache {
                     this.reservedBuildWeight);
             if (projected > this.hardLimit) {
                 throw new IllegalStateException(
-                        "Shared resource pack cache hard memory limit exceeded after layer parsing");
+                        "Shared resource pack cache hard memory limit exceeded after layer parsing"
+                                + ": projected=" + projected + ", limit=" + this.hardLimit
+                                + ", layer=" + layer.estimatedWeightBytes()
+                                + ", reserved=" + this.reservedBuildWeight);
             }
             publication.run();
         }
