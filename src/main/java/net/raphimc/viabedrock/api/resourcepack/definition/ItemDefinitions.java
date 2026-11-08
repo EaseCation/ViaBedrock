@@ -27,8 +27,10 @@ import com.viaversion.viaversion.util.Key;
 import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.List;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -93,7 +95,9 @@ public class ItemDefinitions {
     }
 
     private void parsePack(final ResourcePack pack) {
-        for (String itemPath : DefinitionSource.ITEMS.files(pack.content())) {
+        final List<String> itemPaths = new ArrayList<>(DefinitionSource.ITEMS.files(pack.content()));
+        itemPaths.addAll(DefinitionSource.NETEASE_ITEMS.files(pack.content()));
+        for (String itemPath : itemPaths) {
             try {
                 final JsonObject item = pack.content().getJson(itemPath).getAsJsonObject("minecraft:item");
                 final String identifier = Key.namespaced(item.getAsJsonObject("description").get("identifier").getAsString());

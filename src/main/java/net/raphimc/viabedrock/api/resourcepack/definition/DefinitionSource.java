@@ -9,6 +9,8 @@ public enum DefinitionSource {
     TEXTS("texts/en_US.lang"),
     BLOCKS("blocks.json"),
     ITEMS("items/"),
+    /** NetEase resource packs keep the same 1.10 resource item definitions here. */
+    NETEASE_ITEMS("netease_items_res/"),
     ATTACHABLES("attachables/"),
     TEXTURES("textures/item_texture.json"),
     SOUND_DEFINITIONS("sounds/sound_definitions.json"),

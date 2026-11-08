@@ -33,6 +33,12 @@ class CustomAttachableGuiIconTest {
     }
 
     @Test
+    void neteaseResourceItemDeclaresTheInventoryIcon() {
+        final InMemoryContent output = convert(true, true, "netease_items_res/egg.json");
+        assertGuiIconAndHeldSelector(output);
+    }
+
+    @Test
     void attachableWithoutInventoryIconRetainsItsGeometrySelector() {
         final InMemoryContent output = convert(false, true);
         final JsonObject selector = output.getJson(ITEM_PATH).getAsJsonObject("model");
@@ -64,12 +70,16 @@ class CustomAttachableGuiIconTest {
     }
 
     private static InMemoryContent convert(final boolean withIcon, final boolean withCubes) {
+        return convert(withIcon, withCubes, "items/egg.json");
+    }
+
+    private static InMemoryContent convert(final boolean withIcon, final boolean withCubes, final String itemPath) {
         final InMemoryContent input = new InMemoryContent();
         input.putString("manifest.json", """
                 {"format_version":2,"header":{"name":"attachable-gui-test","description":"attachable-gui-test",
                 "uuid":"fd029ed8-aa9b-4b42-8ab1-23b2b1ca056f","version":[1,0,0],"min_engine_version":[1,21,0]}}
                 """);
-        input.putString("items/egg.json", """
+        input.putString(itemPath, """
                 {"format_version":"1.21.40","minecraft:item":{"description":{"identifier":"test:egg"},
                 "components":%s}}
                 """.formatted(withIcon ? "{\"minecraft:icon\":\"egg_icon\"}" : "{}"));
