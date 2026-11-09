@@ -73,6 +73,8 @@ public class CustomEntity extends Entity {
     private final List<BoneDisplayEntity> boneEntities = new ArrayList<>();
     private boolean spawned;
     private boolean collisionBoxSent;
+    private boolean entityDataInitialized;
+    private ViaBedrockUtilityInterface.ModelRequestState lastModelRequest;
 
     // Server-side animation (only used when VBU mod is NOT present)
     private ServerEntityTicker serverTicker;
@@ -152,15 +154,12 @@ public class CustomEntity extends Entity {
         super.remove();
         this.despawn();
         this.serverTicker = null;
+        this.entityDataInitialized = false;
     }
 
     @Override
     protected boolean translateEntityData(final ActorDataIDs id, final EntityData entityData, final List<EntityData> javaEntityData) {
         if (id == ActorDataIDs.RESERVED_038 && this.spawned) {
-            final ChannelStorage channelStorage = this.user.get(ChannelStorage.class);
-            if (channelStorage.hasChannel(ViaBedrockUtilityInterface.CONFIRM_CHANNEL)) {
-                ViaBedrockUtilityInterface.spawnCustomEntity(this.user, this.javaUuid(), this.entityDefinition.identifier(), this.entityData());
-            }
             this.updateCollisionBox(javaEntityData);
             this.collisionBoxSent = true;
             return true;
@@ -176,6 +175,7 @@ public class CustomEntity extends Entity {
     @Override
     protected void onEntityDataChanged() {
         super.onEntityDataChanged();
+        this.entityDataInitialized = true;
 
         if (!this.collisionBoxSent && this.spawned) {
             this.sendInitialCollisionBox();
@@ -187,9 +187,24 @@ public class CustomEntity extends Entity {
             this.spawn();
         } else {
             final ChannelStorage channelStorage = this.user.get(ChannelStorage.class);
-            if (channelStorage.hasChannel(ViaBedrockUtilityInterface.CONFIRM_CHANNEL)) {
-                ViaBedrockUtilityInterface.spawnCustomEntity(this.user, this.javaUuid(), this.entityDefinition.identifier(), this.entityData());
+            if (this.spawned && channelStorage.hasChannel(ViaBedrockUtilityInterface.CONFIRM_CHANNEL)) {
+                this.sendModelRequestIfChanged();
             }
+        }
+    }
+
+    private void sendModelRequestIfChanged() {
+        // setPosition runs before the initial metadata batch during ADD_ENTITY. Wait for the
+        // complete batch, including the empty case, instead of creating a provisional model.
+        if (!this.entityDataInitialized) {
+            return;
+        }
+        final ViaBedrockUtilityInterface.ModelRequestState state =
+                ViaBedrockUtilityInterface.ModelRequestState.from(this.entityData());
+        if (!state.equals(this.lastModelRequest)) {
+            ViaBedrockUtilityInterface.spawnCustomEntity(this.user, this.javaUuid(), this.entityDefinition.identifier(), state);
+            // Keep an immutable copy of the wire values, and only advance it after sending.
+            this.lastModelRequest = state;
         }
     }
 
@@ -237,7 +252,7 @@ public class CustomEntity extends Entity {
 
         // VBU mod present: delegate to client-side rendering
         if (channelStorage.hasChannel(ViaBedrockUtilityInterface.CONFIRM_CHANNEL)) {
-            ViaBedrockUtilityInterface.spawnCustomEntity(this.user, this.javaUuid(), this.entityDefinition.identifier(), this.entityData());
+            this.sendModelRequestIfChanged();
             return;
         }
 
@@ -346,6 +361,7 @@ public class CustomEntity extends Entity {
 
     private void despawn() {
         this.spawned = false;
+        this.lastModelRequest = null;
         final int[] entityIds = new int[boneEntities.size()];
         for (int i = 0; i < boneEntities.size(); i++) {
             entityIds[i] = boneEntities.get(i).javaId();

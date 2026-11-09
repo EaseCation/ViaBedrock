@@ -87,6 +87,10 @@ public class ViaBedrockUtilityInterface {
     }
 
     public static void spawnCustomEntity(final UserConnection user, final UUID uuid, final String identifier, final Map<ActorDataIDs, EntityData> entityData) {
+        spawnCustomEntity(user, uuid, identifier, ModelRequestState.from(entityData));
+    }
+
+    public static void spawnCustomEntity(final UserConnection user, final UUID uuid, final String identifier, final ModelRequestState state) {
         final PacketWrapper pluginMessage = PacketWrapper.create(ClientboundPackets26_1.CUSTOM_PAYLOAD, user);
         pluginMessage.write(Types.STRING, CHANNEL); // Channel
         pluginMessage.write(Types.INT, PayloadType.MODEL_REQUEST.ordinal()); // Type
@@ -94,42 +98,58 @@ public class ViaBedrockUtilityInterface {
         pluginMessage.write(Types.UUID, uuid);
         writeString(pluginMessage, identifier);
 
-        boolean writeBitmask1 = entityData.containsKey(ActorDataIDs.RESERVED_0);
+        boolean writeBitmask1 = state.flags() != null;
         pluginMessage.write(Types.BOOLEAN, writeBitmask1);
         if (writeBitmask1) {
-            pluginMessage.write(Types.LONG, entityData.get(ActorDataIDs.RESERVED_0).<Long>value());
+            pluginMessage.write(Types.LONG, state.flags());
         }
-        boolean writeBitmask2 = entityData.containsKey(ActorDataIDs.RESERVED_092);
+        boolean writeBitmask2 = state.extendedFlags() != null;
         pluginMessage.write(Types.BOOLEAN, writeBitmask2);
         if (writeBitmask2) {
-            pluginMessage.write(Types.LONG, entityData.get(ActorDataIDs.RESERVED_092).<Long>value());
+            pluginMessage.write(Types.LONG, state.extendedFlags());
         }
 
-        boolean writeVariant = entityData.containsKey(ActorDataIDs.VARIANT);
+        boolean writeVariant = state.variant() != null;
         pluginMessage.write(Types.BOOLEAN, writeVariant);
         if (writeVariant) {
-            pluginMessage.write(Types.INT, entityData.get(ActorDataIDs.VARIANT).<Integer>value());
+            pluginMessage.write(Types.INT, state.variant());
         }
 
-        boolean writeMarkVariant = entityData.containsKey(ActorDataIDs.MARK_VARIANT);
+        boolean writeMarkVariant = state.markVariant() != null;
         pluginMessage.write(Types.BOOLEAN, writeMarkVariant);
         if (writeMarkVariant) {
-            pluginMessage.write(Types.INT, entityData.get(ActorDataIDs.MARK_VARIANT).<Integer>value());
+            pluginMessage.write(Types.INT, state.markVariant());
         }
 
-        boolean writeSkinId = entityData.containsKey(ActorDataIDs.SKIN_ID);
+        boolean writeSkinId = state.skinId() != null;
         pluginMessage.write(Types.BOOLEAN, writeSkinId);
         if (writeSkinId) {
-            pluginMessage.write(Types.INT, entityData.get(ActorDataIDs.SKIN_ID).<Integer>value());
+            pluginMessage.write(Types.INT, state.skinId());
         }
 
-        boolean writeScale = entityData.containsKey(ActorDataIDs.RESERVED_038);
+        boolean writeScale = state.scale() != null;
         pluginMessage.write(Types.BOOLEAN, writeScale);
         if (writeScale) {
-            pluginMessage.write(Types.FLOAT, entityData.get(ActorDataIDs.RESERVED_038).<Float>value());
+            pluginMessage.write(Types.FLOAT, state.scale());
         }
 
         pluginMessage.send(BedrockProtocol.class);
+    }
+
+    /** Exact optional MODEL_REQUEST values; equality includes absence versus an explicit zero. */
+    public record ModelRequestState(Long flags, Long extendedFlags, Integer variant,
+                                    Integer markVariant, Integer skinId, Float scale) {
+        public static ModelRequestState from(final Map<ActorDataIDs, EntityData> entityData) {
+            return new ModelRequestState(value(entityData, ActorDataIDs.RESERVED_0),
+                    value(entityData, ActorDataIDs.RESERVED_092), value(entityData, ActorDataIDs.VARIANT),
+                    value(entityData, ActorDataIDs.MARK_VARIANT), value(entityData, ActorDataIDs.SKIN_ID),
+                    value(entityData, ActorDataIDs.RESERVED_038));
+        }
+
+        private static <T> T value(final Map<ActorDataIDs, EntityData> entityData, final ActorDataIDs id) {
+            final EntityData data = entityData.get(id);
+            return data == null ? null : data.value();
+        }
     }
 
     public static void sendSkin(final UserConnection user, final UUID uuid, final SkinData skin) {
