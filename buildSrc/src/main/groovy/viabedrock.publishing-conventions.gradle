@@ -1,6 +1,5 @@
 plugins {
     id "base.publishing-conventions"
-    id "base.lenni0451-maven-publishing"
 }
 
 publishing {
@@ -26,7 +25,17 @@ publishing {
                     developerConnection = "scm:git:ssh://github.com/RaphiMC/ViaBedrock.git"
                     url = "https://github.com/RaphiMC/ViaBedrock.git"
                 }
+                properties = ["upstream.groupId": "net.raphimc", "upstream.version": project.maven_version]
             }
+        }
+    }
+    repositories {
+        // EaseCation private repository (Aliyun Yunxiao Packages); publications always carry a release version.
+        // Credentials: yunxiaoMavenUsername / yunxiaoMavenPassword in ~/.gradle/gradle.properties.
+        maven {
+            name = "yunxiaoMaven"
+            url = "https://easecation-cn-hangzhou.devops.aliyuncs.com/packages/api/protocol/maven/14075-release-h64s7e"
+            credentials(PasswordCredentials)
         }
     }
 }

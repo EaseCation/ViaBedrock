@@ -15,7 +15,7 @@ publishing {
 
             groupId = project.maven_group
             artifactId = project.maven_name
-            version = project.maven_version
+            version = project.maven_version.replace("-SNAPSHOT", "") + "-ec." + project.fork_revision
         }
     }
 }
