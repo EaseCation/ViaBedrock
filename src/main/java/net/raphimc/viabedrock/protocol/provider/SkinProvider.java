@@ -262,7 +262,7 @@ public class SkinProvider implements Provider {
         }
         { // Device claims
             claims.put("DeviceId", authData.getDeviceId().toString().replace("-", ""));
-            claims.put("DeviceModel", "MS-7E51 Micro-Star International Co., Ltd. (Unknown)");
+            claims.put("DeviceModel", "Java");
             claims.put("DeviceOS", BuildPlatform.Win32.getValue());
             claims.put("CurrentInputMode", InputMode.Mouse.getValue());
             claims.put("DefaultInputMode", InputMode.Mouse.getValue());
