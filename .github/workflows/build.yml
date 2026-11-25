@@ -4,6 +4,11 @@ on: ["push", "pull_request", "workflow_dispatch"]
 permissions:
   contents: "read"
 
+env:
+  # EaseCation Yunxiao Maven (net.easecation.* dependencies), repository secrets.
+  ORG_GRADLE_PROJECT_yunxiaoMavenUsername: ${{ secrets.YUNXIAO_MAVEN_USERNAME }}
+  ORG_GRADLE_PROJECT_yunxiaoMavenPassword: ${{ secrets.YUNXIAO_MAVEN_PASSWORD }}
+
 jobs:
   build:
     runs-on: "ubuntu-24.04"
